@@ -73,6 +73,7 @@ export function buildAppMenus(options: {
       label: "Edit",
       items: [
         { id: "select-all", label: "Select All", shortcut: "⌘A", command: { type: "selectAll" } },
+        { id: "duplicate", label: "Duplicate", shortcut: "⌘D", command: { type: "duplicate" } },
         { id: "sep-edit", separator: true },
         { id: "find", label: "Find", shortcut: "⌘F", command: { type: "toggleSearch" } },
       ],
@@ -90,6 +91,19 @@ export function buildAppMenus(options: {
         { id: "sep-view-2", separator: true },
         { id: "back", label: "Go Back", shortcut: "⌘[", command: { type: "goBack" } },
         { id: "forward", label: "Go Forward", shortcut: "⌘]", command: { type: "goForward" } },
+        { id: "sep-view-3", separator: true },
+        { id: "expand", label: "Expand All", shortcut: "⌥⌘9", command: { type: "expandAll" } },
+        { id: "collapse", label: "Collapse All", shortcut: "⌥⌘0", command: { type: "collapseAll" } },
+      ],
+    },
+    {
+      id: "organize",
+      label: "Organize",
+      items: [
+        { id: "clean-up", label: "Clean Up", shortcut: "⌘K", command: { type: "cleanUp" } },
+        { id: "sep-org-1", separator: true },
+        { id: "expand-org", label: "Expand All", shortcut: "⌥⌘9", command: { type: "expandAll" } },
+        { id: "collapse-org", label: "Collapse All", shortcut: "⌥⌘0", command: { type: "collapseAll" } },
       ],
     },
     {

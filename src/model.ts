@@ -7,6 +7,7 @@ export type AppSettings = {
   showCompleted: boolean;
   openInspectorOnSelection: boolean;
   confirmBeforeDelete: boolean;
+  cleanUpImmediately: boolean;
   rowDensity: "compact" | "comfortable";
   textSize: "small" | "medium" | "large";
   colorDueItems: boolean;
@@ -92,6 +93,7 @@ export type Task = {
   note?: string;
   flagged: boolean;
   completed: boolean;
+  completedAt?: string;
   createdAt: string;
 };
 
@@ -137,6 +139,7 @@ export const defaultSettings: AppSettings = {
   showCompleted: true,
   openInspectorOnSelection: true,
   confirmBeforeDelete: true,
+  cleanUpImmediately: true,
   rowDensity: "comfortable",
   textSize: "medium",
   colorDueItems: true,

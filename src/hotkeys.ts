@@ -25,6 +25,11 @@ export type HotkeyAction =
   | { type: "selectRow"; direction: "up" | "down" }
   | { type: "extendRow"; direction: "up" | "down" }
   | { type: "selectAll" }
+  | { type: "cleanUp" }
+  | { type: "duplicate" }
+  | { type: "editTitle" }
+  | { type: "expandAll" }
+  | { type: "collapseAll" }
   | { type: "confirmDelete" }
   | { type: "cancel" };
 
@@ -107,6 +112,8 @@ export function matchOmniFocusHotkey(event: KeyboardEvent, options: {
     if (key === "Delete" || key === "Backspace") return { type: "delete", direction: "menu" };
     if (key === "[") return { type: "goBack" };
     if (key === "]") return { type: "goForward" };
+    if (key === "k" || key === "K") return { type: "cleanUp" };
+    if (key === "d" || key === "D") return { type: "duplicate" };
   }
 
   if (meta && ctrl && !alt && !shift && (key === "p" || key === "P")) return { type: "showPerspectivesList" };
@@ -116,6 +123,8 @@ export function matchOmniFocusHotkey(event: KeyboardEvent, options: {
     if (key === "i" || key === "I") return { type: "toggleInspector" };
     if (key === "f" || key === "F") return { type: "toggleSearch" };
     if (key === "p" || key === "P") return { type: "togglePerspectivesBar" };
+    if (key === "9") return { type: "expandAll" };
+    if (key === "0") return { type: "collapseAll" };
   }
 
   if (meta && shift && !ctrl && !alt) {
@@ -134,6 +143,7 @@ export function matchOmniFocusHotkey(event: KeyboardEvent, options: {
       event.preventDefault();
       return { type: "toggleComplete" };
     }
+    if (key === "Enter") return { type: "editTitle" };
     if (key === "f" || key === "F") return { type: "toggleFlag" };
     if (key === "ArrowUp") return { type: "selectRow", direction: "up" };
     if (key === "ArrowDown") return { type: "selectRow", direction: "down" };

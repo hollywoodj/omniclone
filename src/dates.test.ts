@@ -3,9 +3,13 @@ import test from "node:test";
 import {
   duePresetLabel,
   dueUrgency,
+  formatAvailableLabel,
   forecastWeek,
   formatOmniFocusDate,
+  inspectorTimestamp,
+  isActionAvailable,
   isDueOnDay,
+  matchesAvailability,
   parseDueLabel,
   projectDueForReview,
   reviewStatusText,
@@ -31,11 +35,14 @@ test("classifies overdue, due soon, and upcoming dates", () => {
   assert.equal(dueUrgency(undefined, now), "none");
 });
 
-test("matches forecast days including Past", () => {
+test("matches forecast days including Past and Upcoming", () => {
   assert.equal(isDueOnDay("Yesterday", "past", now), true);
   assert.equal(isDueOnDay("Today", "past", now), false);
   assert.equal(isDueOnDay("Today", todayKey(now), now), true);
   assert.equal(isDueOnDay("Aug 22", todayKey(now), now), false);
+  assert.equal(isDueOnDay("Aug 22", "upcoming", now), false);
+  assert.equal(isDueOnDay("Aug 24", "upcoming", now), true);
+  assert.equal(isDueOnDay("Sep 1", "upcoming", now), true);
 });
 
 test("builds a live forecast week from today", () => {
@@ -70,4 +77,25 @@ test("review is due when never reviewed or interval has elapsed", () => {
 test("keeps imported date formatting for Forecast labels", () => {
   assert.equal(formatOmniFocusDate("2026-08-17 00:00:00 -0400", now), "Today");
   assert.equal(formatOmniFocusDate("2026-08-22 00:00:00 -0400", now), "Aug 22");
+});
+
+test("Available hides deferred actions until their date arrives", () => {
+  const remaining = { completed: false as const, defer: "Tomorrow" };
+  const availableToday = { completed: false as const, defer: "Today" };
+  const overdueDefer = { completed: false as const, defer: "Yesterday" };
+  const done = { completed: true as const, defer: undefined };
+  assert.equal(isActionAvailable(remaining, now), false);
+  assert.equal(isActionAvailable(availableToday, now), true);
+  assert.equal(isActionAvailable(overdueDefer, now), true);
+  assert.equal(matchesAvailability(remaining, "available", now), false);
+  assert.equal(matchesAvailability(remaining, "remaining", now), true);
+  assert.equal(matchesAvailability(done, "remaining", now), false);
+  assert.equal(matchesAvailability(done, "completed", now), true);
+  assert.equal(formatAvailableLabel("Tomorrow", now), "Available Tomorrow");
+  assert.equal(formatAvailableLabel("Today", now), undefined);
+});
+
+test("formats inspector added and completed timestamps", () => {
+  assert.equal(inspectorTimestamp("2026-08-17T15:00:00", now), "Today, 3:00 PM");
+  assert.equal(inspectorTimestamp("2026-08-16T00:00:00", now), "Yesterday");
 });

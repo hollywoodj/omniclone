@@ -208,6 +208,7 @@ function parseOmniCsv(sourceName: string, text: string, now: Date): OmniImportDa
     const title = value(row, "Name", "Title");
     const status = value(row, "Status", "State").toLowerCase();
     const completion = value(row, "Completion Date", "Completed", "Completed Date");
+    const completedAt = parseOmniTimestamp(completion);
     const sourceId = value(row, "Task ID", "ID", "Identifier");
     const due = formatOmniFocusDate(value(row, "Due Date", "Due"), now);
     const defer = formatOmniFocusDate(value(row, "Start Date", "Defer Date", "Defer Until", "Defer"), now);
@@ -238,6 +239,7 @@ function parseOmniCsv(sourceName: string, text: string, now: Date): OmniImportDa
       ),
       flagged: /^(1|true|yes|y|flagged|★)$/i.test(value(row, "Flagged", "Flag")),
       completed: !!completion || status.includes("completed") || status.includes("done") || dropped,
+      completedAt: completedAt?.toISOString(),
       createdAt: addedAt?.toISOString() ?? new Date(importedAt + index).toISOString(),
     };
   });
@@ -296,6 +298,7 @@ function parseTaskPaper(sourceName: string, text: string, now: Date): OmniImport
         note: duration || undefined,
         flagged: parsed.parameters.flagged === true || parsed.parameters.flagged === "true",
         completed: "done" in parsed.parameters,
+        completedAt: "done" in parsed.parameters ? new Date(importedAt + tasks.length).toISOString() : undefined,
         createdAt: new Date(importedAt + tasks.length).toISOString(),
       };
       tasks.push(task);

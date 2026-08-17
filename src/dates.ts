@@ -1,11 +1,11 @@
-import type { ActivePerspective, Project } from "./model";
+import type { ActivePerspective, PerspectiveAvailability, Project, Task } from "./model";
 
 const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const weekdayShort = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 const weekdayLong = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export type DueUrgency = "none" | "upcoming" | "dueSoon" | "overdue";
-export type ForecastDayKey = "past" | string;
+export type ForecastDayKey = "past" | "upcoming" | string;
 
 export type ForecastDay = {
   key: string;
@@ -146,9 +146,44 @@ export function dueDayKey(label: string | undefined, now = new Date()) {
   return date ? dayKey(date) : null;
 }
 
-export function isDueOnDay(label: string | undefined, key: ForecastDayKey, now = new Date()) {
+export function isDueOnDay(label: string | undefined, key: ForecastDayKey, now = new Date(), weekLength = 7) {
   if (key === "past") return dueUrgency(label, now) === "overdue";
+  if (key === "upcoming") {
+    const date = parseDueLabel(label, now);
+    return !!date && dayDelta(date, now) >= weekLength;
+  }
   return dueDayKey(label, now) === key;
+}
+
+export function isActionAvailable(task: Pick<Task, "completed" | "defer">, now = new Date()) {
+  if (task.completed) return false;
+  if (!task.defer) return true;
+  const date = parseDueLabel(task.defer, now);
+  if (!date) return true;
+  return dayDelta(date, now) <= 0;
+}
+
+export function matchesAvailability(task: Pick<Task, "completed" | "defer">, availability: PerspectiveAvailability, now = new Date()) {
+  if (availability === "all") return true;
+  if (availability === "completed") return task.completed;
+  if (availability === "available") return isActionAvailable(task, now);
+  return !task.completed;
+}
+
+export function formatAvailableLabel(defer: string | undefined, now = new Date()) {
+  if (!defer) return undefined;
+  const date = parseDueLabel(defer, now);
+  if (date && dayDelta(date, now) <= 0) return undefined;
+  return `Available ${defer}`;
+}
+
+export function inspectorTimestamp(iso: string | undefined, now = new Date()) {
+  if (!iso) return undefined;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return undefined;
+  const label = relativeDayLabel(date, now);
+  const hasTime = date.getHours() !== 0 || date.getMinutes() !== 0;
+  return hasTime ? `${label}, ${formatClock(date)}` : label;
 }
 
 export function weekendDate(now = new Date()) {
@@ -180,6 +215,7 @@ export function forecastWeek(now = new Date(), count = 7): ForecastDay[] {
 
 export function forecastSubtitle(day: ForecastDayKey, now = new Date()) {
   if (day === "past") return "Overdue";
+  if (day === "upcoming") return "Upcoming";
   const match = forecastWeek(now, 14).find((item) => item.key === day);
   if (match) return match.title;
   const parsed = parseOmniTimestamp(day);
