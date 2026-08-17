@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { HotkeyAction } from "./hotkeys";
 import {
+  palette,
   perspectives,
   type ActivePerspective,
   type AppSettings,
@@ -228,9 +229,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#ecebed",
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#c3c1c6",
+    backgroundColor: palette.chrome,
     zIndex: 40,
   },
   menuWrap: {
@@ -239,7 +238,7 @@ const styles = StyleSheet.create({
   menuTitle: {
     height: 22,
     paddingHorizontal: 9,
-    borderRadius: 4,
+    borderRadius: 6,
     justifyContent: "center",
   },
   menuTitleOpen: {
@@ -257,11 +256,13 @@ const styles = StyleSheet.create({
     top: 24,
     left: 0,
     minWidth: 268,
-    paddingVertical: 5,
-    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 5,
+    borderRadius: 10,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "#b7b4ba",
     backgroundColor: "#f6f5f7",
+    overflow: "hidden",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.22,
@@ -271,11 +272,12 @@ const styles = StyleSheet.create({
   },
   item: {
     minHeight: 24,
-    paddingHorizontal: 14,
+    paddingHorizontal: 10,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 24,
+    borderRadius: 6,
   },
   itemPressed: {
     backgroundColor: "#0a64d6",

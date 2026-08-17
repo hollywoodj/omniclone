@@ -114,8 +114,9 @@ export function applyMarquee(base: SelectionState, hitIds: string[], additive: b
   };
 }
 
-export function pruneSelection(state: SelectionState, orderedIds: string[]): SelectionState {
+export function pruneSelection(state: SelectionState, orderedIds: string[], retainIds: Iterable<string> = []): SelectionState {
   const visible = new Set(orderedIds);
+  for (const id of retainIds) visible.add(id);
   const ids = state.ids.filter((id) => visible.has(id));
   if (!ids.length) return emptySelection;
   return {

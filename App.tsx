@@ -2,7 +2,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import { File as ExpoFile } from "expo-file-system";
 import { StatusBar } from "expo-status-bar";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -60,10 +60,12 @@ import {
   projectInFolder,
   projectIsStalled,
   renameTag,
+  sidebarActionCounts,
   skipReviewTimestamp,
   taskDepth,
   taskMatchesView,
   toTaskPaper,
+  withLingeringTasks,
 } from "./src/outline";
 import {
   completionGroupLabel,
@@ -132,6 +134,65 @@ const projectColors = ["#8f57c8", "#2f8de4", "#58a65c", "#dc7f43", "#d05475", "#
 
 function Icon({ name, size = 20, color = palette.text }: { name: IconName; size?: number; color?: string }) {
   return <MaterialCommunityIcons name={name} size={size} color={color} />;
+}
+
+const trafficLightColors = ["#ff5f57", "#febc2e", "#28c840"] as const;
+
+function TrafficLight({ color, onPress, accessibilityLabel }: { color: string; onPress?: () => void; accessibilityLabel?: string }) {
+  const dot = (
+    <View style={[styles.trafficLight, { backgroundColor: color }]}>
+      <View style={styles.trafficLightShine} />
+    </View>
+  );
+  if (!onPress) return dot;
+  return (
+    <Pressable accessibilityLabel={accessibilityLabel} onPress={onPress} hitSlop={4}>
+      {dot}
+    </Pressable>
+  );
+}
+
+function TrafficLights({ onClose }: { onClose?: () => void }) {
+  return (
+    <View style={styles.trafficLights}>
+      {trafficLightColors.map((color, index) => (
+        <TrafficLight key={color} color={color} onPress={index === 0 ? onClose : undefined} accessibilityLabel={index === 0 ? "Close" : undefined} />
+      ))}
+    </View>
+  );
+}
+
+function SidebarRow({
+  selected,
+  items,
+  style,
+  children,
+  ...rest
+}: Omit<React.ComponentProps<typeof Pressable>, "style"> & { selected?: boolean; items?: ContextMenuItem[]; style?: React.ComponentProps<typeof View>["style"] }) {
+  const [hovered, setHovered] = useState(false);
+  const rowStyle = ({ pressed }: { pressed: boolean }) => [
+    styles.sidebarRow,
+    selected && styles.sidebarRowSelected,
+    hovered && !selected && styles.sidebarRowHover,
+    pressed && styles.pressed,
+    style,
+  ];
+  const hoverProps = {
+    onHoverIn: () => setHovered(true),
+    onHoverOut: () => setHovered(false),
+  };
+  if (items?.length) {
+    return (
+      <ContextMenuPressable items={items} {...hoverProps} {...rest} style={rowStyle}>
+        {children}
+      </ContextMenuPressable>
+    );
+  }
+  return (
+    <Pressable {...hoverProps} {...rest} style={rowStyle}>
+      {children}
+    </Pressable>
+  );
 }
 
 function clampPane(value: number, min: number, max: number) {
@@ -366,6 +427,7 @@ function ProjectSidebar({
   onDeleteProject: (id: string) => void;
 }) {
   const tags = useMemo(() => [...new Set(tasks.flatMap((task) => task.tags))].sort(), [tasks]);
+  const counts = useMemo(() => sidebarActionCounts(tasks), [tasks]);
   const title = perspectives.find((item) => item.id === perspective)?.label ?? "Projects";
   const { openMenu } = useContextMenuTrigger();
   const sidebarMenuItems: ContextMenuItem[] = [
@@ -378,15 +440,16 @@ function ProjectSidebar({
   const toggleFolder = (path: string) => {
     setCollapsedFolders((current) => current.includes(path) ? current.filter((item) => item !== path) : [...current, path]);
   };
-  const remainingIn = (project: Project) => tasks.filter((task) => task.projectId === project.id && !task.completed && (task.status ?? "active") !== "dropped").length;
+  const remainingIn = (projectId: string) => counts.remainingByProject.get(projectId) ?? 0;
   const projectRow = (project: Project, depth: number) => {
-    const stalled = projectIsStalled(project, tasks);
+    const stalled = (project.status ?? "active") === "active" && remainingIn(project.id) === 0;
     return (
-      <ContextMenuPressable
+      <SidebarRow
         key={project.id}
+        selected={selectedProjectId === project.id}
         items={projectContextItems(project, { onFocusProject, onNewActionInProject, onDeleteProject })}
         onPress={() => onSelectProject(project.id)}
-        style={[styles.sidebarRow, { paddingLeft: 8 + depth * 14 }, selectedProjectId === project.id && styles.sidebarRowSelected]}
+        style={{ paddingLeft: 8 + depth * 14 }}
       >
         <View style={[styles.projectDot, { borderColor: project.color }, project.status === "dropped" && styles.projectDotDropped, project.status === "onHold" && styles.projectDotHold, stalled && styles.projectDotStalled]} />
         <Text numberOfLines={1} style={[styles.sidebarRowText, project.status === "dropped" && styles.taskTitleCompleted, project.status === "onHold" && styles.sidebarHoldText]}>{projectDisplayName(project)}</Text>
@@ -394,8 +457,8 @@ function ProjectSidebar({
         {project.status === "onHold" && <Text style={styles.sidebarStatusTag}>On Hold</Text>}
         {project.status === "dropped" && <Text style={styles.sidebarStatusTag}>Dropped</Text>}
         {project.type === "sequential" && <Icon name="arrow-down-bold" size={12} color="#8b888f" />}
-        {showCounts && <Text style={styles.sidebarCount}>{remainingIn(project)}</Text>}
-      </ContextMenuPressable>
+        {showCounts && <Text style={styles.sidebarCount}>{remainingIn(project.id)}</Text>}
+      </SidebarRow>
     );
   };
   const renderFolder = (node: ReturnType<typeof buildFolderTree>["roots"][number], depth: number): React.ReactNode => {
@@ -403,17 +466,18 @@ function ProjectSidebar({
     const selected = selectedFolder === node.path && !selectedProjectId;
     return (
       <View key={node.path}>
-        <Pressable
+        <SidebarRow
+          selected={selected}
           onPress={() => onSelectFolder(node.path)}
-          style={[styles.sidebarRow, { paddingLeft: 8 + depth * 14 }, selected && styles.sidebarRowSelected]}
+          style={{ paddingLeft: 8 + depth * 14 }}
         >
           <Pressable onPress={() => toggleFolder(node.path)} hitSlop={8} style={styles.collapseButton}>
             <Icon name={collapsed ? "chevron-right" : "chevron-down"} size={16} color="#6e6c72" />
           </Pressable>
           <Icon name={collapsed ? "folder-outline" : "folder-open-outline"} size={16} color="#8b4fc2" />
           <Text numberOfLines={1} style={styles.sidebarRowText}>{node.name}</Text>
-          {showCounts && <Text style={styles.sidebarCount}>{node.projects.reduce((sum, project) => sum + remainingIn(project), 0)}</Text>}
-        </Pressable>
+          {showCounts && <Text style={styles.sidebarCount}>{node.projects.reduce((sum, project) => sum + remainingIn(project.id), 0)}</Text>}
+        </SidebarRow>
         {!collapsed && node.projects.map((project) => projectRow(project, depth + 1))}
         {!collapsed && node.children.map((child) => renderFolder(child, depth + 1))}
       </View>
@@ -436,11 +500,11 @@ function ProjectSidebar({
       <ScrollView contentContainerStyle={styles.sidebarScroll}>
         {perspective === "projects" && (
           <>
-            <Pressable onPress={() => { onSelectProject(null); onSelectFolder(null); }} style={[styles.sidebarRow, selectedProjectId === null && selectedFolder === null && styles.sidebarRowSelected]}>
+            <SidebarRow selected={selectedProjectId === null && selectedFolder === null} onPress={() => { onSelectProject(null); onSelectFolder(null); }}>
               <Icon name="folder-multiple-outline" size={17} color="#6f6c73" />
               <Text numberOfLines={1} style={styles.sidebarRowText}>All Projects</Text>
-              {showCounts && <Text style={styles.sidebarCount}>{tasks.filter((task) => task.projectId && !task.completed && (task.status ?? "active") !== "dropped").length}</Text>}
-            </Pressable>
+              {showCounts && <Text style={styles.sidebarCount}>{counts.remainingInProjects}</Text>}
+            </SidebarRow>
             <Text style={styles.sidebarSectionLabel}>PROJECTS</Text>
             {!projects.length && !extraFolders.length && (
               <Text style={styles.sidebarEmptyText}>No projects yet. Import from OmniFocus or use New Project.</Text>
@@ -451,28 +515,28 @@ function ProjectSidebar({
         )}
         {perspective === "tags" && (
           <>
-            <Pressable onPress={() => onSelectTag(null)} style={[styles.sidebarRow, selectedTag === null && styles.sidebarRowSelected]}>
+            <SidebarRow selected={selectedTag === null} onPress={() => onSelectTag(null)}>
               <Icon name="tag-multiple-outline" size={17} color="#6f6c73" />
               <Text numberOfLines={1} style={styles.sidebarRowText}>All Tags</Text>
-              {showCounts && <Text style={styles.sidebarCount}>{tasks.filter((task) => task.tags.length && !task.completed).length}</Text>}
-            </Pressable>
+              {showCounts && <Text style={styles.sidebarCount}>{counts.remainingTagged}</Text>}
+            </SidebarRow>
             <Text style={styles.sidebarSectionLabel}>TAGS</Text>
             {!tags.length && <Text style={styles.sidebarEmptyText}>No tags yet. Add them in the inspector.</Text>}
             {tags.map((tag) => (
-              <Pressable key={tag} onPress={() => onSelectTag(tag)} style={[styles.sidebarRow, selectedTag === tag && styles.sidebarRowSelected]}>
+              <SidebarRow key={tag} selected={selectedTag === tag} onPress={() => onSelectTag(tag)}>
                 <Icon name="pound" size={16} color="#77747b" />
                 <Text style={styles.sidebarRowText}>{tag}</Text>
-                {showCounts && <Text style={styles.sidebarCount}>{tasks.filter((task) => task.tags.includes(tag) && !task.completed).length}</Text>}
-              </Pressable>
+                {showCounts && <Text style={styles.sidebarCount}>{counts.remainingByTag.get(tag) ?? 0}</Text>}
+              </SidebarRow>
             ))}
           </>
         )}
         {perspective === "forecast" && (
           <View>
-            <Pressable onPress={() => onSelectForecastDay("past")} style={[styles.forecastPast, forecastDay === "past" && styles.sidebarRowSelected]}>
+            <SidebarRow selected={forecastDay === "past"} onPress={() => onSelectForecastDay("past")} style={styles.forecastPast}>
               <Text style={styles.sidebarRowText}>Past</Text>
               <Text style={styles.forecastPastCount}>{forecastCounts.past ?? 0}</Text>
-            </Pressable>
+            </SidebarRow>
             <View style={styles.forecastDays}>
               {week.map((day) => {
                 const selected = forecastDay === day.key;
@@ -488,10 +552,10 @@ function ProjectSidebar({
                 );
               })}
             </View>
-            <Pressable onPress={() => onSelectForecastDay("upcoming")} style={[styles.forecastUpcoming, forecastDay === "upcoming" && styles.sidebarRowSelected]}>
+            <SidebarRow selected={forecastDay === "upcoming"} onPress={() => onSelectForecastDay("upcoming")} style={styles.forecastUpcoming}>
               <Text style={styles.sidebarRowText}>Upcoming</Text>
               <Text style={styles.sidebarCount}>{forecastCounts.upcoming ?? 0}</Text>
-            </Pressable>
+            </SidebarRow>
           </View>
         )}
         {!["projects", "tags", "forecast"].includes(perspective) && (
@@ -696,7 +760,7 @@ function MobileCustomPerspectiveItem({
     <ContextMenuPressable
       items={menuItems}
       onPress={onSelect}
-      style={styles.mobileNavItem}
+      style={[styles.mobileNavItem, selected && styles.mobileNavItemSelected]}
     >
       <Icon name={item.icon as IconName} size={21} color={selected ? item.color : "#77747b"} />
       <Text numberOfLines={1} style={[styles.mobileNavLabel, selected && { color: item.color, fontWeight: "700" }]}>{item.name}</Text>
@@ -1175,11 +1239,13 @@ function Inspector({ task, projects, onChange, onToggle, onDelete, onClose, moda
     <View style={[styles.inspector, modal && styles.inspectorModal]}>
       <View style={styles.inspectorTabs}>
         {modal && <Pressable onPress={onClose} style={styles.modalClose}><Icon name="chevron-left" size={24} color={palette.purpleDark} /></Pressable>}
-        {tabs.map((item) => (
-          <Pressable key={item.id} onPress={() => setTab(item.id)} style={tab === item.id ? styles.inspectorTabSelected : styles.inspectorTab}>
-            <Text style={[styles.inspectorTabText, tab === item.id && styles.inspectorTabTextSelected]}>{item.label}</Text>
-          </Pressable>
-        ))}
+        <View style={styles.inspectorTabBar}>
+          {tabs.map((item) => (
+            <Pressable key={item.id} onPress={() => setTab(item.id)} style={tab === item.id ? styles.inspectorTabSelected : styles.inspectorTab}>
+              <Text style={[styles.inspectorTabText, tab === item.id && styles.inspectorTabTextSelected]}>{item.label}</Text>
+            </Pressable>
+          ))}
+        </View>
       </View>
       {tab === "notes" && (
         <View style={styles.inspectorNotePane}>
@@ -1318,7 +1384,9 @@ function ProjectInspector({ project, remainingCount, stalled, onChange, onReview
     <View style={[styles.inspector, modal && styles.inspectorModal]}>
       <View style={styles.inspectorTabs}>
         {modal && <Pressable onPress={onClose} style={styles.modalClose}><Icon name="chevron-left" size={24} color={palette.purpleDark} /></Pressable>}
-        <View style={styles.inspectorTabSelected}><Text style={styles.inspectorTabTextSelected}>Project</Text></View>
+        <View style={styles.inspectorTabBar}>
+          <View style={styles.inspectorTabSelected}><Text style={styles.inspectorTabTextSelected}>Project</Text></View>
+        </View>
       </View>
       <ScrollView style={styles.inspectorScroll} keyboardShouldPersistTaps="handled">
         <View style={styles.inspectorTitleRow}>
@@ -1412,7 +1480,9 @@ function MultiSelectInspector({
   return (
     <View style={styles.inspector}>
       <View style={styles.inspectorTabs}>
-        <View style={styles.inspectorTabSelected}><Text style={styles.inspectorTabText}>Selection</Text></View>
+        <View style={styles.inspectorTabBar}>
+          <View style={styles.inspectorTabSelected}><Text style={styles.inspectorTabText}>Selection</Text></View>
+        </View>
       </View>
       <View style={styles.multiSelectBody}>
         <Text style={styles.multiSelectCount}>{count}</Text>
@@ -1448,7 +1518,9 @@ function TagInspector({ tag, count, onRename, onClose, modal = false }: {
     <View style={[styles.inspector, modal && styles.inspectorModal]}>
       <View style={styles.inspectorTabs}>
         {modal && <Pressable onPress={onClose} style={styles.modalClose}><Icon name="chevron-left" size={24} color={palette.purpleDark} /></Pressable>}
-        <View style={styles.inspectorTabSelected}><Text style={styles.inspectorTabTextSelected}>Tag</Text></View>
+        <View style={styles.inspectorTabBar}>
+          <View style={styles.inspectorTabSelected}><Text style={styles.inspectorTabTextSelected}>Tag</Text></View>
+        </View>
       </View>
       <ScrollView style={styles.inspectorScroll} keyboardShouldPersistTaps="handled">
         <View style={styles.inspectorTitleRow}>
@@ -1469,7 +1541,9 @@ function EmptyInspector({ title, detail }: { title: string; detail: string }) {
   return (
     <View style={styles.inspector}>
       <View style={styles.inspectorTabs}>
-        <View style={styles.inspectorTabSelected}><Text style={styles.inspectorTabText}>Inspector</Text></View>
+        <View style={styles.inspectorTabBar}>
+          <View style={styles.inspectorTabSelected}><Text style={styles.inspectorTabText}>Inspector</Text></View>
+        </View>
       </View>
       <View style={styles.emptyInspector}>
         <View style={styles.emptyCheck}><Icon name="information-outline" size={26} color="#aaa7ad" /></View>
@@ -1621,11 +1695,7 @@ function SettingsModal({
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={[styles.settingsWindow, compact && styles.settingsWindowCompact]}>
           <View style={styles.settingsTitlebar}>
-            {!compact && <View style={styles.settingsTrafficLights}>
-              <Pressable accessibilityLabel="Close settings" onPress={onClose} style={[styles.settingsTrafficLight, { backgroundColor: "#ff5f57" }]} />
-              <View style={[styles.settingsTrafficLight, { backgroundColor: "#febc2e" }]} />
-              <View style={[styles.settingsTrafficLight, { backgroundColor: "#28c840" }]} />
-            </View>}
+            {!compact && <View style={styles.settingsTrafficLights}><TrafficLights onClose={onClose} /></View>}
             <Text style={styles.settingsTitle}>Settings</Text>
             <Pressable onPress={onClose} style={styles.settingsDoneButton}><Text style={styles.settingsDoneText}>Done</Text></Pressable>
           </View>
@@ -1870,6 +1940,8 @@ export default function App() {
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [collapseNonce, setCollapseNonce] = useState<{ action: "expand" | "collapse"; n: number } | null>(null);
   const [pendingCleanupIds, setPendingCleanupIds] = useState<string[]>([]);
+  const retainInspectionIds = useRef<Set<string>>(new Set());
+  const [, startSidebarTransition] = useTransition();
   const undoStack = useRef<Array<{ projects: Project[]; tasks: Task[] }>>([]);
   const redoStack = useRef<Array<{ projects: Project[]; tasks: Task[] }>>([]);
   const pushUndo = useCallback(() => {
@@ -1976,6 +2048,7 @@ export default function App() {
   const navigate = useCallback((patch: Partial<LocationState>) => {
     const next = { ...locationRef.current, ...patch };
     if (sameLocation(locationRef.current, next)) return;
+    retainInspectionIds.current = new Set();
     applyLocation(next);
     const { stack, index } = historyRef.current;
     const nextStack = [...stack.slice(0, Math.max(index, -1) + 1), next];
@@ -2034,7 +2107,7 @@ export default function App() {
       const needle = query.trim().toLowerCase();
       result = result.filter((task) => `${task.title} ${task.note ?? ""} ${task.tags.join(" ")}`.toLowerCase().includes(needle));
     }
-    return result;
+    return withLingeringTasks(result, tasks, lingering);
   }, [tasks, projects, perspective, projectFilter, tagFilter, folderFilter, forecastDay, focusedProjectId, settings.showCompleted, settings.standardAvailability, query, activeCustomPerspective, pendingCleanupIds]);
 
   const orderedTaskIds = useMemo(() => outlineTaskIds({
@@ -2046,14 +2119,17 @@ export default function App() {
   }), [visibleTasks, projects, perspective, activeCustomPerspective, projectFilter]);
 
   useEffect(() => {
+    const existing = new Set(tasks.map((task) => task.id));
+    const retain = [...retainInspectionIds.current].filter((id) => existing.has(id));
+    retainInspectionIds.current = new Set(retain);
     setSelection((current) => {
-      const next = pruneSelection(current, orderedTaskIds);
+      const next = pruneSelection(current, orderedTaskIds, retain);
       if (next.ids.length === current.ids.length && next.ids.every((id, index) => id === current.ids[index]) && next.anchorId === current.anchorId && next.headId === current.headId) {
         return current;
       }
       return next;
     });
-  }, [orderedTaskIds]);
+  }, [orderedTaskIds, tasks]);
 
   const perspectiveTitle = activeCustomPerspective?.name ?? (projectFilter && perspective === "projects"
     ? projects.find((project) => project.id === projectFilter)?.name ?? "Projects"
@@ -2119,11 +2195,16 @@ export default function App() {
       if (patch.completed === false) next.completedAt = undefined;
       return next;
     }));
+    const current = tasks.find((task) => task.id === id);
+    if (patch.projectId !== undefined && current && current.projectId !== patch.projectId) {
+      retainInspectionIds.current = new Set([...retainInspectionIds.current, id]);
+    }
     if (!settings.cleanUpImmediately) {
-      const current = tasks.find((task) => task.id === id);
       if (patch.completed === true) setPendingCleanupIds((ids) => ids.includes(id) ? ids : [...ids, id]);
       if (patch.completed === false) setPendingCleanupIds((ids) => ids.filter((item) => item !== id));
-      if (current && current.projectId === null && patch.projectId) setPendingCleanupIds((ids) => ids.includes(id) ? ids : [...ids, id]);
+      if (patch.projectId !== undefined && current && current.projectId !== patch.projectId) {
+        setPendingCleanupIds((ids) => ids.includes(id) ? ids : [...ids, id]);
+      }
     }
   };
 
@@ -2292,6 +2373,7 @@ export default function App() {
   };
 
   const selectTask = (id: string, modifiers: SelectionModifiers = {}) => {
+    retainInspectionIds.current = new Set();
     setInspectedProjectId(null);
     setEditingTaskId((current) => current === id ? current : null);
     setSelection((current) => applyClick(current, orderedTaskIds, id, modifiers));
@@ -2329,22 +2411,30 @@ export default function App() {
   };
 
   const selectProject = (id: string | null) => {
-    navigate({ perspective: "projects", projectFilter: id, tagFilter: null, folderFilter: null });
+    startSidebarTransition(() => {
+      navigate({ perspective: "projects", projectFilter: id, tagFilter: null, folderFilter: null });
+    });
   };
 
   const selectFolder = (folder: string | null) => {
-    navigate({ perspective: "projects", folderFilter: folder, projectFilter: null, tagFilter: null });
+    startSidebarTransition(() => {
+      navigate({ perspective: "projects", folderFilter: folder, projectFilter: null, tagFilter: null });
+    });
   };
 
   const selectTag = (tag: string | null) => {
-    navigate({ perspective: "tags", tagFilter: tag, projectFilter: null, folderFilter: null });
-    setInspectedProjectId(null);
-    setSelection(emptySelection);
-    if (tag) setInspectorOpen(true);
+    startSidebarTransition(() => {
+      navigate({ perspective: "tags", tagFilter: tag, projectFilter: null, folderFilter: null });
+      setInspectedProjectId(null);
+      setSelection(emptySelection);
+      if (tag) setInspectorOpen(true);
+    });
   };
 
   const selectForecastDay = (day: ForecastDayKey) => {
-    navigate({ perspective: "forecast", forecastDay: day, projectFilter: null, tagFilter: null, folderFilter: null });
+    startSidebarTransition(() => {
+      navigate({ perspective: "forecast", forecastDay: day, projectFilter: null, tagFilter: null, folderFilter: null });
+    });
   };
 
   const insertAction = (projectId?: string | null, afterId?: string | null) => {
@@ -2895,7 +2985,7 @@ export default function App() {
         )}
         {!isPhone ? (
           <View style={styles.toolbar}>
-            <View style={styles.trafficLights}><View style={[styles.trafficLight, { backgroundColor: "#ff5f57" }]} /><View style={[styles.trafficLight, { backgroundColor: "#febc2e" }]} /><View style={[styles.trafficLight, { backgroundColor: "#28c840" }]} /></View>
+            <TrafficLights />
             <View style={styles.toolbarLeading}>
               <ToolbarButton icon="page-layout-sidebar-left" label="Sidebar" active={showSidebar} onPress={() => setSidebarOpen((value) => !value)} />
               <ToolbarButton icon="chevron-left" label="Back" disabled={!canGoBack} onPress={goBack} />
@@ -2997,8 +3087,9 @@ export default function App() {
           />
         )}
 
-        <View style={styles.workspace}>
+        <View style={[styles.workspace, !isPhone && styles.workspaceDesktop]}>
           {!isPhone && settings.perspectiveBarVisible && (
+            <View style={[styles.desktopPane, styles.railPane]}>
             <PerspectiveRail
               current={perspective}
               badges={perspectiveBadges}
@@ -3012,10 +3103,11 @@ export default function App() {
               onOpenSettings={() => setSettingsOpen(true)}
               onDelete={deleteCustomPerspective}
             />
+            </View>
           )}
           {showSidebar && (
             <>
-            <View style={{ width: settings.sidebarWidth }}>
+            <View style={[{ width: settings.sidebarWidth }, styles.desktopPane]}>
             <ProjectSidebar
               perspective={sidebarPerspective}
               projects={sidebarProjects}
@@ -3046,6 +3138,7 @@ export default function App() {
             />
             </>
           )}
+          <View style={[styles.outlinePane, !isPhone && styles.desktopPane]}>
           <Outline
             title={perspectiveTitle}
             perspective={perspective}
@@ -3100,6 +3193,7 @@ export default function App() {
             onCollapseAll={collapseAll}
             databaseEmpty={hydrated && projects.length === 0 && tasks.length === 0}
           />
+          </View>
           {showInspector && (
             <>
             <PaneResizeHandle
@@ -3108,7 +3202,7 @@ export default function App() {
                 inspectorWidth: clampPane(current.inspectorWidth - delta, 260, 480),
               }))}
             />
-            <View style={{ width: settings.inspectorWidth }}>
+            <View style={[{ width: settings.inspectorWidth }, styles.desktopPane]}>
           {selectedTaskIds.length > 1 && (
             <MultiSelectInspector
               count={selectedTaskIds.length}
@@ -3261,20 +3355,21 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: "#f1f0f2" },
-  appShell: { flex: 1, backgroundColor: palette.canvas },
-  toolbar: { height: 62, flexDirection: "row", alignItems: "center", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#bdbbc0", backgroundColor: "#f1f0f2", paddingHorizontal: 12, zIndex: 20 },
-  trafficLights: { width: 67, flexDirection: "row", gap: 8, paddingLeft: 5 },
-  trafficLight: { width: 13, height: 13, borderRadius: 7, borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(0,0,0,.2)" },
+  safeArea: { flex: 1, backgroundColor: palette.chrome },
+  appShell: { flex: 1, backgroundColor: palette.chrome },
+  toolbar: { height: 58, flexDirection: "row", alignItems: "center", backgroundColor: palette.chrome, paddingHorizontal: 12, zIndex: 20 },
+  trafficLights: { width: 62, flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 4 },
+  trafficLight: { width: 12, height: 12, borderRadius: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(0,0,0,.22)", overflow: "hidden" },
+  trafficLightShine: { position: "absolute", top: 1, left: 2, width: 6, height: 3.5, borderRadius: 2, backgroundColor: "rgba(255,255,255,.5)" },
   toolbarLeading: { flex: 1, flexDirection: "row", alignItems: "center", gap: 5 },
   toolbarCenter: { flexDirection: "row", alignItems: "center", gap: 9 },
   toolbarTrailing: { flex: 1, flexDirection: "row", justifyContent: "flex-end", gap: 6 },
-  toolbarButton: { minWidth: 52, height: 54, paddingHorizontal: 7, alignItems: "center", justifyContent: "center", borderRadius: 8, gap: 1 },
-  toolbarButtonActive: { backgroundColor: "rgba(0,0,0,.055)" },
+  toolbarButton: { minWidth: 52, height: 50, paddingHorizontal: 7, alignItems: "center", justifyContent: "center", borderRadius: 12, gap: 1 },
+  toolbarButtonActive: { backgroundColor: "rgba(0,0,0,.07)" },
   toolbarLabel: { fontSize: 9.5, color: "#454248" },
   pressed: { opacity: .65 },
   disabled: { opacity: .35 },
-  viewMenu: { position: "absolute", top: 56, left: -68, width: 250, padding: 14, backgroundColor: "#fbfafc", borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: "#bcb9bf", shadowColor: "#000", shadowOffset: { width: 0, height: 10 }, shadowOpacity: .2, shadowRadius: 24, elevation: 12, zIndex: 100 },
+  viewMenu: { position: "absolute", top: 56, left: -68, width: 250, padding: 14, backgroundColor: "#fbfafc", borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: "#bcb9bf", shadowColor: "#000", shadowOffset: { width: 0, height: 10 }, shadowOpacity: .2, shadowRadius: 24, elevation: 12, zIndex: 100 },
   viewMenuTitle: { fontSize: 13, fontWeight: "700", textAlign: "center", marginBottom: 10 },
   viewMenuRow: { minHeight: 40, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.line },
   viewMenuAction: { minHeight: 38, flexDirection: "row", alignItems: "center", gap: 7, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.line },
@@ -3287,30 +3382,35 @@ const styles = StyleSheet.create({
   mobileHeaderActions: { flexDirection: "row", gap: 8 },
   mobileCircleButton: { width: 36, height: 36, borderRadius: 18, backgroundColor: palette.purpleSoft, alignItems: "center", justifyContent: "center" },
   mobileAddButton: { width: 36, height: 36, borderRadius: 18, backgroundColor: palette.purple, alignItems: "center", justifyContent: "center" },
-  searchBar: { minHeight: 43, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 14, backgroundColor: "#f6f5f7", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
-  searchInput: { flex: 1, height: 30, paddingHorizontal: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: "#c5c2c8", borderRadius: 7, backgroundColor: "#fff", fontSize: 13 },
+  searchBar: { minHeight: 40, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 14, paddingVertical: 6, backgroundColor: palette.chrome },
+  searchInput: { flex: 1, height: 30, paddingHorizontal: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: "#c5c2c8", borderRadius: 15, backgroundColor: "#fff", fontSize: 13 },
   searchDone: { color: palette.purpleDark, fontSize: 12, fontWeight: "600" },
   searchCount: { fontSize: 11, fontWeight: "700", color: "#8b888f", minWidth: 18, textAlign: "right" },
   workspace: { flex: 1, minHeight: 0, flexDirection: "row" },
-  perspectiveRail: { width: 82, paddingHorizontal: 7, paddingVertical: 8, gap: 2, backgroundColor: palette.rail, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: palette.line },
+  workspaceDesktop: { paddingHorizontal: 8, paddingBottom: 8, paddingTop: 2, backgroundColor: palette.chrome },
+  desktopPane: { borderRadius: 12, overflow: "hidden" },
+  railPane: { width: 82, marginRight: 8 },
+  outlinePane: { flex: 1, minWidth: 320 },
+  perspectiveRail: { flex: 1, width: 82, paddingHorizontal: 7, paddingVertical: 8, gap: 2, backgroundColor: palette.rail },
   perspectiveRailList: { flex: 1 },
   perspectiveRailScroll: { gap: 2, paddingBottom: 4 },
-  perspectiveItem: { height: 59, alignItems: "center", justifyContent: "center", gap: 2, borderRadius: 8 },
+  perspectiveItem: { height: 59, alignItems: "center", justifyContent: "center", gap: 2, borderRadius: 12 },
   perspectiveItemSelected: { backgroundColor: "#e9e0f0" },
   perspectiveLabel: { maxWidth: 68, fontSize: 9.5, color: "#58555c" },
   perspectiveLabelSelected: { color: palette.purpleDark, fontWeight: "600" },
   perspectiveMore: { marginTop: "auto" },
   customRailDivider: { height: StyleSheet.hairlineWidth, marginHorizontal: 9, marginVertical: 5, backgroundColor: palette.line },
-  railSettingsButton: { height: 36, alignItems: "center", justifyContent: "center", borderRadius: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.line },
+  railSettingsButton: { height: 36, alignItems: "center", justifyContent: "center", borderRadius: 12 },
   badge: { position: "absolute", right: -11, top: -4, minWidth: 15, height: 15, borderRadius: 8, paddingHorizontal: 3, alignItems: "center", justifyContent: "center", backgroundColor: "#8d8a91" },
   badgeSelected: { backgroundColor: palette.purpleDark },
   badgeText: { color: "#fff", fontSize: 8, fontWeight: "700" },
-  sidebar: { flex: 1, backgroundColor: palette.sidebar, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: palette.line },
+  sidebar: { flex: 1, backgroundColor: palette.sidebar },
   sidebarHeader: { height: 69, paddingHorizontal: 15, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   sidebarTitle: { fontSize: 19, fontWeight: "700", letterSpacing: -.25 },
   sidebarScroll: { paddingHorizontal: 8, paddingBottom: 50 },
-  sidebarRow: { minHeight: 35, paddingHorizontal: 8, flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 7 },
+  sidebarRow: { minHeight: 35, paddingHorizontal: 8, flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 10 },
   sidebarRowSelected: { backgroundColor: "#d9d8dc" },
+  sidebarRowHover: { backgroundColor: "rgba(0,0,0,.05)" },
   sidebarRowText: { flex: 1, fontSize: 12.5, fontWeight: "500", color: "#3a373d" },
   sidebarCount: { fontSize: 10, color: palette.muted },
   sidebarHoldText: { color: "#8a6a1a" },
@@ -3324,10 +3424,10 @@ const styles = StyleSheet.create({
   sidebarFooterText: { fontSize: 11, color: "#625f66" },
   sidebarEmpty: { paddingHorizontal: 24, paddingTop: 30, alignItems: "center", gap: 8 },
   sidebarEmptyText: { fontSize: 11, lineHeight: 16, textAlign: "center", color: "#8b888f" },
-  forecastPast: { height: 35, paddingHorizontal: 7, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line, borderRadius: 7 },
+  forecastPast: { height: 35, paddingHorizontal: 7, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderRadius: 10 },
   forecastPastCount: { fontSize: 10, color: palette.danger, fontWeight: "700" },
   forecastDays: { paddingTop: 10, flexDirection: "row", justifyContent: "space-between", gap: 2 },
-  forecastDay: { flex: 1, minWidth: 0, height: 52, alignItems: "center", justifyContent: "center", borderRadius: 8, gap: 1 },
+  forecastDay: { flex: 1, minWidth: 0, height: 52, alignItems: "center", justifyContent: "center", borderRadius: 12, gap: 1 },
   forecastDaySelected: { backgroundColor: palette.purple },
   forecastDayText: { fontSize: 9, lineHeight: 14, textAlign: "center", color: palette.muted, fontWeight: "600" },
   forecastDayWeek: { fontSize: 8, letterSpacing: 0.3, fontWeight: "700", color: palette.muted },
@@ -3338,18 +3438,18 @@ const styles = StyleSheet.create({
   forecastDayNumWrap: { width: 22, height: 22, borderRadius: 11, alignItems: "center", justifyContent: "center" },
   forecastDayToday: { borderWidth: 1.5, borderColor: palette.purple },
   forecastDayNumToday: { color: palette.purpleDark },
-  forecastUpcoming: { height: 35, marginTop: 8, paddingHorizontal: 7, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.line, borderRadius: 7 },
+  forecastUpcoming: { height: 35, marginTop: 8, paddingHorizontal: 7, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderRadius: 10 },
   outline: { flex: 1, minWidth: 320, backgroundColor: palette.canvas },
   outlineHeader: { height: 69, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
   outlineHeaderCopy: { flex: 1 },
   outlineTitle: { fontSize: 24, lineHeight: 29, fontWeight: "700", letterSpacing: -.55, color: palette.text },
   outlineSubtitle: { fontSize: 10, color: "#858189" },
-  iconButton: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 7 },
+  iconButton: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 10 },
   outlineBody: { flex: 1, position: "relative", overflow: "hidden" },
   outlineScroll: { flex: 1 },
-  outlineContent: { paddingBottom: 48 },
+  outlineContent: { paddingBottom: 48, paddingTop: 4 },
   projectGroup: { borderBottomWidth: 7, borderBottomColor: "#f5f4f6" },
-  projectHeading: { minHeight: 63, paddingHorizontal: 12, paddingVertical: 10, flexDirection: "row", alignItems: "flex-start", gap: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
+  projectHeading: { minHeight: 63, marginHorizontal: 8, marginTop: 4, paddingHorizontal: 8, paddingVertical: 10, flexDirection: "row", alignItems: "flex-start", gap: 7, borderRadius: 12 },
   projectHeadingSelected: { backgroundColor: palette.purpleSelection },
   projectHeadingMain: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "flex-start", gap: 7 },
   projectHeadingRing: { width: 18, height: 18, marginTop: 1, borderWidth: 3, borderRadius: 9, backgroundColor: "#fff" },
@@ -3357,9 +3457,9 @@ const styles = StyleSheet.create({
   projectHeadingTitle: { fontSize: 13.5, lineHeight: 19, fontWeight: "700", color: "#2a272c" },
   projectHeadingNote: { fontSize: 10, lineHeight: 15, color: "#86828a" },
   projectHeadingCount: { fontSize: 10, color: "#89868c" },
-  tagHeading: { minHeight: 54, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
-  taskRow: { minHeight: 55, paddingHorizontal: 17, paddingVertical: 7, flexDirection: "row", alignItems: "flex-start", gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#e7e5e9" },
-  taskRowCompact: { minHeight: 45, paddingVertical: 4 },
+  tagHeading: { minHeight: 54, marginHorizontal: 8, marginTop: 4, paddingHorizontal: 8, flexDirection: "row", alignItems: "center", gap: 9, borderRadius: 12 },
+  taskRow: { minHeight: 52, marginHorizontal: 8, marginVertical: 1, paddingHorizontal: 10, paddingVertical: 7, flexDirection: "row", alignItems: "flex-start", gap: 9, borderRadius: 12 },
+  taskRowCompact: { minHeight: 42, paddingVertical: 4 },
   taskRowSelected: { backgroundColor: palette.purpleSelection },
   taskRowHover: { backgroundColor: "#f4f2f6" },
   taskRowPressed: { opacity: .72 },
@@ -3377,7 +3477,7 @@ const styles = StyleSheet.create({
   outlineNote: { marginTop: 2, marginBottom: 2, fontSize: 11, lineHeight: 15, color: "#86828a" },
   taskMeta: { minHeight: 17, flexDirection: "row", alignItems: "center", gap: 5, overflow: "hidden" },
   taskMetaText: { maxWidth: 165, fontSize: 9.5, color: "#8b878f" },
-  tagChip: { paddingHorizontal: 6, paddingVertical: 1, borderRadius: 7, backgroundColor: "rgba(110,108,115,.11)" },
+  tagChip: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10, backgroundColor: "rgba(110,108,115,.11)" },
   tagChipText: { fontSize: 8.5, color: "#77737b" },
   taskTail: { minHeight: 38, flexDirection: "row", alignItems: "center", gap: 7, paddingLeft: 5 },
   dueText: { fontSize: 9.5, color: "#77737b" },
@@ -3395,48 +3495,49 @@ const styles = StyleSheet.create({
   inlineNewAction: { minHeight: 34, paddingHorizontal: 18, paddingLeft: 48, flexDirection: "row", alignItems: "center", gap: 6 },
   inlineNewActionText: { fontSize: 12, fontWeight: "600", color: palette.purpleDark },
   estimateText: { fontSize: 10, color: "#8a9098", fontVariant: ["tabular-nums"] },
-  paneHandle: { width: 5, backgroundColor: "#d9d7dc" },
+  paneHandle: { width: 8, backgroundColor: "transparent" },
   migrateState: { paddingVertical: 72, paddingHorizontal: 28, alignItems: "center" },
-  migrateIcon: { width: 56, height: 56, marginBottom: 14, alignItems: "center", justifyContent: "center", borderRadius: 16, backgroundColor: palette.purpleSoft },
+  migrateIcon: { width: 56, height: 56, marginBottom: 14, alignItems: "center", justifyContent: "center", borderRadius: 18, backgroundColor: palette.purpleSoft },
   migrateTitle: { marginBottom: 8, fontSize: 18, fontWeight: "700", textAlign: "center", color: palette.text },
   migrateText: { maxWidth: 420, marginBottom: 16, fontSize: 11, lineHeight: 16, textAlign: "center", color: palette.muted },
-  migrateButton: { minHeight: 34, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 8, backgroundColor: palette.purple },
+  migrateButton: { minHeight: 34, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 10, backgroundColor: palette.purple },
   migrateButtonText: { fontSize: 12, fontWeight: "700", color: "#fff" },
   migrateHint: { marginTop: 12, fontSize: 10, color: "#8f8b93" },
   importLead: { fontSize: 11, lineHeight: 16, color: "#5f5b63" },
   reviewRow: { minHeight: 66, paddingHorizontal: 17, flexDirection: "row", alignItems: "center", gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
   reviewCopy: { flex: 1 },
-  reviewButton: { height: 29, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: palette.purple, borderRadius: 7 },
+  reviewButton: { height: 29, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: palette.purple, borderRadius: 10 },
   reviewButtonText: { color: "#fff", fontSize: 10, fontWeight: "600" },
-  skipButton: { height: 29, paddingHorizontal: 10, alignItems: "center", justifyContent: "center", borderRadius: 7, borderWidth: StyleSheet.hairlineWidth, borderColor: "#ccc9cf", backgroundColor: "#fff" },
+  skipButton: { height: 29, paddingHorizontal: 10, alignItems: "center", justifyContent: "center", borderRadius: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: "#ccc9cf", backgroundColor: "#fff" },
   skipButtonText: { fontSize: 10, fontWeight: "600", color: "#5f5c63" },
   reviewActionRow: { marginTop: 10, flexDirection: "row", gap: 8 },
   emptyInspector: { flex: 1, paddingHorizontal: 24, paddingTop: 64, alignItems: "center" },
   tagTokenRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 6 },
   tagToken: { minHeight: 24, paddingHorizontal: 8, flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 12, backgroundColor: palette.purpleSoft },
   tagTokenText: { fontSize: 10, fontWeight: "600", color: palette.purpleDark },
-  inspector: { flex: 1, backgroundColor: palette.inspector, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: palette.line },
+  inspector: { flex: 1, backgroundColor: palette.inspector },
   inspectorModal: { flex: 1, width: "100%", borderLeftWidth: 0 },
-  inspectorTabs: { height: 43, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", justifyContent: "space-around", gap: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
-  inspectorTabSelected: { paddingHorizontal: 12, height: 27, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: "#dedce1" },
-  inspectorTab: { paddingHorizontal: 12, height: 27, alignItems: "center", justifyContent: "center", borderRadius: 6 },
+  inspectorTabs: { height: 43, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 4 },
+  inspectorTabBar: { flex: 1, height: 28, padding: 2, flexDirection: "row", alignItems: "center", borderRadius: 9, backgroundColor: "#e4e2e6" },
+  inspectorTabSelected: { flex: 1, height: 24, alignItems: "center", justifyContent: "center", borderRadius: 7, backgroundColor: "#fff", shadowColor: "#000", shadowOpacity: 0.08, shadowRadius: 2, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  inspectorTab: { flex: 1, height: 24, alignItems: "center", justifyContent: "center", borderRadius: 7 },
   inspectorTabText: { fontSize: 9.5, color: "#5f5c63" },
   inspectorTabTextSelected: { color: palette.text, fontWeight: "700" },
   inspectorNotePane: { flex: 1, padding: 12 },
-  inspectorNoteEditor: { flex: 1, minHeight: 220, padding: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: "#cfccd2", borderRadius: 8, backgroundColor: "#fff", fontSize: 13, lineHeight: 18, color: palette.text },
+  inspectorNoteEditor: { flex: 1, minHeight: 220, padding: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: "#cfccd2", borderRadius: 12, backgroundColor: "#fff", fontSize: 13, lineHeight: 18, color: palette.text },
   notePreview: { fontSize: 11, lineHeight: 16, color: "#4e4a51" },
   attachmentEmpty: { flex: 1, paddingHorizontal: 28, paddingTop: 48, alignItems: "center" },
   attachmentIcon: { width: 52, height: 52, marginBottom: 12, alignItems: "center", justifyContent: "center", borderRadius: 26, borderWidth: 1.5, borderColor: "#cfcdd2" },
   attachmentTitle: { marginBottom: 6, fontSize: 15, fontWeight: "700", color: "#67636a" },
   attachmentText: { fontSize: 11, lineHeight: 16, textAlign: "center", color: "#8f8b93" },
   datePresets: { flexDirection: "row", flexWrap: "wrap", gap: 5, marginBottom: 6 },
-  datePreset: { minHeight: 24, paddingHorizontal: 8, alignItems: "center", justifyContent: "center", borderRadius: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: "#d0ced3", backgroundColor: "#fff" },
+  datePreset: { minHeight: 24, paddingHorizontal: 9, alignItems: "center", justifyContent: "center", borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: "#d0ced3", backgroundColor: "#fff" },
   datePresetSelected: { borderColor: palette.purple, backgroundColor: palette.purpleSoft },
   datePresetText: { fontSize: 9, color: "#5f5c63" },
   datePresetTextSelected: { color: palette.purpleDark, fontWeight: "700" },
-  focusBar: { minHeight: 34, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#ece3f4", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#d3c4e2" },
+  focusBar: { minHeight: 32, marginHorizontal: 8, marginTop: 4, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#ece3f4", borderRadius: 10 },
   focusBarText: { flex: 1, fontSize: 12, fontWeight: "600", color: "#4a2d66" },
-  unfocusButton: { height: 24, paddingHorizontal: 10, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: palette.purple },
+  unfocusButton: { height: 24, paddingHorizontal: 10, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: palette.purple },
   unfocusButtonText: { fontSize: 10, fontWeight: "700", color: "#fff" },
   modalClose: { marginRight: "auto" },
   inspectorScroll: { flex: 1 },
@@ -3444,14 +3545,14 @@ const styles = StyleSheet.create({
   multiSelectCount: { fontSize: 42, lineHeight: 46, fontWeight: "700", color: palette.purpleDark },
   multiSelectLabel: { marginTop: 2, fontSize: 13, fontWeight: "600", color: "#3a373d" },
   multiSelectHint: { marginTop: 10, marginBottom: 22, fontSize: 11, lineHeight: 16, textAlign: "center", color: palette.muted },
-  multiSelectButton: { width: "100%", height: 34, marginBottom: 8, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 7, borderWidth: StyleSheet.hairlineWidth, borderColor: "#ccc9cf", backgroundColor: "#fff" },
+  multiSelectButton: { width: "100%", height: 34, marginBottom: 8, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: "#ccc9cf", backgroundColor: "#fff" },
   multiSelectButtonText: { fontSize: 12, fontWeight: "600", color: "#3a373d" },
   inspectorTitleRow: { minHeight: 82, padding: 13, flexDirection: "row", alignItems: "flex-start", gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
   inspectorTitleInput: { flex: 1, minHeight: 45, padding: 0, fontSize: 13, lineHeight: 18, color: palette.text, textAlignVertical: "top" },
   inspectorSection: { paddingHorizontal: 13, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
   inspectorSectionTitle: { marginBottom: 8, fontSize: 8.5, letterSpacing: .45, fontWeight: "700", color: "#77737b" },
   fieldLabel: { marginTop: 5, marginBottom: 3, fontSize: 9.5, color: "#706c74" },
-  fieldInput: { minHeight: 28, paddingHorizontal: 8, paddingVertical: 4, borderWidth: StyleSheet.hairlineWidth, borderColor: "#cfccd2", borderRadius: 6, backgroundColor: "rgba(255,255,255,.74)", fontSize: 10.5, color: "#353238" },
+  fieldInput: { minHeight: 28, paddingHorizontal: 8, paddingVertical: 4, borderWidth: StyleSheet.hairlineWidth, borderColor: "#cfccd2", borderRadius: 10, backgroundColor: "rgba(255,255,255,.74)", fontSize: 10.5, color: "#353238" },
   infoRow: { minHeight: 22, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   infoLabel: { fontSize: 10, color: "#706c74" },
   infoValue: { fontSize: 10, color: "#3a373d" },
@@ -3459,35 +3560,35 @@ const styles = StyleSheet.create({
   inspectorColorSelected: { borderColor: "#fff", shadowColor: "#000", shadowOpacity: 0.25, shadowRadius: 3, elevation: 3 },
   noteInput: { minHeight: 96, paddingTop: 7 },
   choiceRow: { gap: 5, paddingBottom: 4 },
-  choiceChip: { maxWidth: 170, height: 27, paddingHorizontal: 9, alignItems: "center", justifyContent: "center", borderRadius: 7, borderWidth: StyleSheet.hairlineWidth, borderColor: "#ccc9cf", backgroundColor: "rgba(255,255,255,.7)" },
+  choiceChip: { maxWidth: 170, height: 27, paddingHorizontal: 9, alignItems: "center", justifyContent: "center", borderRadius: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: "#ccc9cf", backgroundColor: "rgba(255,255,255,.7)" },
   choiceChipSelected: { borderColor: palette.purple, backgroundColor: palette.purpleSoft },
   choiceText: { fontSize: 9.5, color: "#5c5960" },
   choiceTextSelected: { color: palette.purpleDark, fontWeight: "600" },
   savedRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingBottom: 11 },
   savedText: { fontSize: 9, color: "#778079" },
-  deleteButton: { height: 31, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, borderWidth: StyleSheet.hairlineWidth, borderColor: "#dfb5b5", borderRadius: 7, backgroundColor: "#fff9f9" },
+  deleteButton: { height: 31, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, borderWidth: StyleSheet.hairlineWidth, borderColor: "#dfb5b5", borderRadius: 10, backgroundColor: "#fff9f9" },
   deleteButtonText: { color: palette.danger, fontSize: 10.5, fontWeight: "600" },
   modalBackdrop: { flex: 1, justifyContent: "center", alignItems: "center", padding: 18, backgroundColor: "rgba(29,25,32,.24)" },
-  quickEntryCard: { width: "100%", maxWidth: 680, overflow: "hidden", borderRadius: 13, borderWidth: StyleSheet.hairlineWidth, borderColor: "#aaa7ad", backgroundColor: "#fbfafc", shadowColor: "#000", shadowOffset: { width: 0, height: 20 }, shadowOpacity: .28, shadowRadius: 40, elevation: 16 },
+  quickEntryCard: { width: "100%", maxWidth: 680, overflow: "hidden", borderRadius: 18, borderWidth: StyleSheet.hairlineWidth, borderColor: "#aaa7ad", backgroundColor: "#fbfafc", shadowColor: "#000", shadowOffset: { width: 0, height: 20 }, shadowOpacity: .28, shadowRadius: 40, elevation: 16 },
   quickEntryHeader: { height: 42, paddingHorizontal: 15, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line, backgroundColor: "#f0eff1" },
   quickEntryHeaderText: { fontSize: 12, fontWeight: "700", color: "#37343a" },
   quickInputRow: { minHeight: 67, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "#fff" },
   quickRing: { width: 19, height: 19, borderRadius: 10, borderWidth: 1.8, borderColor: "#8e8a92" },
   quickInput: { flex: 1, height: 43, fontSize: 16, color: palette.text },
   quickProjectRow: { paddingHorizontal: 46, paddingVertical: 9, gap: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "#eceaed", backgroundColor: "#fff" },
-  quickProjectChip: { maxWidth: 175, height: 29, paddingHorizontal: 9, flexDirection: "row", alignItems: "center", gap: 5, borderRadius: 7, borderWidth: StyleSheet.hairlineWidth, borderColor: "#d2cfd5", backgroundColor: "#f5f4f6" },
+  quickProjectChip: { maxWidth: 175, height: 29, paddingHorizontal: 9, flexDirection: "row", alignItems: "center", gap: 5, borderRadius: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: "#d2cfd5", backgroundColor: "#f5f4f6" },
   quickProjectChipSelected: { borderColor: palette.purple, backgroundColor: palette.purpleSoft },
   quickProjectText: { flexShrink: 1, fontSize: 9.5, color: "#5f5c63" },
   quickMeta: { paddingHorizontal: 16, paddingBottom: 12, gap: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "#eceaed", backgroundColor: "#fff" },
   miniDot: { width: 7, height: 7, borderRadius: 4 },
   quickFooter: { minHeight: 50, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.line },
   quickHint: { flex: 1, fontSize: 8.5, color: "#98949c" },
-  cancelButton: { height: 29, minWidth: 68, alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: "#c9c6cc", borderRadius: 7, backgroundColor: "#fff" },
+  cancelButton: { height: 29, minWidth: 68, alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: "#c9c6cc", borderRadius: 10, backgroundColor: "#fff" },
   cancelButtonText: { fontSize: 10.5, color: "#555159" },
-  saveButton: { height: 29, minWidth: 68, alignItems: "center", justifyContent: "center", borderRadius: 7, backgroundColor: palette.purple },
+  saveButton: { height: 29, minWidth: 68, alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: palette.purple },
   saveButtonText: { fontSize: 10.5, color: "#fff", fontWeight: "700" },
   perspectiveModalBackdrop: { flex: 1, alignItems: "center", justifyContent: "center", padding: 16, backgroundColor: "rgba(29,25,32,.3)" },
-  perspectiveEditor: { width: "100%", maxWidth: 720, maxHeight: "92%", overflow: "hidden", borderRadius: 15, borderWidth: StyleSheet.hairlineWidth, borderColor: "#aaa7ad", backgroundColor: "#f5f3f6", shadowColor: "#000", shadowOffset: { width: 0, height: 20 }, shadowOpacity: .28, shadowRadius: 42, elevation: 18 },
+  perspectiveEditor: { width: "100%", maxWidth: 720, maxHeight: "92%", overflow: "hidden", borderRadius: 18, borderWidth: StyleSheet.hairlineWidth, borderColor: "#aaa7ad", backgroundColor: "#f5f3f6", shadowColor: "#000", shadowOffset: { width: 0, height: 20 }, shadowOpacity: .28, shadowRadius: 42, elevation: 18 },
   perspectiveEditorHeader: { height: 52, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line, backgroundColor: "#efedf0" },
   perspectiveEditorTitle: { fontSize: 14, fontWeight: "700", color: palette.text },
   editorCancelText: { minWidth: 52, fontSize: 12, color: palette.muted },
@@ -3495,49 +3596,48 @@ const styles = StyleSheet.create({
   perspectiveEditorScroll: { flexGrow: 0 },
   perspectiveEditorContent: { padding: 18, paddingBottom: 30 },
   perspectiveIdentity: { flexDirection: "row", alignItems: "center", gap: 13, marginBottom: 18 },
-  perspectivePreviewIcon: { width: 54, height: 54, borderRadius: 14, alignItems: "center", justifyContent: "center" },
-  perspectiveNameInput: { flex: 1, height: 44, paddingHorizontal: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: "#c8c5cb", borderRadius: 9, backgroundColor: "#fff", fontSize: 17, fontWeight: "600", color: palette.text },
+  perspectivePreviewIcon: { width: 54, height: 54, borderRadius: 16, alignItems: "center", justifyContent: "center" },
+  perspectiveNameInput: { flex: 1, height: 44, paddingHorizontal: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: "#c8c5cb", borderRadius: 12, backgroundColor: "#fff", fontSize: 17, fontWeight: "600", color: palette.text },
   editorSectionTitle: { marginTop: 4, marginBottom: 7, fontSize: 8.5, letterSpacing: .8, fontWeight: "700", color: "#77737b" },
   iconChoiceRow: { flexDirection: "row", flexWrap: "wrap", gap: 7, marginBottom: 15 },
-  iconChoice: { width: 39, height: 39, alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: "#cecad1", borderRadius: 9, backgroundColor: "#fff" },
+  iconChoice: { width: 39, height: 39, alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: "#cecad1", borderRadius: 12, backgroundColor: "#fff" },
   colorChoiceRow: { flexDirection: "row", flexWrap: "wrap", gap: 9, marginBottom: 17 },
   colorChoice: { width: 29, height: 29, alignItems: "center", justifyContent: "center", borderRadius: 15, borderWidth: 2, borderColor: "transparent" },
   colorChoiceSelected: { borderColor: "#fff", shadowColor: "#000", shadowOpacity: .22, shadowRadius: 3, elevation: 3 },
-  ruleCard: { padding: 14, marginBottom: 13, borderWidth: StyleSheet.hairlineWidth, borderColor: "#d3d0d5", borderRadius: 11, backgroundColor: "#fff" },
+  ruleCard: { padding: 14, marginBottom: 13, borderWidth: StyleSheet.hairlineWidth, borderColor: "#d3d0d5", borderRadius: 14, backgroundColor: "#fff" },
   ruleCardHeader: { flexDirection: "row", alignItems: "center", gap: 7, marginBottom: 8 },
   ruleCardTitle: { fontSize: 13, fontWeight: "700", color: palette.text },
   ruleLabel: { marginTop: 10, marginBottom: 5, fontSize: 10, fontWeight: "600", color: "#5f5b63" },
   ruleOptional: { fontWeight: "400", color: "#98949c" },
   ruleChoices: { flexDirection: "row", flexWrap: "wrap", gap: 5 },
-  ruleChoice: { minHeight: 29, paddingHorizontal: 10, alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: "#cfccd2", borderRadius: 7, backgroundColor: "#f7f6f8" },
+  ruleChoice: { minHeight: 29, paddingHorizontal: 10, alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: "#cfccd2", borderRadius: 10, backgroundColor: "#f7f6f8" },
   ruleChoiceSelected: { borderColor: palette.purple, backgroundColor: palette.purpleSoft },
   ruleChoiceText: { fontSize: 9.5, color: "#67636b" },
   ruleChoiceTextSelected: { color: palette.purpleDark, fontWeight: "700" },
   projectRuleWrap: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-  projectRuleChip: { minHeight: 29, maxWidth: "100%", paddingHorizontal: 9, flexDirection: "row", alignItems: "center", gap: 5, borderWidth: StyleSheet.hairlineWidth, borderColor: "#cfccd2", borderRadius: 7, backgroundColor: "#f7f6f8" },
+  projectRuleChip: { minHeight: 29, maxWidth: "100%", paddingHorizontal: 9, flexDirection: "row", alignItems: "center", gap: 5, borderWidth: StyleSheet.hairlineWidth, borderColor: "#cfccd2", borderRadius: 10, backgroundColor: "#f7f6f8" },
   projectRuleText: { flexShrink: 1, fontSize: 9.5, color: "#67636b" },
-  editorInput: { minHeight: 34, paddingHorizontal: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: "#c9c6cc", borderRadius: 7, backgroundColor: "#fbfafc", fontSize: 11, color: palette.text },
+  editorInput: { minHeight: 34, paddingHorizontal: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: "#c9c6cc", borderRadius: 10, backgroundColor: "#fbfafc", fontSize: 11, color: palette.text },
   matchRow: { minHeight: 37, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   matchRowText: { fontSize: 10, color: "#67636b" },
-  deletePerspectiveButton: { height: 38, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: "#dfb5b5", borderRadius: 8, backgroundColor: "#fff9f9" },
+  deletePerspectiveButton: { height: 38, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: "#dfb5b5", borderRadius: 10, backgroundColor: "#fff9f9" },
   deletePerspectiveText: { fontSize: 11, fontWeight: "600", color: palette.danger },
   settingsBackdrop: { flex: 1, alignItems: "center", justifyContent: "center", padding: 18, backgroundColor: "rgba(27,24,30,.34)" },
-  settingsWindow: { width: "100%", maxWidth: 780, height: "82%", maxHeight: 610, minHeight: 480, overflow: "hidden", borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: "#aaa7ad", backgroundColor: "#f7f6f8", shadowColor: "#000", shadowOffset: { width: 0, height: 24 }, shadowOpacity: .3, shadowRadius: 48, elevation: 20 },
+  settingsWindow: { width: "100%", maxWidth: 780, height: "82%", maxHeight: 610, minHeight: 480, overflow: "hidden", borderRadius: 18, borderWidth: StyleSheet.hairlineWidth, borderColor: "#aaa7ad", backgroundColor: "#f7f6f8", shadowColor: "#000", shadowOffset: { width: 0, height: 24 }, shadowOpacity: .3, shadowRadius: 48, elevation: 20 },
   settingsWindowCompact: { height: "96%", maxHeight: "96%", minHeight: 0 },
   settingsTitlebar: { height: 49, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#c9c6cc", backgroundColor: "#eceaed" },
   settingsTrafficLights: { position: "absolute", left: 15, flexDirection: "row", gap: 8 },
-  settingsTrafficLight: { width: 12, height: 12, borderRadius: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(0,0,0,.18)" },
   settingsTitle: { fontSize: 13, fontWeight: "700", color: "#37343a" },
-  settingsDoneButton: { position: "absolute", right: 12, minWidth: 48, height: 28, alignItems: "center", justifyContent: "center", borderRadius: 6 },
+  settingsDoneButton: { position: "absolute", right: 12, minWidth: 48, height: 28, alignItems: "center", justifyContent: "center", borderRadius: 10 },
   settingsDoneText: { fontSize: 11, fontWeight: "600", color: palette.purpleDark },
   settingsBody: { flex: 1, minHeight: 0, flexDirection: "row" },
   settingsBodyCompact: { flexDirection: "column" },
   settingsSidebar: { width: 178, padding: 12, gap: 3, backgroundColor: "#e8e6ea", borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: "#c9c6cc" },
   settingsSidebarCompact: { width: "100%", height: 58, paddingHorizontal: 8, paddingVertical: 8, flexDirection: "row", borderRightWidth: 0, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#c9c6cc" },
-  settingsNavItem: { height: 39, paddingHorizontal: 8, flexDirection: "row", alignItems: "center", gap: 9, borderRadius: 7 },
+  settingsNavItem: { height: 39, paddingHorizontal: 8, flexDirection: "row", alignItems: "center", gap: 9, borderRadius: 10 },
   settingsNavItemCompact: { flex: 1, height: 40, justifyContent: "center", paddingHorizontal: 5, gap: 5 },
   settingsNavItemSelected: { backgroundColor: "#d8c9e5" },
-  settingsNavIcon: { width: 27, height: 27, alignItems: "center", justifyContent: "center", borderRadius: 7, backgroundColor: "#d5d2d8" },
+  settingsNavIcon: { width: 27, height: 27, alignItems: "center", justifyContent: "center", borderRadius: 8, backgroundColor: "#d5d2d8" },
   settingsNavIconSelected: { backgroundColor: palette.purple },
   settingsNavText: { fontSize: 11.5, color: "#4c4850" },
   settingsNavTextSelected: { color: "#3d254f", fontWeight: "600" },
@@ -3547,63 +3647,63 @@ const styles = StyleSheet.create({
   settingsPageTitle: { fontSize: 21, lineHeight: 27, fontWeight: "700", letterSpacing: -.35, color: palette.text },
   settingsPageIntro: { marginTop: 4, marginBottom: 20, fontSize: 10.5, lineHeight: 16, color: palette.muted },
   settingsGroupLabel: { marginTop: 2, marginBottom: 6, marginLeft: 3, fontSize: 8, letterSpacing: .7, fontWeight: "700", color: "#817d85" },
-  settingsGroup: { marginBottom: 18, overflow: "hidden", borderWidth: StyleSheet.hairlineWidth, borderColor: "#d2cfd5", borderRadius: 10, backgroundColor: "#fff" },
+  settingsGroup: { marginBottom: 18, overflow: "hidden", borderWidth: StyleSheet.hairlineWidth, borderColor: "#d2cfd5", borderRadius: 14, backgroundColor: "#fff" },
   settingsRow: { minHeight: 58, paddingHorizontal: 13, paddingVertical: 9, flexDirection: "row", alignItems: "center", gap: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#e3e1e5" },
   settingsStackedRow: { minHeight: 74, paddingHorizontal: 13, paddingVertical: 11, gap: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#e3e1e5" },
   settingsRowCopy: { flex: 1, minWidth: 0 },
   settingsRowTitle: { fontSize: 11.5, fontWeight: "600", color: "#37343a" },
   settingsRowDetail: { marginTop: 2, fontSize: 9, lineHeight: 13, color: "#89858d" },
   settingsRowControl: { alignItems: "flex-end" },
-  databaseCard: { minHeight: 76, marginBottom: 18, padding: 12, flexDirection: "row", alignItems: "center", gap: 11, borderWidth: StyleSheet.hairlineWidth, borderColor: "#d2cfd5", borderRadius: 10, backgroundColor: "#fff" },
-  databaseIcon: { width: 48, height: 48, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: palette.purpleSoft },
+  databaseCard: { minHeight: 76, marginBottom: 18, padding: 12, flexDirection: "row", alignItems: "center", gap: 11, borderWidth: StyleSheet.hairlineWidth, borderColor: "#d2cfd5", borderRadius: 14, backgroundColor: "#fff" },
+  databaseIcon: { width: 48, height: 48, alignItems: "center", justifyContent: "center", borderRadius: 14, backgroundColor: palette.purpleSoft },
   databaseCopy: { flex: 1 },
   databaseTitle: { fontSize: 12, fontWeight: "700", color: palette.text },
   databaseDetail: { marginTop: 3, fontSize: 9.5, color: palette.muted },
   databaseStatus: { flexDirection: "row", alignItems: "center", gap: 4 },
   databaseStatusDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#58a65c" },
   databaseStatusText: { fontSize: 9, color: "#667368" },
-  settingsActionButton: { minHeight: 30, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 5, borderWidth: StyleSheet.hairlineWidth, borderColor: "#c9c6cc", borderRadius: 7, backgroundColor: "#f7f6f8" },
+  settingsActionButton: { minHeight: 30, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 5, borderWidth: StyleSheet.hairlineWidth, borderColor: "#c9c6cc", borderRadius: 10, backgroundColor: "#f7f6f8" },
   settingsActionText: { fontSize: 10, fontWeight: "600", color: palette.purpleDark },
-  resetSettingsButton: { minHeight: 34, alignSelf: "flex-start", paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: "#dfb5b5", borderRadius: 7, backgroundColor: "#fff9f9" },
+  resetSettingsButton: { minHeight: 34, alignSelf: "flex-start", paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: "#dfb5b5", borderRadius: 10, backgroundColor: "#fff9f9" },
   resetSettingsText: { fontSize: 10, fontWeight: "600", color: palette.danger },
   confirmBackdrop: { flex: 1, alignItems: "center", justifyContent: "center", padding: 18, backgroundColor: "rgba(27,24,30,.32)" },
   confirmDismissLayer: { ...StyleSheet.absoluteFill, zIndex: 0 },
-  confirmCard: { width: "100%", maxWidth: 390, padding: 20, alignItems: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: "#aaa7ad", borderRadius: 13, backgroundColor: "#fbfafc", shadowColor: "#000", shadowOffset: { width: 0, height: 16 }, shadowOpacity: .24, shadowRadius: 32, elevation: 18, zIndex: 1 },
+  confirmCard: { width: "100%", maxWidth: 390, padding: 20, alignItems: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: "#aaa7ad", borderRadius: 18, backgroundColor: "#fbfafc", shadowColor: "#000", shadowOffset: { width: 0, height: 16 }, shadowOpacity: .24, shadowRadius: 32, elevation: 18, zIndex: 1 },
   confirmIcon: { width: 45, height: 45, marginBottom: 11, alignItems: "center", justifyContent: "center", borderRadius: 23, backgroundColor: "#f7e4e4" },
   confirmTitle: { maxWidth: "100%", fontSize: 15, fontWeight: "700", color: palette.text },
   confirmText: { marginTop: 5, fontSize: 10, lineHeight: 15, textAlign: "center", color: palette.muted },
   confirmActions: { width: "100%", marginTop: 18, flexDirection: "row", justifyContent: "flex-end", gap: 8 },
-  confirmDeleteButton: { height: 29, minWidth: 72, alignItems: "center", justifyContent: "center", borderRadius: 7, backgroundColor: palette.danger },
+  confirmDeleteButton: { height: 29, minWidth: 72, alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: palette.danger },
   confirmDeleteText: { fontSize: 10.5, fontWeight: "700", color: "#fff" },
   importBackdrop: { flex: 1, alignItems: "center", justifyContent: "center", padding: 16, backgroundColor: "rgba(29,25,32,.34)" },
-  importCard: { width: "100%", maxWidth: 620, maxHeight: "90%", overflow: "hidden", borderRadius: 15, borderWidth: StyleSheet.hairlineWidth, borderColor: "#aaa7ad", backgroundColor: "#f8f7f9", shadowColor: "#000", shadowOffset: { width: 0, height: 20 }, shadowOpacity: .3, shadowRadius: 42, elevation: 18 },
+  importCard: { width: "100%", maxWidth: 620, maxHeight: "90%", overflow: "hidden", borderRadius: 18, borderWidth: StyleSheet.hairlineWidth, borderColor: "#aaa7ad", backgroundColor: "#f8f7f9", shadowColor: "#000", shadowOffset: { width: 0, height: 20 }, shadowOpacity: .3, shadowRadius: 42, elevation: 18 },
   importHeader: { minHeight: 53, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line, backgroundColor: "#efedf0" },
   importHeaderTitle: { flexDirection: "row", alignItems: "center", gap: 8 },
   importTitle: { fontSize: 14, fontWeight: "700", color: palette.text },
   importContent: { padding: 18, gap: 12 },
-  importSourceRow: { minHeight: 62, padding: 10, flexDirection: "row", alignItems: "center", gap: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: "#d0cdd3", borderRadius: 10, backgroundColor: "#fff" },
-  importFileIcon: { width: 42, height: 42, alignItems: "center", justifyContent: "center", borderRadius: 9, backgroundColor: palette.purpleSoft },
+  importSourceRow: { minHeight: 62, padding: 10, flexDirection: "row", alignItems: "center", gap: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: "#d0cdd3", borderRadius: 14, backgroundColor: "#fff" },
+  importFileIcon: { width: 42, height: 42, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: palette.purpleSoft },
   importSourceCopy: { flex: 1, minWidth: 0 },
   importFileName: { fontSize: 12.5, fontWeight: "700", color: palette.text },
   importFormat: { marginTop: 2, fontSize: 9.5, color: palette.muted },
   importSectionTitle: { marginTop: 3, fontSize: 8.5, letterSpacing: .8, fontWeight: "700", color: "#77737b" },
   importStats: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
-  importStat: { flexGrow: 1, flexBasis: 72, minHeight: 62, padding: 8, alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: "#d6d3d8", borderRadius: 9, backgroundColor: "#fff" },
+  importStat: { flexGrow: 1, flexBasis: 72, minHeight: 62, padding: 8, alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: "#d6d3d8", borderRadius: 12, backgroundColor: "#fff" },
   importStatValue: { fontSize: 20, lineHeight: 23, fontWeight: "700", color: palette.purpleDark },
   importStatLabel: { marginTop: 2, fontSize: 8.5, color: palette.muted },
-  importProjectList: { overflow: "hidden", borderWidth: StyleSheet.hairlineWidth, borderColor: "#d6d3d8", borderRadius: 9, backgroundColor: "#fff" },
+  importProjectList: { overflow: "hidden", borderWidth: StyleSheet.hairlineWidth, borderColor: "#d6d3d8", borderRadius: 12, backgroundColor: "#fff" },
   importProjectRow: { minHeight: 34, paddingHorizontal: 11, flexDirection: "row", alignItems: "center", gap: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#ebe9ec" },
   importProjectName: { flex: 1, fontSize: 10.5, color: "#4e4a51" },
   importProjectCount: { fontSize: 9, color: palette.muted },
   importMore: { padding: 10, fontSize: 9.5, textAlign: "center", color: palette.purpleDark },
-  importWarning: { padding: 10, flexDirection: "row", alignItems: "flex-start", gap: 7, borderRadius: 8, backgroundColor: "#fff4dd" },
+  importWarning: { padding: 10, flexDirection: "row", alignItems: "flex-start", gap: 7, borderRadius: 12, backgroundColor: "#fff4dd" },
   importWarningText: { flex: 1, fontSize: 9.5, lineHeight: 14, color: "#75531f" },
   importHelp: { fontSize: 9.5, lineHeight: 14, color: palette.muted },
-  replaceConfirm: { padding: 12, gap: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: "#e3baba", borderRadius: 9, backgroundColor: "#fff7f7" },
+  replaceConfirm: { padding: 12, gap: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: "#e3baba", borderRadius: 12, backgroundColor: "#fff7f7" },
   replaceConfirmTitle: { fontSize: 11.5, fontWeight: "700", color: palette.danger },
   replaceConfirmText: { fontSize: 9.5, lineHeight: 14, color: "#765b5b" },
   replaceConfirmActions: { marginTop: 5, flexDirection: "row", justifyContent: "flex-end", gap: 8 },
-  replaceButton: { height: 29, paddingHorizontal: 12, alignItems: "center", justifyContent: "center", borderRadius: 7, backgroundColor: palette.danger },
+  replaceButton: { height: 29, paddingHorizontal: 12, alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: palette.danger },
   replaceButtonText: { fontSize: 10, fontWeight: "700", color: "#fff" },
   importMessageContent: { paddingHorizontal: 28, paddingVertical: 34, alignItems: "center" },
   importMessageIcon: { width: 58, height: 58, marginBottom: 13, alignItems: "center", justifyContent: "center", borderRadius: 29 },
@@ -3611,18 +3711,19 @@ const styles = StyleSheet.create({
   importMessageIconError: { backgroundColor: "#f8e4e4" },
   importMessageTitle: { marginBottom: 7, fontSize: 17, fontWeight: "700", color: palette.text },
   importMessageText: { maxWidth: 450, fontSize: 11, lineHeight: 17, textAlign: "center", color: palette.muted },
-  exportInstructions: { width: "100%", marginTop: 18, padding: 13, gap: 5, borderWidth: StyleSheet.hairlineWidth, borderColor: "#d6d3d8", borderRadius: 9, backgroundColor: "#fff" },
+  exportInstructions: { width: "100%", marginTop: 18, padding: 13, gap: 5, borderWidth: StyleSheet.hairlineWidth, borderColor: "#d6d3d8", borderRadius: 12, backgroundColor: "#fff" },
   exportInstructionsTitle: { marginBottom: 2, fontSize: 10.5, fontWeight: "700", color: palette.text },
   exportInstruction: { fontSize: 9.5, lineHeight: 15, color: "#5f5b63" },
   importFooter: { minHeight: 56, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.line, backgroundColor: "#f0eff1" },
-  importReplaceButton: { height: 31, minWidth: 72, alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: "#dfb5b5", borderRadius: 7, backgroundColor: "#fff9f9" },
+  importReplaceButton: { height: 31, minWidth: 72, alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: "#dfb5b5", borderRadius: 10, backgroundColor: "#fff9f9" },
   importReplaceText: { fontSize: 10.5, color: palette.danger },
-  importMergeButton: { height: 31, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, borderRadius: 7, backgroundColor: palette.purple },
+  importMergeButton: { height: 31, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, borderRadius: 10, backgroundColor: palette.purple },
   importMergeText: { fontSize: 10.5, fontWeight: "700", color: "#fff" },
   mobileNav: { minHeight: 62, paddingTop: 5, paddingBottom: Platform.OS === "ios" ? 4 : 6, flexDirection: "row", alignItems: "center", borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.line, backgroundColor: "#f7f5f8" },
   mobileNavList: { flex: 1 },
   mobileNavScroll: { paddingHorizontal: 3 },
-  mobileNavItem: { width: 64, alignItems: "center", justifyContent: "center", gap: 2 },
+  mobileNavItem: { width: 64, alignItems: "center", justifyContent: "center", gap: 2, borderRadius: 12, paddingVertical: 4 },
+  mobileNavItemSelected: { backgroundColor: palette.purpleSoft },
   mobileNavLabel: { maxWidth: 58, fontSize: 8, color: "#77747b" },
   mobileNavLabelSelected: { color: palette.purpleDark, fontWeight: "700" },
 });

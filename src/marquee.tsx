@@ -198,6 +198,7 @@ const styles = StyleSheet.create({
   marquee: {
     position: "absolute",
     borderWidth: 1,
+    borderRadius: 6,
     borderColor: "rgba(10, 100, 214, 0.92)",
     backgroundColor: "rgba(10, 100, 214, 0.16)",
     zIndex: 20,

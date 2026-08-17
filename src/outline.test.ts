@@ -14,9 +14,11 @@ import {
   outdentTasks,
   projectDisplayName,
   projectIsStalled,
+  sidebarActionCounts,
   skipReviewTimestamp,
   taskMatchesView,
   toTaskPaper,
+  withLingeringTasks,
 } from "./outline.ts";
 
 function task(partial: Partial<Task> & { id: string; title: string }): Task {
@@ -158,4 +160,26 @@ test("skip review postpones until tomorrow", () => {
   const skipped = { ...project({ reviewIntervalDays: 7 }), lastReviewedAt: skipReviewTimestamp(project({ reviewIntervalDays: 7 }), now) };
   assert.equal(projectDueForReview(skipped, now), false);
   assert.equal(projectDueForReview(skipped, new Date(2026, 7, 18, 9, 0, 0)), true);
+});
+
+test("lingering tasks stay visible after they leave the current filter", () => {
+  const visible = [task({ id: "a", title: "Stay" })];
+  const all = [task({ id: "a", title: "Stay" }), task({ id: "b", title: "Moved", projectId: "p2" })];
+  const kept = withLingeringTasks(visible, all, ["b"]);
+  assert.deepEqual(kept.map((item) => item.id), ["a", "b"]);
+  assert.deepEqual(withLingeringTasks(visible, all, []).map((item) => item.id), ["a"]);
+});
+
+test("sidebar counts remaining actions in one pass", () => {
+  const counts = sidebarActionCounts([
+    task({ id: "a", title: "Open", projectId: "p1", tags: ["errand"] }),
+    task({ id: "b", title: "Done", projectId: "p1", completed: true, tags: ["errand"] }),
+    task({ id: "c", title: "Other", projectId: "p2" }),
+    task({ id: "d", title: "Dropped", projectId: "p2", status: "dropped" }),
+  ]);
+  assert.equal(counts.remainingByProject.get("p1"), 1);
+  assert.equal(counts.remainingByProject.get("p2"), 1);
+  assert.equal(counts.remainingInProjects, 2);
+  assert.equal(counts.remainingByTag.get("errand"), 1);
+  assert.equal(counts.remainingTagged, 1);
 });

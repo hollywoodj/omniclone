@@ -157,7 +157,7 @@ const styles = StyleSheet.create({
     maxWidth: 520,
     maxHeight: 420,
     overflow: "hidden",
-    borderRadius: 12,
+    borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "#b7b4ba",
     backgroundColor: "#f7f6f8",
@@ -188,10 +188,12 @@ const styles = StyleSheet.create({
   },
   row: {
     minHeight: 38,
-    paddingHorizontal: 12,
+    marginHorizontal: 6,
+    paddingHorizontal: 10,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+    borderRadius: 8,
   },
   rowSelected: {
     backgroundColor: palette.purpleSelection,
@@ -199,7 +201,7 @@ const styles = StyleSheet.create({
   iconWell: {
     width: 26,
     height: 26,
-    borderRadius: 7,
+    borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
   },

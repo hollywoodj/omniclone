@@ -306,6 +306,33 @@ export function projectIsStalled(project: Project, tasks: Task[]) {
   return !tasks.some((task) => task.projectId === project.id && !task.completed && (task.status ?? "active") !== "dropped");
 }
 
+export function withLingeringTasks(visible: Task[], all: Task[], lingeringIds: Iterable<string>) {
+  const lingering = lingeringIds instanceof Set ? lingeringIds : new Set(lingeringIds);
+  if (!lingering.size) return visible;
+  const seen = new Set(visible.map((task) => task.id));
+  const extra = all.filter((task) => lingering.has(task.id) && !seen.has(task.id));
+  return extra.length ? [...visible, ...extra] : visible;
+}
+
+export function sidebarActionCounts(tasks: Task[]) {
+  const remainingByProject = new Map<string, number>();
+  const remainingByTag = new Map<string, number>();
+  let remainingInProjects = 0;
+  let remainingTagged = 0;
+  for (const task of tasks) {
+    if (task.completed || (task.status ?? "active") === "dropped") continue;
+    if (task.projectId) {
+      remainingByProject.set(task.projectId, (remainingByProject.get(task.projectId) ?? 0) + 1);
+      remainingInProjects += 1;
+    }
+    if (task.tags.length) remainingTagged += 1;
+    for (const tag of task.tags) {
+      remainingByTag.set(tag, (remainingByTag.get(tag) ?? 0) + 1);
+    }
+  }
+  return { remainingByProject, remainingByTag, remainingInProjects, remainingTagged };
+}
+
 export function splitProjectPath(fullName: string): { folder?: string; name: string } {
   const index = fullName.lastIndexOf(" : ");
   if (index <= 0) return { name: fullName };
