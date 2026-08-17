@@ -44,15 +44,20 @@ CREATE TABLE IF NOT EXISTS custom_perspectives (
   name TEXT NOT NULL,
   icon TEXT NOT NULL,
   color TEXT NOT NULL,
-  status TEXT NOT NULL,
-  flagged TEXT NOT NULL,
-  due TEXT NOT NULL,
-  tag_match TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'remaining',
+  flagged TEXT NOT NULL DEFAULT 'any',
+  due TEXT NOT NULL DEFAULT 'any',
+  tag_match TEXT NOT NULL DEFAULT 'any',
   search TEXT NOT NULL DEFAULT '',
   group_by TEXT NOT NULL,
   sort_by TEXT NOT NULL,
   project_ids TEXT NOT NULL DEFAULT '[]',
-  tags TEXT NOT NULL DEFAULT '[]'
+  tags TEXT NOT NULL DEFAULT '[]',
+  combinator TEXT NOT NULL DEFAULT 'all',
+  structure TEXT NOT NULL DEFAULT 'flexible',
+  organize_by TEXT NOT NULL DEFAULT 'actions',
+  keep_sidebar_hidden INTEGER NOT NULL DEFAULT 0,
+  rules TEXT NOT NULL DEFAULT '[]'
 );
 `;
 
@@ -62,8 +67,26 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
   if (!dbPromise) {
     dbPromise = SQLite.openDatabaseAsync("omniclone.db").then(async (db) => {
       await db.execAsync(SCHEMA);
+      await migrateCustomPerspectives(db);
       return db;
     });
   }
   return dbPromise;
+}
+
+async function migrateCustomPerspectives(db: SQLite.SQLiteDatabase) {
+  const columns = await db.getAllAsync<{ name: string }>("PRAGMA table_info(custom_perspectives)");
+  const names = new Set(columns.map((column) => column.name));
+  const add: Array<[string, string]> = [
+    ["combinator", "TEXT NOT NULL DEFAULT 'all'"],
+    ["structure", "TEXT NOT NULL DEFAULT 'flexible'"],
+    ["organize_by", "TEXT NOT NULL DEFAULT 'actions'"],
+    ["keep_sidebar_hidden", "INTEGER NOT NULL DEFAULT 0"],
+    ["rules", "TEXT NOT NULL DEFAULT '[]'"],
+  ];
+  for (const [name, definition] of add) {
+    if (!names.has(name)) {
+      await db.execAsync(`ALTER TABLE custom_perspectives ADD COLUMN ${name} ${definition}`);
+    }
+  }
 }

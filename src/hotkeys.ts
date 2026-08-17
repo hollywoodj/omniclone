@@ -1,12 +1,17 @@
 import type { ActivePerspective, PerspectiveId } from "./model";
+import { commandPressed, eventMatchesShortcut, isMacPlatform } from "./shortcuts";
 
 export type HotkeyAction =
-  | { type: "perspective"; id: PerspectiveId }
+  | { type: "perspective"; id: ActivePerspective }
   | { type: "toggleSidebar" }
   | { type: "toggleInspector" }
   | { type: "toggleSearch" }
   | { type: "openSettings" }
   | { type: "toggleViewMenu" }
+  | { type: "addPerspective" }
+  | { type: "showPerspectivesList" }
+  | { type: "togglePerspectivesBar" }
+  | { type: "quickOpen" }
   | { type: "newAction" }
   | { type: "newProject" }
   | { type: "quickEntry" }
@@ -27,9 +32,10 @@ type ModifierState = {
 };
 
 function readModifiers(event: KeyboardEvent): ModifierState {
+  const command = commandPressed(event);
   return {
-    meta: event.metaKey,
-    ctrl: event.ctrlKey,
+    meta: command,
+    ctrl: isMacPlatform() ? event.ctrlKey : false,
     alt: event.altKey,
     shift: event.shiftKey,
   };
@@ -49,9 +55,18 @@ export function isTextInputTarget(target: EventTarget | null): boolean {
 }
 
 /** OmniFocus 4 default shortcuts (Mac). Meta = Command, Alt = Option. */
-export function matchOmniFocusHotkey(event: KeyboardEvent, options: { deleteDialogOpen: boolean }): HotkeyAction | null {
+export function matchOmniFocusHotkey(event: KeyboardEvent, options: {
+  deleteDialogOpen: boolean;
+  perspectiveShortcuts?: Record<string, string>;
+  shortcutCapture?: boolean;
+}): HotkeyAction | null {
   if (options.deleteDialogOpen) {
     if (event.key === "Enter") return { type: "confirmDelete" };
+    if (event.key === "Escape") return { type: "cancel" };
+    return null;
+  }
+
+  if (options.shortcutCapture) {
     if (event.key === "Escape") return { type: "cancel" };
     return null;
   }
@@ -60,6 +75,15 @@ export function matchOmniFocusHotkey(event: KeyboardEvent, options: { deleteDial
 
   const { meta, ctrl, alt, shift } = readModifiers(event);
   const key = event.key;
+
+  if (options.perspectiveShortcuts) {
+    const entries = Object.entries(options.perspectiveShortcuts).sort(([a], [b]) => Number(b.startsWith("custom:")) - Number(a.startsWith("custom:")));
+    for (const [id, shortcut] of entries) {
+      if (shortcut && eventMatchesShortcut(event, shortcut)) {
+        return { type: "perspective", id: id as ActivePerspective };
+      }
+    }
+  }
 
   if (meta && !ctrl && !alt && !shift) {
     const perspectives: Record<string, PerspectiveId> = {
@@ -73,14 +97,18 @@ export function matchOmniFocusHotkey(event: KeyboardEvent, options: { deleteDial
     if (perspectives[key]) return { type: "perspective", id: perspectives[key] };
     if (key === "n" || key === "N") return { type: "newAction" };
     if (key === "f" || key === "F") return { type: "toggleSearch" };
+    if (key === "o" || key === "O") return { type: "quickOpen" };
     if (key === ",") return { type: "openSettings" };
     if (key === "Delete" || key === "Backspace") return { type: "delete", direction: "menu" };
   }
+
+  if (meta && ctrl && !alt && !shift && (key === "p" || key === "P")) return { type: "showPerspectivesList" };
 
   if (meta && alt && !ctrl && !shift) {
     if (key === "s" || key === "S") return { type: "toggleSidebar" };
     if (key === "i" || key === "I") return { type: "toggleInspector" };
     if (key === "f" || key === "F") return { type: "toggleSearch" };
+    if (key === "p" || key === "P") return { type: "togglePerspectivesBar" };
   }
 
   if (meta && shift && !ctrl && !alt) {
