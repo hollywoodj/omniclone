@@ -2,6 +2,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import React, { useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { palette, perspectives, type ActivePerspective, type CustomPerspective, type Project } from "./model";
+import { projectDisplayName } from "./outline";
 
 type IconName = React.ComponentProps<typeof MaterialCommunityIcons>["name"];
 
@@ -65,8 +66,8 @@ export function QuickOpenModal({
       ...projects.map((project) => ({
         id: `project:${project.id}`,
         kind: "project" as const,
-        label: project.name,
-        detail: "Project",
+        label: projectDisplayName(project),
+        detail: project.folder ? `Project · ${project.folder}` : "Project",
         icon: "folder-outline" as IconName,
         color: project.color,
         projectId: project.id,

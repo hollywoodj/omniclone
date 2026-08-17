@@ -9,11 +9,13 @@ import {
   inspectorTimestamp,
   isActionAvailable,
   isDueOnDay,
+  isForecastItem,
   matchesAvailability,
   parseDueLabel,
   projectDueForReview,
   reviewStatusText,
   todayKey,
+  completionGroupLabel,
 } from "./dates.ts";
 import type { Project } from "./model.ts";
 
@@ -98,4 +100,14 @@ test("Available hides deferred actions until their date arrives", () => {
 test("formats inspector added and completed timestamps", () => {
   assert.equal(inspectorTimestamp("2026-08-17T15:00:00", now), "Today, 3:00 PM");
   assert.equal(inspectorTimestamp("2026-08-16T00:00:00", now), "Yesterday");
+});
+
+test("Forecast Today includes flagged actions that have no due date", () => {
+  const flagged = { flagged: true, due: undefined, completed: false };
+  const dated = { flagged: true, due: "Tomorrow", completed: false };
+  assert.equal(isForecastItem(flagged, todayKey(now), now), true);
+  assert.equal(isForecastItem(flagged, "past", now), false);
+  assert.equal(isForecastItem(dated, todayKey(now), now), false);
+  assert.equal(completionGroupLabel(now.toISOString(), now), "Today");
+  assert.equal(completionGroupLabel(new Date(2026, 7, 16).toISOString(), now), "Yesterday");
 });

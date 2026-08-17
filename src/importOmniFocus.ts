@@ -1,5 +1,6 @@
 import type { Project, Task } from "./model";
 import { formatOmniFocusDate, parseOmniTimestamp } from "./dates.ts";
+import { hydrateProjectFolder, splitProjectPath } from "./outline.ts";
 
 export { formatOmniFocusDate, parseOmniTimestamp } from "./dates.ts";
 
@@ -109,16 +110,22 @@ function joinNotes(...parts: Array<string | undefined>) {
   return parts.map((part) => clean(part)).filter(Boolean).join("\n\n") || undefined;
 }
 
-function projectRecord(name: string, index: number, note = ""): Project {
-  const normalized = name.toLowerCase();
+function projectRecord(name: string, index: number, note = "", folder?: string): Project {
+  const split = folder ? { folder, name } : splitProjectPath(name);
+  const normalized = `${split.folder ? `${split.folder} : ` : ""}${split.name}`.toLowerCase();
   return {
     id: `of-project-${hashText(normalized)}`,
     importKey: `omnifocus:project:${normalized}`,
-    name,
+    name: split.name,
+    folder: split.folder,
     color: importColors[index % importColors.length] ?? "#8f57c8",
     note,
     reviewIntervalDays: 7,
   };
+}
+
+function projectFullName(project: Project) {
+  return project.folder ? `${project.folder} : ${project.name}` : project.name;
 }
 
 function addProjectAlias(aliases: Map<string, string>, alias: string, id: string) {
@@ -160,6 +167,8 @@ function parseOmniCsv(sourceName: string, text: string, now: Date): OmniImportDa
     projects.push(project);
     addProjectAlias(projectAliases, name, project.id);
     addProjectAlias(projectAliases, leafName(name), project.id);
+    addProjectAlias(projectAliases, project.name, project.id);
+    addProjectAlias(projectAliases, projectFullName(project), project.id);
     return project;
   };
 
@@ -231,21 +240,17 @@ function parseOmniCsv(sourceName: string, text: string, now: Date): OmniImportDa
       tags,
       due,
       defer,
-      note: joinNotes(
-        note,
-        duration,
-        dropped ? "Imported OmniFocus status: Dropped" : undefined,
-        onHold ? "Imported OmniFocus status: On Hold" : undefined,
-      ),
+      note: joinNotes(note, duration),
       flagged: /^(1|true|yes|y|flagged|★)$/i.test(value(row, "Flagged", "Flag")),
-      completed: !!completion || status.includes("completed") || status.includes("done") || dropped,
+      completed: !!completion || status.includes("completed") || status.includes("done"),
       completedAt: completedAt?.toISOString(),
       createdAt: addedAt?.toISOString() ?? new Date(importedAt + index).toISOString(),
+      status: dropped ? "dropped" : onHold ? "onHold" : "active",
     };
   });
-  if (folderCount) warnings.push(`${folderCount} folder${folderCount === 1 ? " was" : "s were"} folded into project names.`);
-  if (droppedCount) warnings.push(`${droppedCount} dropped item${droppedCount === 1 ? " was" : "s were"} preserved as completed.`);
-  if (onHoldCount) warnings.push(`${onHoldCount} on-hold item${onHoldCount === 1 ? " was" : "s were"} kept remaining, with the original status in the note.`);
+  if (folderCount) warnings.push(`${folderCount} folder${folderCount === 1 ? " was" : "s were"} kept as sidebar folders.`);
+  if (droppedCount) warnings.push(`${droppedCount} dropped item${droppedCount === 1 ? " was" : "s were"} kept with Dropped status.`);
+  if (onHoldCount) warnings.push(`${onHoldCount} on-hold item${onHoldCount === 1 ? " was" : "s were"} kept with On Hold status.`);
   return { sourceName, format: "OmniFocus CSV", projects, tasks, skipped, warnings };
 }
 
@@ -326,7 +331,11 @@ function parseTaskPaper(sourceName: string, text: string, now: Date): OmniImport
     else skipped += 1;
   }
   if (!tasks.length && !projects.length) throw new Error("The TaskPaper file does not contain any projects or actions.");
-  return { sourceName, format: "OmniFocus TaskPaper", projects, tasks, skipped, warnings: [] };
+  const hydrated = projects.map((project) => hydrateProjectFolder(project));
+  const used = new Set(tasks.map((task) => task.projectId));
+  const folderNames = new Set(hydrated.map((project) => project.folder).filter((folder): folder is string => !!folder));
+  const kept = hydrated.filter((project) => used.has(project.id) || !folderNames.has(project.name) || !!project.folder);
+  return { sourceName, format: "OmniFocus TaskPaper", projects: kept, tasks, skipped, warnings: [] };
 }
 
 function looksLikeCsv(text: string) {

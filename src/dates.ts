@@ -222,6 +222,31 @@ export function forecastSubtitle(day: ForecastDayKey, now = new Date()) {
   return parsed ? `${weekdayLong[parsed.getDay()]}, ${monthNames[parsed.getMonth()]} ${parsed.getDate()}` : "Forecast";
 }
 
+export function isFlaggedOnForecastToday(task: Pick<Task, "flagged" | "due" | "completed">, day: ForecastDayKey, now = new Date()) {
+  return !!task.flagged && !task.due && !task.completed && day === todayKey(now);
+}
+
+export function isForecastItem(task: Pick<Task, "flagged" | "due" | "completed">, day: ForecastDayKey, now = new Date()) {
+  if (task.completed) return false;
+  if (task.due && isDueOnDay(task.due, day, now)) return true;
+  return isFlaggedOnForecastToday(task, day, now);
+}
+
+export const completionGroupOrder = ["Today", "Yesterday", "This Week", "Last Week", "Older", "Unknown"] as const;
+export type CompletionGroup = (typeof completionGroupOrder)[number];
+
+export function completionGroupLabel(iso: string | undefined, now = new Date()): CompletionGroup {
+  if (!iso) return "Unknown";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "Unknown";
+  const delta = dayDelta(date, now);
+  if (delta >= 0) return "Today";
+  if (delta === -1) return "Yesterday";
+  if (delta > -7) return "This Week";
+  if (delta > -14) return "Last Week";
+  return "Older";
+}
+
 export function projectDueForReview(project: Project, now = new Date()) {
   if (!project.lastReviewedAt) return true;
   const last = new Date(project.lastReviewedAt);
@@ -243,6 +268,7 @@ export type LocationState = {
   perspective: ActivePerspective;
   projectFilter: string | null;
   tagFilter: string | null;
+  folderFilter: string | null;
   forecastDay: ForecastDayKey;
   focusedProjectId: string | null;
 };
@@ -251,6 +277,7 @@ export function sameLocation(a: LocationState, b: LocationState) {
   return a.perspective === b.perspective
     && a.projectFilter === b.projectFilter
     && a.tagFilter === b.tagFilter
+    && a.folderFilter === b.folderFilter
     && a.forecastDay === b.forecastDay
     && a.focusedProjectId === b.focusedProjectId;
 }

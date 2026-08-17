@@ -34,7 +34,8 @@ test("imports a realistic OmniFocus CSV with folders, inbox, tags, and status", 
   const imported = parseOmniFocusFile("OmniFocus.csv", bytes(csv), now);
   assert.equal(imported.format, "OmniFocus CSV");
   assert.equal(imported.projects.length, 1);
-  assert.equal(imported.projects[0]?.name, "Work : Website");
+  assert.equal(imported.projects[0]?.name, "Website");
+  assert.equal(imported.projects[0]?.folder, "Work");
   assert.equal(imported.projects[0]?.note, "Kickoff the public site.");
   assert.equal(imported.tasks.length, 6);
 
@@ -53,12 +54,12 @@ test("imports a realistic OmniFocus CSV with folders, inbox, tags, and status", 
   assert.deepEqual(inbox?.tags, ["Phone"]);
 
   const dropped = imported.tasks.find((task) => task.title === "Old idea");
-  assert.equal(dropped?.completed, true);
-  assert.match(dropped?.note ?? "", /Dropped/);
+  assert.equal(dropped?.completed, false);
+  assert.equal(dropped?.status, "dropped");
 
   const held = imported.tasks.find((task) => task.title === "Hold for legal");
   assert.equal(held?.completed, false);
-  assert.match(held?.note ?? "", /On Hold/);
+  assert.equal(held?.status, "onHold");
 
   assert.equal(imported.skipped, 1);
   assert.ok(imported.warnings.some((warning) => warning.includes("folder")));
@@ -72,7 +73,8 @@ test("creates folder-prefixed projects even when actions appear before project r
   ].join("\n");
   const imported = parseOmniFocusFile("OmniFocus.csv", bytes(csv), now);
   assert.equal(imported.projects.length, 1);
-  assert.equal(imported.projects[0]?.name, "Work : Website");
+  assert.equal(imported.projects[0]?.name, "Website");
+  assert.equal(imported.projects[0]?.folder, "Work");
   assert.equal(imported.tasks[0]?.projectId, imported.projects[0]?.id);
 });
 
@@ -94,7 +96,7 @@ test("imports nested TaskPaper projects and due tags", () => {
 
   const imported = parseOmniFocusFile("library.taskpaper", bytes(taskpaper), now);
   assert.equal(imported.format, "OmniFocus TaskPaper");
-  assert.equal(imported.projects.map((project) => project.name).join("|"), "Work|Work : Website");
+  assert.equal(imported.projects.map((project) => `${project.folder ? `${project.folder} : ` : ""}${project.name}`).join("|"), "Work : Website");
   const copy = imported.tasks.find((task) => task.title === "Write homepage copy");
   assert.equal(copy?.due, "Tomorrow, 5:00 PM");
   assert.equal(copy?.flagged, true);

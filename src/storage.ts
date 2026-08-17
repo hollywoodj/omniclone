@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getDb } from "./db/client";
 import { type CustomPerspective, type PersistedState, type Project, type Task } from "./model";
 import { normalizeCustomPerspective } from "./perspectiveRules";
+import { hydrateProjectFolder } from "./outline.ts";
 
 const LEGACY_STORAGE_KEY = "omniclone.database.v1";
 
@@ -15,6 +16,7 @@ type ProjectRow = {
   last_reviewed_at: string | null;
   status?: string | null;
   type?: string | null;
+  folder?: string | null;
 };
 
 type TaskRow = {
@@ -33,6 +35,7 @@ type TaskRow = {
   created_at: string;
   estimated_minutes?: number | null;
   repeat?: string | null;
+  status?: string | null;
 };
 
 type CustomPerspectiveRow = {
@@ -108,7 +111,7 @@ export async function loadDatabase(): Promise<PersistedState | null> {
     tagsByTask.set(row.task_id, list);
   }
 
-  const projects: Project[] = projectRows.map((row) => ({
+  const projects: Project[] = projectRows.map((row) => hydrateProjectFolder({
     id: row.id,
     importKey: row.import_key ?? undefined,
     name: row.name,
@@ -116,6 +119,7 @@ export async function loadDatabase(): Promise<PersistedState | null> {
     note: row.note,
     reviewIntervalDays: row.review_interval_days,
     lastReviewedAt: row.last_reviewed_at ?? undefined,
+    folder: row.folder || undefined,
     status: row.status === "onHold" || row.status === "dropped" ? row.status : "active",
     type: row.type === "sequential" || row.type === "singleActions" ? row.type : "parallel",
   }));
@@ -137,6 +141,7 @@ export async function loadDatabase(): Promise<PersistedState | null> {
     sortOrder: row.sort_order ?? undefined,
     estimatedMinutes: row.estimated_minutes ?? undefined,
     repeat: row.repeat === "daily" || row.repeat === "weekly" || row.repeat === "monthly" ? row.repeat : "none",
+    status: row.status === "onHold" || row.status === "dropped" ? row.status : "active",
   }));
 
   const customPerspectives: CustomPerspective[] = perspectiveRows.map((row) => normalizeCustomPerspective({
@@ -175,7 +180,7 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
 
     for (const project of state.projects) {
       await db.runAsync(
-        "INSERT INTO projects (id, import_key, name, color, note, review_interval_days, last_reviewed_at, status, type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO projects (id, import_key, name, color, note, review_interval_days, last_reviewed_at, status, type, folder) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         project.id,
         project.importKey ?? null,
         project.name,
@@ -184,7 +189,8 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
         project.reviewIntervalDays,
         project.lastReviewedAt ?? null,
         project.status ?? "active",
-        project.type ?? "parallel"
+        project.type ?? "parallel",
+        project.folder ?? null
       );
     }
 
@@ -199,7 +205,7 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
 
     for (const task of state.tasks) {
       await db.runAsync(
-        "INSERT INTO tasks (id, import_key, title, project_id, parent_id, sort_order, due, defer, note, flagged, completed, completed_at, created_at, estimated_minutes, repeat) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO tasks (id, import_key, title, project_id, parent_id, sort_order, due, defer, note, flagged, completed, completed_at, created_at, estimated_minutes, repeat, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         task.id,
         task.importKey ?? null,
         task.title,
@@ -214,7 +220,8 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
         task.completedAt ?? null,
         task.createdAt,
         task.estimatedMinutes ?? null,
-        task.repeat ?? "none"
+        task.repeat ?? "none",
+        task.status ?? "active"
       );
       for (const tagName of task.tags) {
         const tagId = await getTagId(tagName);

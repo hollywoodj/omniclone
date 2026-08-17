@@ -55,6 +55,7 @@ export function createRule(kind: PerspectiveRuleKind): PerspectiveRule {
 export function describeRule(rule: PerspectiveRule): string {
   if (rule.kind === "availability") {
     const labels: Record<PerspectiveAvailability, string> = {
+      firstAvailable: "First Available",
       available: "Available",
       remaining: "Remaining",
       completed: "Completed",

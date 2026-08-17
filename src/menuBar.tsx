@@ -62,6 +62,7 @@ export function buildAppMenus(options: {
       items: [
         { id: "new-action", label: "New Action", shortcut: "⌘N", command: { type: "newAction" } },
         { id: "new-project", label: "New Project", shortcut: "⇧⌘N", command: { type: "newProject" } },
+        { id: "new-folder", label: "New Folder", shortcut: "⌥⌘N", command: { type: "newFolder" } },
         { id: "quick-entry", label: "Quick Entry", shortcut: "⌃⌥Space", command: { type: "quickEntry" } },
         { id: "sep-file", separator: true },
         { id: "quick-open", label: "Quick Open…", shortcut: "⌘O", command: { type: "quickOpen" } },
@@ -108,6 +109,7 @@ export function buildAppMenus(options: {
         { id: "sep-org-1", separator: true },
         { id: "indent", label: "Indent", shortcut: "⇥", command: { type: "indent" } },
         { id: "outdent", label: "Outdent", shortcut: "⇧⇥", command: { type: "outdent" } },
+        { id: "convert", label: "Convert to Project", command: { type: "convertToProject" } },
         { id: "move-up", label: "Move Up", shortcut: "⌥⌘↑", command: { type: "moveRow", direction: "up" } },
         { id: "move-down", label: "Move Down", shortcut: "⌥⌘↓", command: { type: "moveRow", direction: "down" } },
         { id: "sep-org-2", separator: true },
@@ -141,6 +143,7 @@ function defaultShortcut(id: string): string {
     tags: "meta+3",
     forecast: "meta+4",
     flagged: "meta+5",
+    completed: "meta+6",
     review: "meta+7",
   };
   return map[id] ?? "";

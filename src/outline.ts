@@ -1,5 +1,5 @@
-import { addDays, formatDateLabel, isActionAvailable, parseDueLabel } from "./dates.ts";
-import type { PerspectiveAvailability, Project, Task } from "./model";
+import { addDays, formatDateLabel, isActionAvailable, parseDueLabel, startOfLocalDay } from "./dates.ts";
+import { makeId, type PerspectiveAvailability, type Project, type Task } from "./model.ts";
 
 export type RepeatRule = "none" | "daily" | "weekly" | "monthly";
 export type ProjectStatus = "active" | "onHold" | "dropped";
@@ -201,24 +201,34 @@ export function insertTaskAfter(tasks: Task[], afterId: string | null, task: Tas
 export function isBlockedSequential(task: Task, tasks: Task[], projects: Project[]) {
   const project = task.projectId ? projects.find((item) => item.id === task.projectId) : undefined;
   if (!project || (project.type ?? "parallel") !== "sequential" || task.completed) return false;
-  const firstRemaining = sortedSiblings(tasks, task.parentId ?? null, task.projectId).find((item) => !item.completed);
+  const firstRemaining = sortedSiblings(tasks, task.parentId ?? null, task.projectId).find((item) => !item.completed && (item.status ?? "active") !== "dropped");
   return !!firstRemaining && firstRemaining.id !== task.id;
+}
+
+export function isFirstAvailable(task: Task, tasks: Task[], projects: Project[], now?: Date): boolean {
+  if (!taskMatchesView(task, "available", { tasks, projects, now })) return false;
+  const first = sortedSiblings(tasks, task.parentId ?? null, task.projectId).find((item) => (
+    taskMatchesView(item, "available", { tasks, projects, now })
+  ));
+  return first?.id === task.id;
 }
 
 export function taskMatchesView(
   task: Task,
   availability: PerspectiveAvailability,
   context: { tasks: Task[]; projects: Project[]; now?: Date },
-) {
+): boolean {
   const project = task.projectId ? context.projects.find((item) => item.id === task.projectId) : undefined;
-  const status = project?.status ?? "active";
+  const projectStatus = project?.status ?? "active";
+  const actionStatus = task.status ?? "active";
   if (availability === "all") return true;
-  if (availability === "completed") return task.completed || status === "dropped";
-  if (task.completed || status === "dropped") return false;
+  if (availability === "completed") return task.completed || actionStatus === "dropped" || projectStatus === "dropped";
+  if (task.completed || actionStatus === "dropped" || projectStatus === "dropped") return false;
   if (availability === "remaining") return true;
-  if (status === "onHold") return false;
+  if (projectStatus === "onHold" || actionStatus === "onHold") return false;
   if (!isActionAvailable(task, context.now)) return false;
   if (isBlockedSequential(task, context.tasks, context.projects)) return false;
+  if (availability === "firstAvailable") return isFirstAvailable(task, context.tasks, context.projects, context.now);
   return true;
 }
 
@@ -293,5 +303,110 @@ export function toTaskPaper(tasks: Task[], allTasks: Task[], projects: Project[]
 
 export function projectIsStalled(project: Project, tasks: Task[]) {
   if ((project.status ?? "active") !== "active") return false;
-  return !tasks.some((task) => task.projectId === project.id && !task.completed);
+  return !tasks.some((task) => task.projectId === project.id && !task.completed && (task.status ?? "active") !== "dropped");
+}
+
+export function splitProjectPath(fullName: string): { folder?: string; name: string } {
+  const index = fullName.lastIndexOf(" : ");
+  if (index <= 0) return { name: fullName };
+  return { folder: fullName.slice(0, index), name: fullName.slice(index + 3) };
+}
+
+export function hydrateProjectFolder(project: Project): Project {
+  if (project.folder) return project;
+  const split = splitProjectPath(project.name);
+  if (!split.folder) return project;
+  return { ...project, folder: split.folder, name: split.name };
+}
+
+export function projectFolder(project: Project): string | undefined {
+  return hydrateProjectFolder(project).folder;
+}
+
+export function projectDisplayName(project: Project): string {
+  return hydrateProjectFolder(project).name;
+}
+
+export type FolderNode = {
+  name: string;
+  path: string;
+  projects: Project[];
+  children: FolderNode[];
+};
+
+export function buildFolderTree(projects: Project[], extraFolders: string[] = []): { ungrouped: Project[]; roots: FolderNode[] } {
+  const ungrouped: Project[] = [];
+  const byPath = new Map<string, FolderNode>();
+  const ensure = (path: string): FolderNode => {
+    const existing = byPath.get(path);
+    if (existing) return existing;
+    const parts = path.split(" : ");
+    const node: FolderNode = { name: parts[parts.length - 1] ?? path, path, projects: [], children: [] };
+    byPath.set(path, node);
+    if (parts.length > 1) ensure(parts.slice(0, -1).join(" : ")).children.push(node);
+    return node;
+  };
+  for (const folder of extraFolders) {
+    if (folder.trim()) ensure(folder.trim());
+  }
+  for (const project of projects) {
+    const hydrated = hydrateProjectFolder(project);
+    if (!hydrated.folder) {
+      ungrouped.push(hydrated);
+      continue;
+    }
+    ensure(hydrated.folder).projects.push(hydrated);
+  }
+  const roots = [...byPath.values()].filter((node) => !node.path.includes(" : ") || !byPath.has(node.path.slice(0, node.path.lastIndexOf(" : "))));
+  const sortNodes = (nodes: FolderNode[]) => {
+    nodes.sort((a, b) => a.name.localeCompare(b.name));
+    for (const node of nodes) sortNodes(node.children);
+  };
+  sortNodes(roots);
+  return { ungrouped, roots };
+}
+
+export function projectInFolder(project: Project, folderPath: string) {
+  const folder = projectFolder(project);
+  return folder === folderPath || !!folder?.startsWith(`${folderPath} : `);
+}
+
+export function skipReviewTimestamp(project: Project, now = new Date()) {
+  return addDays(startOfLocalDay(now), 1 - project.reviewIntervalDays).toISOString();
+}
+
+export function renameTag(tasks: Task[], from: string, to: string) {
+  const nextName = to.trim();
+  if (!nextName || from.toLowerCase() === nextName.toLowerCase()) {
+    return tasks.map((task) => ({ ...task, tags: task.tags.filter((tag) => tag.toLowerCase() !== from.toLowerCase() || tag === nextName) }));
+  }
+  return tasks.map((task) => {
+    if (!task.tags.some((tag) => tag.toLowerCase() === from.toLowerCase())) return task;
+    const tags = task.tags.map((tag) => tag.toLowerCase() === from.toLowerCase() ? nextName : tag);
+    return { ...task, tags: [...new Set(tags)] };
+  });
+}
+
+export function convertActionToProject(tasks: Task[], projects: Project[], actionId: string, color: string) {
+  const action = tasks.find((task) => task.id === actionId);
+  if (!action) return null;
+  const parentProject = action.projectId ? projects.find((project) => project.id === action.projectId) : undefined;
+  const kids = descendantsOf(actionId, tasks);
+  const project: Project = {
+    id: makeId("project"),
+    name: action.title.trim() || "New Project",
+    note: action.note ?? "",
+    color,
+    reviewIntervalDays: 7,
+    folder: parentProject ? projectFolder(parentProject) : undefined,
+  };
+  const descendantIds = new Set(kids.map((task) => task.id));
+  const nextTasks = tasks
+    .filter((task) => task.id !== actionId)
+    .map((task) => {
+      if (task.parentId === actionId) return { ...task, parentId: null, projectId: project.id };
+      if (descendantIds.has(task.id)) return { ...task, projectId: project.id };
+      return task;
+    });
+  return { tasks: nextTasks, projects: [...projects, project], project };
 }
