@@ -6,15 +6,13 @@
 #   fatal: not a git repository
 # Drafts are also invisible to GET /releases/tags/{tag}, so we look up by
 # listing releases (including drafts) and talk to the API by numeric id.
+#
+# GitHub sanitizes asset filenames (spaces and other special characters become
+# dots), so "OmniClone Setup 1.0.9.exe" is stored as "OmniClone.Setup.1.0.9.exe".
+# Deletes must match that sanitized name or upload returns 422 already_exists.
 set -euo pipefail
 
-: "${GITHUB_REPOSITORY:?}"
-: "${GH_TOKEN:?}"
-: "${TAG:?}"
-: "${SHA:?}"
-: "${DIST:?}"
-
-export GH_REPO="${GH_REPO:-$GITHUB_REPOSITORY}"
+export GH_REPO="${GH_REPO:-${GITHUB_REPOSITORY:-}}"
 
 retry() {
   local attempts="$1"
@@ -37,6 +35,19 @@ retry() {
 
 encode_name() {
   python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"
+}
+
+# Match GitHub's release-asset sanitize_file_name (see cli/cli#7024).
+sanitize_asset_name() {
+  python3 -c '
+import re, sys
+name = sys.argv[1]
+if name.startswith("."):
+    name = "default." + name
+name = re.sub(r"[^A-Za-z0-9\-_@+]+", ".", name)
+name = re.sub(r"\.{2,}", ".", name)
+print(name.strip("."))
+' "$1"
 }
 
 find_release_id() {
@@ -78,47 +89,124 @@ ensure_release_id() {
   printf '%s' "$id"
 }
 
-delete_asset_named() {
+list_assets_json() {
+  local id="$1"
+  gh api "repos/${GITHUB_REPOSITORY}/releases/${id}" --jq '.assets'
+}
+
+log_assets() {
+  local id="$1"
+  echo "Current assets on release ${id}:" >&2
+  list_assets_json "$id" | python3 -c '
+import json, sys
+assets = json.load(sys.stdin)
+if not assets:
+    print("  (none)", file=sys.stderr)
+    raise SystemExit(0)
+for asset in assets:
+    print(f"  {asset[\"id\"]} {asset[\"name\"]} ({asset.get(\"size\", \"?\")} bytes)", file=sys.stderr)
+'
+}
+
+colliding_asset_ids() {
   local id="$1"
   local name="$2"
-  local asset_id
-  asset_id="$(
-    gh api "repos/${GITHUB_REPOSITORY}/releases/${id}/assets?per_page=100" \
-      --jq "[.[] | select(.name == \"${name}\") | .id] | first // empty"
+  list_assets_json "$id" | python3 -c '
+import json, re, sys
+
+def sanitize(name: str) -> str:
+    if name.startswith("."):
+        name = "default." + name
+    name = re.sub(r"[^A-Za-z0-9\-_@+]+", ".", name)
+    name = re.sub(r"\.{2,}", ".", name)
+    return name.strip(".")
+
+want = sanitize(sys.argv[1])
+for asset in json.load(sys.stdin):
+    stored = asset.get("name") or ""
+    if stored == sys.argv[1] or sanitize(stored) == want:
+        print(f"{asset[\"id\"]}\t{stored}")
+' "$name"
+}
+
+delete_asset_id() {
+  local asset_id="$1"
+  local status
+  status="$(
+    curl -sS -o /tmp/omniclone-delete-asset.json -w "%{http_code}" \
+      -X DELETE \
+      -H "Authorization: Bearer ${GH_TOKEN}" \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
   )"
-  if [[ -n "$asset_id" ]]; then
-    echo "Replacing existing asset ${name} (${asset_id})" >&2
-    gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" >/dev/null
+  case "$status" in
+    204|404) return 0 ;;
+    *)
+      echo "Failed to delete asset ${asset_id} (HTTP ${status})" >&2
+      cat /tmp/omniclone-delete-asset.json >&2 || true
+      echo >&2
+      return 1
+      ;;
+  esac
+}
+
+delete_colliding_assets() {
+  local id="$1"
+  local name="$2"
+  local line asset_id stored
+  local found=0
+  while IFS=$'\t' read -r asset_id stored; do
+    [[ -z "${asset_id:-}" ]] && continue
+    found=1
+    echo "Replacing existing asset ${stored} (${asset_id}) before uploading ${name}" >&2
+    delete_asset_id "$asset_id"
+  done < <(colliding_asset_ids "$id" "$name")
+  if [[ "$found" -eq 0 ]]; then
+    echo "No existing asset collides with ${name} (sanitized: $(sanitize_asset_name "$name"))" >&2
   fi
 }
 
 upload_file() {
   local id="$1"
   local file="$2"
-  local name
+  local name sanitized
   name="$(basename "$file")"
-  echo "Uploading ${name}" >&2
+  sanitized="$(sanitize_asset_name "$name")"
+  echo "Uploading ${name} as ${sanitized}" >&2
+  # Send the sanitized name so uniqueness checks match listed assets.
   gh api --method POST \
     -H "Content-Type: application/octet-stream" \
     -H "Accept: application/vnd.github+json" \
     --input "$file" \
-    "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${id}/assets?name=$(encode_name "$name")" \
+    "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${id}/assets?name=$(encode_name "$sanitized")" \
     --jq .browser_download_url
+}
+
+upload_one() {
+  local id="$1"
+  local file="$2"
+  local name
+  name="$(basename "$file")"
+  delete_colliding_assets "$id" "$name"
+  if upload_file "$id" "$file"; then
+    return 0
+  fi
+  echo "Upload failed for ${name}; deleting collisions and retrying" >&2
+  log_assets "$id"
+  delete_colliding_assets "$id" "$name"
+  retry 5 upload_file "$id" "$file"
 }
 
 upload_assets() {
   local id="$1"
-  local file name
+  local file
+  log_assets "$id"
   shopt -s nullglob
   for file in "$DIST"/*.dmg "$DIST"/*.exe "$DIST"/*.blockmap; do
-    name="$(basename "$file")"
-    delete_asset_named "$id" "$name" || true
-    if ! retry 4 upload_file "$id" "$file"; then
-      echo "Upload failed for ${name}; replacing any partial asset and retrying" >&2
-      delete_asset_named "$id" "$name" || true
-      retry 3 upload_file "$id" "$file"
-    fi
+    upload_one "$id" "$file"
   done
+  log_assets "$id"
 }
 
 publish_release() {
@@ -159,7 +247,28 @@ stage_artifacts() {
   ls -la "$DIST"
 }
 
+self_test() {
+  local got
+  got="$(sanitize_asset_name "OmniClone Setup 1.0.9.exe")"
+  [[ "$got" == "OmniClone.Setup.1.0.9.exe" ]]
+  got="$(sanitize_asset_name "OmniClone.Setup.1.0.9.exe")"
+  [[ "$got" == "OmniClone.Setup.1.0.9.exe" ]]
+  got="$(sanitize_asset_name "OmniClone-1.0.9-arm64.dmg")"
+  [[ "$got" == "OmniClone-1.0.9-arm64.dmg" ]]
+  echo "self-test ok"
+}
+
 main() {
+  if [[ "${1:-}" == "--self-test" ]]; then
+    self_test
+    return 0
+  fi
+  : "${GITHUB_REPOSITORY:?}"
+  : "${GH_TOKEN:?}"
+  : "${TAG:?}"
+  : "${SHA:?}"
+  : "${DIST:?}"
+  export GH_REPO="${GH_REPO:-$GITHUB_REPOSITORY}"
   stage_artifacts
   local id
   id="$(ensure_release_id)"
@@ -170,4 +279,4 @@ main() {
   echo "Published ${url}"
 }
 
-main
+main "$@"
