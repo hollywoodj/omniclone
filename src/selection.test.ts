@@ -94,6 +94,13 @@ test("pruning drops ids that left the current outline", () => {
   assert.equal(pruned.headId, "c");
 });
 
+test("pruning can retain inspected ids that left the outline", () => {
+  const pruned = pruneSelection({ ids: ["kept"], anchorId: "kept", headId: "kept" }, ["a", "c"], ["kept"]);
+  assert.deepEqual(pruned.ids, ["kept"]);
+  assert.equal(pruned.anchorId, "kept");
+  assert.equal(pruned.headId, "kept");
+});
+
 test("neighbor after delete follows previous and next directions", () => {
   assert.equal(neighborAfterDelete(ids, ["c"], "next"), "d");
   assert.equal(neighborAfterDelete(ids, ["c"], "previous"), "b");

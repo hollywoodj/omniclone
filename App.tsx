@@ -2,7 +2,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import { File as ExpoFile } from "expo-file-system";
 import { StatusBar } from "expo-status-bar";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -60,10 +60,12 @@ import {
   projectInFolder,
   projectIsStalled,
   renameTag,
+  sidebarActionCounts,
   skipReviewTimestamp,
   taskDepth,
   taskMatchesView,
   toTaskPaper,
+  withLingeringTasks,
 } from "./src/outline";
 import {
   completionGroupLabel,
@@ -157,6 +159,39 @@ function TrafficLights({ onClose }: { onClose?: () => void }) {
         <TrafficLight key={color} color={color} onPress={index === 0 ? onClose : undefined} accessibilityLabel={index === 0 ? "Close" : undefined} />
       ))}
     </View>
+  );
+}
+
+function SidebarRow({
+  selected,
+  items,
+  style,
+  children,
+  ...rest
+}: Omit<React.ComponentProps<typeof Pressable>, "style"> & { selected?: boolean; items?: ContextMenuItem[]; style?: React.ComponentProps<typeof View>["style"] }) {
+  const [hovered, setHovered] = useState(false);
+  const rowStyle = ({ pressed }: { pressed: boolean }) => [
+    styles.sidebarRow,
+    selected && styles.sidebarRowSelected,
+    hovered && !selected && styles.sidebarRowHover,
+    pressed && styles.pressed,
+    style,
+  ];
+  const hoverProps = {
+    onHoverIn: () => setHovered(true),
+    onHoverOut: () => setHovered(false),
+  };
+  if (items?.length) {
+    return (
+      <ContextMenuPressable items={items} {...hoverProps} {...rest} style={rowStyle}>
+        {children}
+      </ContextMenuPressable>
+    );
+  }
+  return (
+    <Pressable {...hoverProps} {...rest} style={rowStyle}>
+      {children}
+    </Pressable>
   );
 }
 
@@ -392,6 +427,7 @@ function ProjectSidebar({
   onDeleteProject: (id: string) => void;
 }) {
   const tags = useMemo(() => [...new Set(tasks.flatMap((task) => task.tags))].sort(), [tasks]);
+  const counts = useMemo(() => sidebarActionCounts(tasks), [tasks]);
   const title = perspectives.find((item) => item.id === perspective)?.label ?? "Projects";
   const { openMenu } = useContextMenuTrigger();
   const sidebarMenuItems: ContextMenuItem[] = [
@@ -404,15 +440,16 @@ function ProjectSidebar({
   const toggleFolder = (path: string) => {
     setCollapsedFolders((current) => current.includes(path) ? current.filter((item) => item !== path) : [...current, path]);
   };
-  const remainingIn = (project: Project) => tasks.filter((task) => task.projectId === project.id && !task.completed && (task.status ?? "active") !== "dropped").length;
+  const remainingIn = (projectId: string) => counts.remainingByProject.get(projectId) ?? 0;
   const projectRow = (project: Project, depth: number) => {
-    const stalled = projectIsStalled(project, tasks);
+    const stalled = (project.status ?? "active") === "active" && remainingIn(project.id) === 0;
     return (
-      <ContextMenuPressable
+      <SidebarRow
         key={project.id}
+        selected={selectedProjectId === project.id}
         items={projectContextItems(project, { onFocusProject, onNewActionInProject, onDeleteProject })}
         onPress={() => onSelectProject(project.id)}
-        style={[styles.sidebarRow, { paddingLeft: 8 + depth * 14 }, selectedProjectId === project.id && styles.sidebarRowSelected]}
+        style={{ paddingLeft: 8 + depth * 14 }}
       >
         <View style={[styles.projectDot, { borderColor: project.color }, project.status === "dropped" && styles.projectDotDropped, project.status === "onHold" && styles.projectDotHold, stalled && styles.projectDotStalled]} />
         <Text numberOfLines={1} style={[styles.sidebarRowText, project.status === "dropped" && styles.taskTitleCompleted, project.status === "onHold" && styles.sidebarHoldText]}>{projectDisplayName(project)}</Text>
@@ -420,8 +457,8 @@ function ProjectSidebar({
         {project.status === "onHold" && <Text style={styles.sidebarStatusTag}>On Hold</Text>}
         {project.status === "dropped" && <Text style={styles.sidebarStatusTag}>Dropped</Text>}
         {project.type === "sequential" && <Icon name="arrow-down-bold" size={12} color="#8b888f" />}
-        {showCounts && <Text style={styles.sidebarCount}>{remainingIn(project)}</Text>}
-      </ContextMenuPressable>
+        {showCounts && <Text style={styles.sidebarCount}>{remainingIn(project.id)}</Text>}
+      </SidebarRow>
     );
   };
   const renderFolder = (node: ReturnType<typeof buildFolderTree>["roots"][number], depth: number): React.ReactNode => {
@@ -429,17 +466,18 @@ function ProjectSidebar({
     const selected = selectedFolder === node.path && !selectedProjectId;
     return (
       <View key={node.path}>
-        <Pressable
+        <SidebarRow
+          selected={selected}
           onPress={() => onSelectFolder(node.path)}
-          style={[styles.sidebarRow, { paddingLeft: 8 + depth * 14 }, selected && styles.sidebarRowSelected]}
+          style={{ paddingLeft: 8 + depth * 14 }}
         >
           <Pressable onPress={() => toggleFolder(node.path)} hitSlop={8} style={styles.collapseButton}>
             <Icon name={collapsed ? "chevron-right" : "chevron-down"} size={16} color="#6e6c72" />
           </Pressable>
           <Icon name={collapsed ? "folder-outline" : "folder-open-outline"} size={16} color="#8b4fc2" />
           <Text numberOfLines={1} style={styles.sidebarRowText}>{node.name}</Text>
-          {showCounts && <Text style={styles.sidebarCount}>{node.projects.reduce((sum, project) => sum + remainingIn(project), 0)}</Text>}
-        </Pressable>
+          {showCounts && <Text style={styles.sidebarCount}>{node.projects.reduce((sum, project) => sum + remainingIn(project.id), 0)}</Text>}
+        </SidebarRow>
         {!collapsed && node.projects.map((project) => projectRow(project, depth + 1))}
         {!collapsed && node.children.map((child) => renderFolder(child, depth + 1))}
       </View>
@@ -462,11 +500,11 @@ function ProjectSidebar({
       <ScrollView contentContainerStyle={styles.sidebarScroll}>
         {perspective === "projects" && (
           <>
-            <Pressable onPress={() => { onSelectProject(null); onSelectFolder(null); }} style={[styles.sidebarRow, selectedProjectId === null && selectedFolder === null && styles.sidebarRowSelected]}>
+            <SidebarRow selected={selectedProjectId === null && selectedFolder === null} onPress={() => { onSelectProject(null); onSelectFolder(null); }}>
               <Icon name="folder-multiple-outline" size={17} color="#6f6c73" />
               <Text numberOfLines={1} style={styles.sidebarRowText}>All Projects</Text>
-              {showCounts && <Text style={styles.sidebarCount}>{tasks.filter((task) => task.projectId && !task.completed && (task.status ?? "active") !== "dropped").length}</Text>}
-            </Pressable>
+              {showCounts && <Text style={styles.sidebarCount}>{counts.remainingInProjects}</Text>}
+            </SidebarRow>
             <Text style={styles.sidebarSectionLabel}>PROJECTS</Text>
             {!projects.length && !extraFolders.length && (
               <Text style={styles.sidebarEmptyText}>No projects yet. Import from OmniFocus or use New Project.</Text>
@@ -477,28 +515,28 @@ function ProjectSidebar({
         )}
         {perspective === "tags" && (
           <>
-            <Pressable onPress={() => onSelectTag(null)} style={[styles.sidebarRow, selectedTag === null && styles.sidebarRowSelected]}>
+            <SidebarRow selected={selectedTag === null} onPress={() => onSelectTag(null)}>
               <Icon name="tag-multiple-outline" size={17} color="#6f6c73" />
               <Text numberOfLines={1} style={styles.sidebarRowText}>All Tags</Text>
-              {showCounts && <Text style={styles.sidebarCount}>{tasks.filter((task) => task.tags.length && !task.completed).length}</Text>}
-            </Pressable>
+              {showCounts && <Text style={styles.sidebarCount}>{counts.remainingTagged}</Text>}
+            </SidebarRow>
             <Text style={styles.sidebarSectionLabel}>TAGS</Text>
             {!tags.length && <Text style={styles.sidebarEmptyText}>No tags yet. Add them in the inspector.</Text>}
             {tags.map((tag) => (
-              <Pressable key={tag} onPress={() => onSelectTag(tag)} style={[styles.sidebarRow, selectedTag === tag && styles.sidebarRowSelected]}>
+              <SidebarRow key={tag} selected={selectedTag === tag} onPress={() => onSelectTag(tag)}>
                 <Icon name="pound" size={16} color="#77747b" />
                 <Text style={styles.sidebarRowText}>{tag}</Text>
-                {showCounts && <Text style={styles.sidebarCount}>{tasks.filter((task) => task.tags.includes(tag) && !task.completed).length}</Text>}
-              </Pressable>
+                {showCounts && <Text style={styles.sidebarCount}>{counts.remainingByTag.get(tag) ?? 0}</Text>}
+              </SidebarRow>
             ))}
           </>
         )}
         {perspective === "forecast" && (
           <View>
-            <Pressable onPress={() => onSelectForecastDay("past")} style={[styles.forecastPast, forecastDay === "past" && styles.sidebarRowSelected]}>
+            <SidebarRow selected={forecastDay === "past"} onPress={() => onSelectForecastDay("past")} style={styles.forecastPast}>
               <Text style={styles.sidebarRowText}>Past</Text>
               <Text style={styles.forecastPastCount}>{forecastCounts.past ?? 0}</Text>
-            </Pressable>
+            </SidebarRow>
             <View style={styles.forecastDays}>
               {week.map((day) => {
                 const selected = forecastDay === day.key;
@@ -514,10 +552,10 @@ function ProjectSidebar({
                 );
               })}
             </View>
-            <Pressable onPress={() => onSelectForecastDay("upcoming")} style={[styles.forecastUpcoming, forecastDay === "upcoming" && styles.sidebarRowSelected]}>
+            <SidebarRow selected={forecastDay === "upcoming"} onPress={() => onSelectForecastDay("upcoming")} style={styles.forecastUpcoming}>
               <Text style={styles.sidebarRowText}>Upcoming</Text>
               <Text style={styles.sidebarCount}>{forecastCounts.upcoming ?? 0}</Text>
-            </Pressable>
+            </SidebarRow>
           </View>
         )}
         {!["projects", "tags", "forecast"].includes(perspective) && (
@@ -1902,6 +1940,8 @@ export default function App() {
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [collapseNonce, setCollapseNonce] = useState<{ action: "expand" | "collapse"; n: number } | null>(null);
   const [pendingCleanupIds, setPendingCleanupIds] = useState<string[]>([]);
+  const retainInspectionIds = useRef<Set<string>>(new Set());
+  const [, startSidebarTransition] = useTransition();
   const undoStack = useRef<Array<{ projects: Project[]; tasks: Task[] }>>([]);
   const redoStack = useRef<Array<{ projects: Project[]; tasks: Task[] }>>([]);
   const pushUndo = useCallback(() => {
@@ -2008,6 +2048,7 @@ export default function App() {
   const navigate = useCallback((patch: Partial<LocationState>) => {
     const next = { ...locationRef.current, ...patch };
     if (sameLocation(locationRef.current, next)) return;
+    retainInspectionIds.current = new Set();
     applyLocation(next);
     const { stack, index } = historyRef.current;
     const nextStack = [...stack.slice(0, Math.max(index, -1) + 1), next];
@@ -2066,7 +2107,7 @@ export default function App() {
       const needle = query.trim().toLowerCase();
       result = result.filter((task) => `${task.title} ${task.note ?? ""} ${task.tags.join(" ")}`.toLowerCase().includes(needle));
     }
-    return result;
+    return withLingeringTasks(result, tasks, lingering);
   }, [tasks, projects, perspective, projectFilter, tagFilter, folderFilter, forecastDay, focusedProjectId, settings.showCompleted, settings.standardAvailability, query, activeCustomPerspective, pendingCleanupIds]);
 
   const orderedTaskIds = useMemo(() => outlineTaskIds({
@@ -2078,14 +2119,17 @@ export default function App() {
   }), [visibleTasks, projects, perspective, activeCustomPerspective, projectFilter]);
 
   useEffect(() => {
+    const existing = new Set(tasks.map((task) => task.id));
+    const retain = [...retainInspectionIds.current].filter((id) => existing.has(id));
+    retainInspectionIds.current = new Set(retain);
     setSelection((current) => {
-      const next = pruneSelection(current, orderedTaskIds);
+      const next = pruneSelection(current, orderedTaskIds, retain);
       if (next.ids.length === current.ids.length && next.ids.every((id, index) => id === current.ids[index]) && next.anchorId === current.anchorId && next.headId === current.headId) {
         return current;
       }
       return next;
     });
-  }, [orderedTaskIds]);
+  }, [orderedTaskIds, tasks]);
 
   const perspectiveTitle = activeCustomPerspective?.name ?? (projectFilter && perspective === "projects"
     ? projects.find((project) => project.id === projectFilter)?.name ?? "Projects"
@@ -2151,11 +2195,16 @@ export default function App() {
       if (patch.completed === false) next.completedAt = undefined;
       return next;
     }));
+    const current = tasks.find((task) => task.id === id);
+    if (patch.projectId !== undefined && current && current.projectId !== patch.projectId) {
+      retainInspectionIds.current = new Set([...retainInspectionIds.current, id]);
+    }
     if (!settings.cleanUpImmediately) {
-      const current = tasks.find((task) => task.id === id);
       if (patch.completed === true) setPendingCleanupIds((ids) => ids.includes(id) ? ids : [...ids, id]);
       if (patch.completed === false) setPendingCleanupIds((ids) => ids.filter((item) => item !== id));
-      if (current && current.projectId === null && patch.projectId) setPendingCleanupIds((ids) => ids.includes(id) ? ids : [...ids, id]);
+      if (patch.projectId !== undefined && current && current.projectId !== patch.projectId) {
+        setPendingCleanupIds((ids) => ids.includes(id) ? ids : [...ids, id]);
+      }
     }
   };
 
@@ -2324,6 +2373,7 @@ export default function App() {
   };
 
   const selectTask = (id: string, modifiers: SelectionModifiers = {}) => {
+    retainInspectionIds.current = new Set();
     setInspectedProjectId(null);
     setEditingTaskId((current) => current === id ? current : null);
     setSelection((current) => applyClick(current, orderedTaskIds, id, modifiers));
@@ -2361,22 +2411,30 @@ export default function App() {
   };
 
   const selectProject = (id: string | null) => {
-    navigate({ perspective: "projects", projectFilter: id, tagFilter: null, folderFilter: null });
+    startSidebarTransition(() => {
+      navigate({ perspective: "projects", projectFilter: id, tagFilter: null, folderFilter: null });
+    });
   };
 
   const selectFolder = (folder: string | null) => {
-    navigate({ perspective: "projects", folderFilter: folder, projectFilter: null, tagFilter: null });
+    startSidebarTransition(() => {
+      navigate({ perspective: "projects", folderFilter: folder, projectFilter: null, tagFilter: null });
+    });
   };
 
   const selectTag = (tag: string | null) => {
-    navigate({ perspective: "tags", tagFilter: tag, projectFilter: null, folderFilter: null });
-    setInspectedProjectId(null);
-    setSelection(emptySelection);
-    if (tag) setInspectorOpen(true);
+    startSidebarTransition(() => {
+      navigate({ perspective: "tags", tagFilter: tag, projectFilter: null, folderFilter: null });
+      setInspectedProjectId(null);
+      setSelection(emptySelection);
+      if (tag) setInspectorOpen(true);
+    });
   };
 
   const selectForecastDay = (day: ForecastDayKey) => {
-    navigate({ perspective: "forecast", forecastDay: day, projectFilter: null, tagFilter: null, folderFilter: null });
+    startSidebarTransition(() => {
+      navigate({ perspective: "forecast", forecastDay: day, projectFilter: null, tagFilter: null, folderFilter: null });
+    });
   };
 
   const insertAction = (projectId?: string | null, afterId?: string | null) => {
@@ -3352,6 +3410,7 @@ const styles = StyleSheet.create({
   sidebarScroll: { paddingHorizontal: 8, paddingBottom: 50 },
   sidebarRow: { minHeight: 35, paddingHorizontal: 8, flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 10 },
   sidebarRowSelected: { backgroundColor: "#d9d8dc" },
+  sidebarRowHover: { backgroundColor: "rgba(0,0,0,.05)" },
   sidebarRowText: { flex: 1, fontSize: 12.5, fontWeight: "500", color: "#3a373d" },
   sidebarCount: { fontSize: 10, color: palette.muted },
   sidebarHoldText: { color: "#8a6a1a" },
