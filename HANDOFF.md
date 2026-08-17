@@ -63,9 +63,13 @@ Work through these next. Prefer visible OmniFocus 4 mismatches over backend work
 ## Implementation notes
 
 - Domain types live in `src/model.ts`. Outline behavior is in `src/outline.ts`. Dates/Forecast/Review helpers are in `src/dates.ts`.
+- Visible-task queries, titles, and sidebar perspective choice live in `src/perspectives/query.ts`. Badge/forecast counts are in `src/perspectives/counts.ts`.
+- Library mutations (complete, duplicate, delete project, lingering cleanup) live in `src/library/mutations.ts`.
+- Navigation history is `src/navigation/history.ts` + `src/hooks/useLocationHistory.ts`. Persistence is `src/hooks/usePersistedLibrary.ts`.
+- Menu/hotkey commands dispatch through `src/commands/dispatch.ts`.
 - SQLite schema + migrations are in `src/db/client.ts`; persist in `src/storage.ts`.
-- Desktop UI is mostly `App.tsx` (large). Prefer extracting outline/inspector/sidebar if the next pass needs more than a handful of edits.
-- Tests: `npm test` (import, outline, dates, selection) and `npm run typecheck`.
+- Desktop UI chrome is in `src/components/` (outline, inspector, sidebar, modals). `App.tsx` wires state to those modules.
+- Tests: `npm test` (import, outline, dates, selection, perspectives, library, navigation, commands) and `npm run typecheck`.
 - Default perspective bar now includes Completed (`⌘6`) before Review (`⌘7`). Saved bars that still match the old default are migrated in `src/settings.ts`.
 
 ## How to continue

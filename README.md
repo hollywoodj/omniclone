@@ -39,7 +39,11 @@ Installers are written to `release/`.
 
 ## Product architecture
 
-- `App.tsx` contains the adaptive desktop, tablet, and phone experience.
+- `App.tsx` orchestrates layout, selection, and commands for desktop, tablet, and phone.
+- `src/hooks/` owns persistence, navigation history, undo, layout breakpoints, and hotkeys.
+- `src/perspectives/` is the read model: visible-task queries, sidebar titles, and badge counts.
+- `src/library/` is the write model: complete/duplicate/delete and related mutations.
+- `src/commands/dispatch.ts` maps OmniFocus-style menu and keyboard commands onto those actions.
 - `src/model.ts` defines the task/project domain. New databases start empty.
 - `src/storage.ts` persists the database locally with AsyncStorage on every supported platform.
 - `src/importOmniFocus.ts` parses OmniFocus CSV and TaskPaper exports, including UTF-8 and UTF-16 files, folder-prefixed projects, inbox items, and duplicate-safe merges.
