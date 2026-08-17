@@ -547,6 +547,7 @@ function SettingsModal({
   settings,
   projectCount,
   taskCount,
+  compact,
   onChange,
   onClose,
   onImport,
@@ -555,6 +556,7 @@ function SettingsModal({
   settings: AppSettings;
   projectCount: number;
   taskCount: number;
+  compact: boolean;
   onChange: (patch: Partial<AppSettings>) => void;
   onClose: () => void;
   onImport: () => void;
@@ -571,29 +573,29 @@ function SettingsModal({
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.settingsBackdrop}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        <View style={styles.settingsWindow}>
+        <View style={[styles.settingsWindow, compact && styles.settingsWindowCompact]}>
           <View style={styles.settingsTitlebar}>
-            <View style={styles.settingsTrafficLights}>
+            {!compact && <View style={styles.settingsTrafficLights}>
               <Pressable accessibilityLabel="Close settings" onPress={onClose} style={[styles.settingsTrafficLight, { backgroundColor: "#ff5f57" }]} />
               <View style={[styles.settingsTrafficLight, { backgroundColor: "#febc2e" }]} />
               <View style={[styles.settingsTrafficLight, { backgroundColor: "#28c840" }]} />
-            </View>
+            </View>}
             <Text style={styles.settingsTitle}>Settings</Text>
             <Pressable onPress={onClose} style={styles.settingsDoneButton}><Text style={styles.settingsDoneText}>Done</Text></Pressable>
           </View>
-          <View style={styles.settingsBody}>
-            <View style={styles.settingsSidebar}>
+          <View style={[styles.settingsBody, compact && styles.settingsBodyCompact]}>
+            <View style={[styles.settingsSidebar, compact && styles.settingsSidebarCompact]}>
               {sections.map((item) => {
                 const selected = section === item.id;
                 return (
-                  <Pressable key={item.id} onPress={() => setSection(item.id)} style={[styles.settingsNavItem, selected && styles.settingsNavItemSelected]}>
+                  <Pressable key={item.id} onPress={() => setSection(item.id)} style={[styles.settingsNavItem, compact && styles.settingsNavItemCompact, selected && styles.settingsNavItemSelected]}>
                     <View style={[styles.settingsNavIcon, selected && styles.settingsNavIconSelected]}><Icon name={item.icon} size={17} color={selected ? "#fff" : "#66626a"} /></View>
                     <Text style={[styles.settingsNavText, selected && styles.settingsNavTextSelected]}>{item.label}</Text>
                   </Pressable>
                 );
               })}
             </View>
-            <ScrollView style={styles.settingsContent} contentContainerStyle={styles.settingsContentInner}>
+            <ScrollView style={styles.settingsContent} contentContainerStyle={[styles.settingsContentInner, compact && styles.settingsContentInnerCompact]}>
               {section === "general" && (
                 <>
                   <Text style={styles.settingsPageTitle}>General</Text>
@@ -850,7 +852,7 @@ export default function App() {
   const { width } = useWindowDimensions();
   const isPhone = width < 720;
   const canShowSidebar = width >= 850;
-  const canShowInspector = width >= 1080;
+  const canShowInspector = width >= 960;
   const [projects, setProjects] = useState<Project[]>(seedProjects);
   const [tasks, setTasks] = useState<Task[]>(seedTasks);
   const [customPerspectives, setCustomPerspectives] = useState<CustomPerspective[]>(seedCustomPerspectives);
@@ -1126,7 +1128,7 @@ export default function App() {
         ) : (
           <View style={styles.mobileHeader}>
             <View><Text style={styles.mobileEyebrow}>OMNIFOCUS</Text><Text numberOfLines={1} style={styles.mobileTitle}>{perspectiveTitle}</Text></View>
-            <View style={styles.mobileHeaderActions}><Pressable onPress={() => setEditingPerspective(activeCustomPerspective ? { draft: activeCustomPerspective, isNew: false } : { draft: createCustomPerspective(), isNew: true })} style={styles.mobileCircleButton}><Icon name="star-four-points-outline" size={19} color={activeCustomPerspective?.color ?? palette.purpleDark} /></Pressable><Pressable onPress={() => setSearchOpen((value) => !value)} style={styles.mobileCircleButton}><Icon name="magnify" size={21} color={palette.purpleDark} /></Pressable><Pressable onPress={() => setQuickKind("task")} style={styles.mobileAddButton}><Icon name="plus" size={24} color="#fff" /></Pressable></View>
+            <View style={styles.mobileHeaderActions}><Pressable accessibilityLabel="More and settings" onPress={() => setSettingsOpen(true)} style={styles.mobileCircleButton}><Icon name="dots-horizontal" size={20} color={palette.purpleDark} /></Pressable><Pressable onPress={() => setSearchOpen((value) => !value)} style={styles.mobileCircleButton}><Icon name="magnify" size={21} color={palette.purpleDark} /></Pressable><Pressable onPress={() => setQuickKind("task")} style={styles.mobileAddButton}><Icon name="plus" size={24} color="#fff" /></Pressable></View>
           </View>
         )}
 
@@ -1183,7 +1185,7 @@ export default function App() {
 
       <QuickEntryModal visible={quickKind !== null} kind={quickKind ?? "task"} projects={projects} defaultProjectId={defaultProjectId} onClose={() => setQuickKind(null)} onSave={createItem} />
 
-      {settingsOpen && <SettingsModal settings={settings} projectCount={projects.length} taskCount={tasks.length} onChange={(patch) => setSettings((current) => ({ ...current, ...patch }))} onClose={() => setSettingsOpen(false)} onImport={() => { setSettingsOpen(false); void openOmniFocusImport(); }} onReset={() => setSettings(defaultSettings)} />}
+      {settingsOpen && <SettingsModal settings={settings} projectCount={projects.length} taskCount={tasks.length} compact={isPhone} onChange={(patch) => setSettings((current) => ({ ...current, ...patch }))} onClose={() => setSettingsOpen(false)} onImport={() => { setSettingsOpen(false); void openOmniFocusImport(); }} onReset={() => setSettings(defaultSettings)} />}
 
       {editingPerspective && <CustomPerspectiveModal perspective={editingPerspective.draft} isNew={editingPerspective.isNew} projects={projects} onClose={() => setEditingPerspective(null)} onSave={saveCustomPerspective} onDelete={deleteCustomPerspective} />}
 
@@ -1400,6 +1402,7 @@ const styles = StyleSheet.create({
   deletePerspectiveText: { fontSize: 11, fontWeight: "600", color: palette.danger },
   settingsBackdrop: { flex: 1, alignItems: "center", justifyContent: "center", padding: 18, backgroundColor: "rgba(27,24,30,.34)" },
   settingsWindow: { width: "100%", maxWidth: 780, height: "82%", maxHeight: 610, minHeight: 480, overflow: "hidden", borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: "#aaa7ad", backgroundColor: "#f7f6f8", shadowColor: "#000", shadowOffset: { width: 0, height: 24 }, shadowOpacity: .3, shadowRadius: 48, elevation: 20 },
+  settingsWindowCompact: { height: "96%", maxHeight: "96%", minHeight: 0 },
   settingsTitlebar: { height: 49, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#c9c6cc", backgroundColor: "#eceaed" },
   settingsTrafficLights: { position: "absolute", left: 15, flexDirection: "row", gap: 8 },
   settingsTrafficLight: { width: 12, height: 12, borderRadius: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(0,0,0,.18)" },
@@ -1407,8 +1410,11 @@ const styles = StyleSheet.create({
   settingsDoneButton: { position: "absolute", right: 12, minWidth: 48, height: 28, alignItems: "center", justifyContent: "center", borderRadius: 6 },
   settingsDoneText: { fontSize: 11, fontWeight: "600", color: palette.purpleDark },
   settingsBody: { flex: 1, minHeight: 0, flexDirection: "row" },
+  settingsBodyCompact: { flexDirection: "column" },
   settingsSidebar: { width: 178, padding: 12, gap: 3, backgroundColor: "#e8e6ea", borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: "#c9c6cc" },
+  settingsSidebarCompact: { width: "100%", height: 58, paddingHorizontal: 8, paddingVertical: 8, flexDirection: "row", borderRightWidth: 0, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#c9c6cc" },
   settingsNavItem: { height: 39, paddingHorizontal: 8, flexDirection: "row", alignItems: "center", gap: 9, borderRadius: 7 },
+  settingsNavItemCompact: { flex: 1, height: 40, justifyContent: "center", paddingHorizontal: 5, gap: 5 },
   settingsNavItemSelected: { backgroundColor: "#d8c9e5" },
   settingsNavIcon: { width: 27, height: 27, alignItems: "center", justifyContent: "center", borderRadius: 7, backgroundColor: "#d5d2d8" },
   settingsNavIconSelected: { backgroundColor: palette.purple },
@@ -1416,6 +1422,7 @@ const styles = StyleSheet.create({
   settingsNavTextSelected: { color: "#3d254f", fontWeight: "600" },
   settingsContent: { flex: 1, backgroundColor: "#f8f7f9" },
   settingsContentInner: { paddingHorizontal: 28, paddingTop: 25, paddingBottom: 35 },
+  settingsContentInnerCompact: { paddingHorizontal: 14, paddingTop: 18, paddingBottom: 26 },
   settingsPageTitle: { fontSize: 21, lineHeight: 27, fontWeight: "700", letterSpacing: -.35, color: palette.text },
   settingsPageIntro: { marginTop: 4, marginBottom: 20, fontSize: 10.5, lineHeight: 16, color: palette.muted },
   settingsGroupLabel: { marginTop: 2, marginBottom: 6, marginLeft: 3, fontSize: 8, letterSpacing: .7, fontWeight: "700", color: "#817d85" },
