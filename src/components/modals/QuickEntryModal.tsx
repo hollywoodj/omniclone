@@ -1,0 +1,82 @@
+import React, { useEffect, useState } from "react";
+import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { palette, type Project } from "../../model";
+import { appStyles as styles } from "../../styles/appStyles";
+import { Icon } from "../ui/Icon";
+import { DatePresets } from "../inspector/DatePresets";
+import { FieldLabel } from "../inspector/FieldLabel";
+
+export function QuickEntryModal({ visible, kind, projects, defaultProjectId, onClose, onSave }: {
+  visible: boolean;
+  kind: "task" | "project" | "folder";
+  projects: Project[];
+  defaultProjectId: string | null;
+  onClose: () => void;
+  onSave: (payload: { title: string; projectId: string | null; flagged?: boolean; due?: string; tags?: string[] }) => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [projectId, setProjectId] = useState<string | null>(defaultProjectId);
+  const [flagged, setFlagged] = useState(false);
+  const [due, setDue] = useState<string | undefined>();
+  const [tagDraft, setTagDraft] = useState("");
+
+  useEffect(() => {
+    if (visible) {
+      setTitle("");
+      setProjectId(defaultProjectId);
+      setFlagged(false);
+      setDue(undefined);
+      setTagDraft("");
+    }
+  }, [visible, defaultProjectId]);
+
+  const save = () => {
+    if (!title.trim()) return;
+    onSave({
+      title: title.trim(),
+      projectId,
+      flagged,
+      due,
+      tags: tagDraft.split(",").map((tag) => tag.trim()).filter(Boolean),
+    });
+    setTitle("");
+    setFlagged(false);
+    setDue(undefined);
+    setTagDraft("");
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalBackdrop}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <View style={styles.quickEntryCard}>
+          <View style={styles.quickEntryHeader}><Text style={styles.quickEntryHeaderText}>{kind === "task" ? "Quick Entry" : kind === "folder" ? "New Folder" : "New Project"}</Text><Pressable onPress={onClose}><Icon name="close" size={20} color="#77747b" /></Pressable></View>
+          <View style={styles.quickInputRow}>
+            {kind === "folder" ? <Icon name="folder-plus-outline" size={22} color={palette.purpleDark} /> : <View style={styles.quickRing} />}
+            <TextInput autoFocus value={title} onChangeText={setTitle} onSubmitEditing={save} returnKeyType="done" placeholder={kind === "task" ? "What do you want to do?" : kind === "folder" ? "Folder name" : "Project name"} style={styles.quickInput} />
+            {kind === "task" && (
+              <Pressable accessibilityLabel={flagged ? "Remove flag" : "Flag"} onPress={() => setFlagged((value) => !value)} hitSlop={8}>
+                <Icon name={flagged ? "flag" : "flag-outline"} size={21} color={flagged ? palette.flag : "#aaa7ad"} />
+              </Pressable>
+            )}
+          </View>
+          {kind === "task" && (
+            <>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickProjectRow}>
+                <Pressable onPress={() => setProjectId(null)} style={[styles.quickProjectChip, projectId === null && styles.quickProjectChipSelected]}><Icon name="inbox-arrow-down-outline" size={14} color={projectId === null ? palette.purpleDark : "#6c6970"} /><Text style={styles.quickProjectText}>Inbox</Text></Pressable>
+                {projects.map((project) => <Pressable key={project.id} onPress={() => setProjectId(project.id)} style={[styles.quickProjectChip, projectId === project.id && styles.quickProjectChipSelected]}><View style={[styles.miniDot, { backgroundColor: project.color }]} /><Text numberOfLines={1} style={styles.quickProjectText}>{project.name}</Text></Pressable>)}
+              </ScrollView>
+              <View style={styles.quickMeta}>
+                <FieldLabel>Due</FieldLabel>
+                <DatePresets value={due} onChange={setDue} />
+                <FieldLabel>Tags</FieldLabel>
+                <TextInput value={tagDraft} onChangeText={setTagDraft} placeholder="errands, phone" style={styles.fieldInput} />
+              </View>
+            </>
+          )}
+          <View style={styles.quickFooter}><Text style={styles.quickHint}>Saved locally and available offline</Text><Pressable onPress={onClose} style={styles.cancelButton}><Text style={styles.cancelButtonText}>Cancel</Text></Pressable><Pressable disabled={!title.trim()} onPress={save} style={[styles.saveButton, !title.trim() && styles.disabled]}><Text style={styles.saveButtonText}>Save</Text></Pressable></View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
