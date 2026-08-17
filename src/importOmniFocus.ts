@@ -1,4 +1,7 @@
 import type { Project, Task } from "./model";
+import { formatOmniFocusDate, parseOmniTimestamp } from "./dates.ts";
+
+export { formatOmniFocusDate, parseOmniTimestamp } from "./dates.ts";
 
 export type OmniImportFormat = "OmniFocus CSV" | "OmniFocus TaskPaper";
 
@@ -14,7 +17,6 @@ export type OmniImportData = {
 export type ImportMode = "merge" | "replace";
 
 const importColors = ["#8f57c8", "#2f8de4", "#58a65c", "#dd7c38", "#d65774", "#4b9b91", "#7b77d6"];
-const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function hashText(value: string) {
   let hash = 2166136261;
@@ -89,62 +91,6 @@ function splitTags(value: string) {
   const source = clean(value).replace(/^\(|\)$/g, "");
   if (!source) return [];
   return [...new Set(source.split(/[,;]+/).map((tag) => tag.trim()).filter(Boolean))];
-}
-
-export function parseOmniTimestamp(raw: string): Date | undefined {
-  const value = clean(raw);
-  if (!value) return undefined;
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/);
-  if (match) {
-    return new Date(
-      Number(match[1]),
-      Number(match[2]) - 1,
-      Number(match[3]),
-      Number(match[4] ?? 0),
-      Number(match[5] ?? 0),
-      Number(match[6] ?? 0),
-    );
-  }
-  const fallback = Date.parse(value);
-  if (!Number.isNaN(fallback)) return new Date(fallback);
-  return undefined;
-}
-
-function pad(value: number) {
-  return value.toString().padStart(2, "0");
-}
-
-function formatClock(date: Date) {
-  const hours = date.getHours();
-  const minutes = date.getMinutes();
-  const period = hours >= 12 ? "PM" : "AM";
-  const hour12 = hours % 12 || 12;
-  return minutes ? `${hour12}:${pad(minutes)} ${period}` : `${hour12}:00 ${period}`;
-}
-
-function startOfLocalDay(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-}
-
-export function formatOmniFocusDate(raw: string, now = new Date()): string | undefined {
-  const value = clean(raw);
-  if (!value) return undefined;
-  const parsed = parseOmniTimestamp(value);
-  if (!parsed) return value;
-
-  const hasTime = parsed.getHours() !== 0 || parsed.getMinutes() !== 0 || parsed.getSeconds() !== 0;
-  const dayDelta = Math.round((startOfLocalDay(parsed) - startOfLocalDay(now)) / 86_400_000);
-  let label: string;
-  if (dayDelta === 0) label = "Today";
-  else if (dayDelta === 1) label = "Tomorrow";
-  else if (dayDelta === -1) label = "Yesterday";
-  else {
-    const month = monthNames[parsed.getMonth()] ?? "";
-    label = parsed.getFullYear() === now.getFullYear()
-      ? `${month} ${parsed.getDate()}`
-      : `${month} ${parsed.getDate()}, ${parsed.getFullYear()}`;
-  }
-  return hasTime ? `${label}, ${formatClock(parsed)}` : label;
 }
 
 function formatDuration(raw: string) {

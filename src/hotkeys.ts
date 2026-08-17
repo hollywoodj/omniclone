@@ -19,6 +19,8 @@ export type HotkeyAction =
   | { type: "toggleFlag" }
   | { type: "delete"; direction: "menu" | "previous" | "next" }
   | { type: "focusProject" }
+  | { type: "goBack" }
+  | { type: "goForward" }
   | { type: "markReviewed" }
   | { type: "selectRow"; direction: "up" | "down" }
   | { type: "extendRow"; direction: "up" | "down" }
@@ -103,6 +105,8 @@ export function matchOmniFocusHotkey(event: KeyboardEvent, options: {
     if (key === "o" || key === "O") return { type: "quickOpen" };
     if (key === ",") return { type: "openSettings" };
     if (key === "Delete" || key === "Backspace") return { type: "delete", direction: "menu" };
+    if (key === "[") return { type: "goBack" };
+    if (key === "]") return { type: "goForward" };
   }
 
   if (meta && ctrl && !alt && !shift && (key === "p" || key === "P")) return { type: "showPerspectivesList" };

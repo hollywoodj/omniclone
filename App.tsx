@@ -44,6 +44,20 @@ import { compareTasks, duplicateCustomPerspective, effectiveGroupBy, normalizeCu
 import { formatShortcut, toElectronAccelerator } from "./src/shortcuts";
 import { useMarqueeSelection, useModifierKeys } from "./src/marquee";
 import {
+  duePresetLabel,
+  dueUrgency,
+  forecastSubtitle,
+  forecastWeek,
+  isDueOnDay,
+  projectDueForReview,
+  reviewStatusText,
+  sameLocation,
+  todayKey,
+  type DueUrgency,
+  type ForecastDayKey,
+  type LocationState,
+} from "./src/dates";
+import {
   applyClick,
   applyMarquee,
   applyMove,
@@ -114,12 +128,23 @@ function ToolbarButton({ icon, label, active, onPress, disabled }: {
   );
 }
 
-function StatusRing({ completed, color = palette.purple, onPress, size = 19 }: {
+function statusRingColor(completed: boolean, flagged: boolean, urgency: DueUrgency, fallback?: string) {
+  if (completed) return fallback ?? palette.purple;
+  if (urgency === "overdue") return palette.overdue;
+  if (urgency === "dueSoon") return palette.dueSoon;
+  if (flagged) return palette.flag;
+  return fallback ?? palette.purple;
+}
+
+function StatusRing({ completed, flagged = false, urgency = "none", color, onPress, size = 19 }: {
   completed: boolean;
+  flagged?: boolean;
+  urgency?: DueUrgency;
   color?: string;
   onPress: () => void;
   size?: number;
 }) {
+  const ringColor = statusRingColor(completed, flagged, urgency, color);
   return (
     <Pressable
       accessibilityRole="checkbox"
@@ -127,9 +152,14 @@ function StatusRing({ completed, color = palette.purple, onPress, size = 19 }: {
       onPress={onPress}
       hitSlop={8}
       {...({ dataSet: { noMarquee: "true" } } as object)}
-      style={[styles.statusRing, { width: size, height: size, borderRadius: size / 2, borderColor: color }, completed && { backgroundColor: color }]}
+      style={[styles.statusRing, { width: size, height: size, borderRadius: size / 2, borderColor: ringColor }, completed && { backgroundColor: ringColor }]}
     >
       {completed && <Icon name="check" size={Math.max(10, size - 7)} color="#fff" />}
+      {!completed && flagged && (
+        <View style={styles.statusFlag} pointerEvents="none">
+          <Icon name="flag" size={Math.max(8, size - 11)} color={palette.flag} />
+        </View>
+      )}
     </Pressable>
   );
 }
@@ -153,9 +183,9 @@ function projectContextItems(project: Project, handlers: {
   ];
 }
 
-function PerspectiveRail({ current, inboxCount, items, showTitles, shortcuts, onSelect, onEdit, onUnfavorite, onOpenList, onOpenSettings, onDelete }: {
+function PerspectiveRail({ current, badges, items, showTitles, shortcuts, onSelect, onEdit, onUnfavorite, onOpenList, onOpenSettings, onDelete }: {
   current: ActivePerspective;
-  inboxCount: number;
+  badges: Record<string, { count: number; color?: string }>;
   items: RailPerspective[];
   showTitles: boolean;
   shortcuts: Record<string, string>;
@@ -195,8 +225,10 @@ function PerspectiveRail({ current, inboxCount, items, showTitles, shortcuts, on
             >
               <View>
                 <Icon name={item.icon as IconName} size={24} color={selected ? accent : "#656269"} />
-                {item.id === "inbox" && inboxCount > 0 && (
-                  <View style={[styles.badge, selected && styles.badgeSelected]}><Text style={styles.badgeText}>{inboxCount}</Text></View>
+                {!!badges[item.id]?.count && (
+                  <View style={[styles.badge, selected && styles.badgeSelected, badges[item.id]?.color ? { backgroundColor: badges[item.id]?.color } : null]}>
+                    <Text style={styles.badgeText}>{badges[item.id]?.count}</Text>
+                  </View>
                 )}
               </View>
               {showTitles && <Text numberOfLines={1} style={[styles.perspectiveLabel, selected && { color: accent, fontWeight: "700" }]}>{item.name}</Text>}
@@ -220,8 +252,13 @@ function ProjectSidebar({
   projects,
   tasks,
   selectedProjectId,
+  selectedTag,
+  forecastDay,
+  forecastCounts,
   showCounts,
   onSelectProject,
+  onSelectTag,
+  onSelectForecastDay,
   onNewProject,
   onFocusProject,
   onNewActionInProject,
@@ -231,8 +268,13 @@ function ProjectSidebar({
   projects: Project[];
   tasks: Task[];
   selectedProjectId: string | null;
+  selectedTag: string | null;
+  forecastDay: ForecastDayKey;
+  forecastCounts: Record<string, number>;
   showCounts: boolean;
   onSelectProject: (id: string | null) => void;
+  onSelectTag: (tag: string | null) => void;
+  onSelectForecastDay: (day: ForecastDayKey) => void;
   onNewProject: () => void;
   onFocusProject: (id: string) => void;
   onNewActionInProject: (id: string) => void;
@@ -244,6 +286,7 @@ function ProjectSidebar({
   const sidebarMenuItems: ContextMenuItem[] = [
     { id: "new-project", label: "New Project", icon: "plus", onPress: onNewProject },
   ];
+  const week = useMemo(() => forecastWeek(), []);
 
   return (
     <View style={styles.sidebar}>
@@ -284,20 +327,41 @@ function ProjectSidebar({
             ))}
           </>
         )}
-        {perspective === "tags" && tags.map((tag) => (
-          <View key={tag} style={styles.sidebarRow}>
-            <Icon name="pound" size={16} color="#77747b" />
-            <Text style={styles.sidebarRowText}>{tag}</Text>
-            {showCounts && <Text style={styles.sidebarCount}>{tasks.filter((task) => task.tags.includes(tag) && !task.completed).length}</Text>}
-          </View>
-        ))}
+        {perspective === "tags" && (
+          <>
+            <Pressable onPress={() => onSelectTag(null)} style={[styles.sidebarRow, selectedTag === null && styles.sidebarRowSelected]}>
+              <Icon name="tag-multiple-outline" size={17} color="#6f6c73" />
+              <Text numberOfLines={1} style={styles.sidebarRowText}>All Tags</Text>
+              {showCounts && <Text style={styles.sidebarCount}>{tasks.filter((task) => task.tags.length && !task.completed).length}</Text>}
+            </Pressable>
+            <Text style={styles.sidebarSectionLabel}>TAGS</Text>
+            {!tags.length && <Text style={styles.sidebarEmptyText}>No tags yet. Add them in the inspector.</Text>}
+            {tags.map((tag) => (
+              <Pressable key={tag} onPress={() => onSelectTag(tag)} style={[styles.sidebarRow, selectedTag === tag && styles.sidebarRowSelected]}>
+                <Icon name="pound" size={16} color="#77747b" />
+                <Text style={styles.sidebarRowText}>{tag}</Text>
+                {showCounts && <Text style={styles.sidebarCount}>{tasks.filter((task) => task.tags.includes(tag) && !task.completed).length}</Text>}
+              </Pressable>
+            ))}
+          </>
+        )}
         {perspective === "forecast" && (
           <View>
-            <View style={styles.forecastPast}><Text style={styles.sidebarRowText}>Past</Text><Text style={styles.forecastPastCount}>1</Text></View>
+            <Pressable onPress={() => onSelectForecastDay("past")} style={[styles.forecastPast, forecastDay === "past" && styles.sidebarRowSelected]}>
+              <Text style={styles.sidebarRowText}>Past</Text>
+              <Text style={styles.forecastPastCount}>{forecastCounts.past ?? 0}</Text>
+            </Pressable>
             <View style={styles.forecastDays}>
-              {["SAT\n15", "SUN\n16", "MON\n17", "TUE\n18", "WED\n19"].map((day, index) => (
-                <View key={day} style={[styles.forecastDay, index === 0 && styles.forecastDaySelected]}><Text style={[styles.forecastDayText, index === 0 && styles.forecastDayTextSelected]}>{day}</Text></View>
-              ))}
+              {week.map((day) => {
+                const selected = forecastDay === day.key;
+                return (
+                  <Pressable key={day.key} onPress={() => onSelectForecastDay(day.key)} style={[styles.forecastDay, selected && styles.forecastDaySelected]}>
+                    <Text style={[styles.forecastDayWeek, selected && styles.forecastDayTextSelected]}>{day.weekday}</Text>
+                    <Text style={[styles.forecastDayNum, selected && styles.forecastDayTextSelected]}>{day.date}</Text>
+                    {!!forecastCounts[day.key] && <Text style={[styles.forecastDayCount, selected && styles.forecastDayCountSelected]}>{forecastCounts[day.key]}</Text>}
+                  </Pressable>
+                );
+              })}
             </View>
           </View>
         )}
@@ -331,6 +395,7 @@ function TaskRow({ task, project, selected, bulkCount, settings, registerRow, on
   onDelete: () => void;
   onCopy: () => void;
 }) {
+  const urgency = dueUrgency(task.due);
   const bulk = bulkCount > 1;
   const menuItems: ContextMenuItem[] = [
     { id: "inspect", label: "Inspect", icon: "information-outline", onPress: onInspect },
@@ -353,7 +418,7 @@ function TaskRow({ task, project, selected, bulkCount, settings, registerRow, on
         onPress={onSelect}
         style={({ pressed }) => [styles.taskRow, settings.rowDensity === "compact" && styles.taskRowCompact, selected && styles.taskRowSelected, pressed && styles.taskRowPressed]}
       >
-        <StatusRing completed={task.completed} color={project?.color} onPress={onToggle} />
+        <StatusRing completed={task.completed} flagged={task.flagged} urgency={urgency} color={project?.color} onPress={onToggle} />
         <View style={styles.taskBody}>
           <View style={styles.taskTitleLine}>
             <Text
@@ -376,7 +441,7 @@ function TaskRow({ task, project, selected, bulkCount, settings, registerRow, on
           </View>
         </View>
         <View style={styles.taskTail}>
-          {!!task.due && <Text style={[styles.dueText, settings.colorDueItems && task.due.startsWith("Today") && styles.dueToday]}>{task.due}</Text>}
+          {!!task.due && <Text style={[styles.dueText, settings.colorDueItems && urgency === "overdue" && styles.dueOverdue, settings.colorDueItems && urgency === "dueSoon" && styles.dueSoon]}>{task.due}</Text>}
           {task.flagged && <Icon name="flag" size={16} color={palette.flag} />}
           <Pressable onPress={onInspect} hitSlop={8} style={styles.rowInfoButton} {...({ dataSet: { noMarquee: "true" } } as object)}><Icon name="information-outline" size={17} color="#8e8a91" /></Pressable>
         </View>
@@ -429,6 +494,8 @@ function Outline({
   tasks,
   selectedTaskIds,
   projectFilter,
+  tagFilter,
+  forecastDay,
   settings,
   databaseEmpty,
   onSelectTask,
@@ -442,6 +509,7 @@ function Outline({
   onReviewProject,
   onOpenViewMenu,
   onFocusProject,
+  onSelectProject,
   onNewActionInProject,
   onDeleteProject,
   onImport,
@@ -457,6 +525,8 @@ function Outline({
   tasks: Task[];
   selectedTaskIds: string[];
   projectFilter: string | null;
+  tagFilter: string | null;
+  forecastDay: ForecastDayKey;
   settings: AppSettings;
   databaseEmpty?: boolean;
   onSelectTask: (id: string, modifiers?: SelectionModifiers) => void;
@@ -470,6 +540,7 @@ function Outline({
   onReviewProject: (id: string) => void;
   onOpenViewMenu: () => void;
   onFocusProject: (id: string) => void;
+  onSelectProject: (id: string) => void;
   onNewActionInProject: (id: string) => void;
   onDeleteProject: (id: string) => void;
   onImport: () => void;
@@ -481,6 +552,7 @@ function Outline({
   const { openMenu } = useContextMenuTrigger();
   const containerRef = useRef<View>(null);
   const [marqueeReady, setMarqueeReady] = useState(false);
+  const [collapsedIds, setCollapsedIds] = useState<string[]>([]);
   const modifiersRef = useModifierKeys();
   const { registerRow, suppressClickRef, overlay } = useMarqueeSelection({
     enabled: marqueeReady,
@@ -497,16 +569,24 @@ function Outline({
     { id: "new-action", label: "New Action", icon: "plus", onPress: onNewTask },
   ];
   const projectHandlers = { onFocusProject, onNewActionInProject, onDeleteProject };
+  const collapsed = useMemo(() => new Set(collapsedIds), [collapsedIds]);
+  const toggleCollapsed = (id: string) => {
+    setCollapsedIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  };
   const projectHeading = (project: Project, count: number) => (
-    <ContextMenuPressable items={projectContextItems(project, projectHandlers)} onPress={() => onFocusProject(project.id)} style={styles.projectHeading}>
-      <Icon name="chevron-down" size={18} color="#6e6c72" />
-      <View style={[styles.projectHeadingRing, { borderColor: project.color }]} />
-      <View style={styles.projectHeadingCopy}>
-        <Text style={styles.projectHeadingTitle}>{project.name}</Text>
-        <Text numberOfLines={1} style={styles.projectHeadingNote}>{project.note}</Text>
-      </View>
-      <Text style={styles.projectHeadingCount}>{count}</Text>
-    </ContextMenuPressable>
+    <View style={styles.projectHeading}>
+      <Pressable accessibilityLabel={collapsed.has(project.id) ? "Expand project" : "Collapse project"} onPress={() => toggleCollapsed(project.id)} hitSlop={8} style={styles.collapseButton} {...({ dataSet: { noMarquee: "true" } } as object)}>
+        <Icon name={collapsed.has(project.id) ? "chevron-right" : "chevron-down"} size={18} color="#6e6c72" />
+      </Pressable>
+      <ContextMenuPressable items={projectContextItems(project, projectHandlers)} onPress={() => onSelectProject(project.id)} style={styles.projectHeadingMain}>
+        <View style={[styles.projectHeadingRing, { borderColor: project.color }]} />
+        <View style={styles.projectHeadingCopy}>
+          <Text style={styles.projectHeadingTitle}>{project.name}</Text>
+          <Text numberOfLines={1} style={styles.projectHeadingNote}>{project.note}</Text>
+        </View>
+        <Text style={styles.projectHeadingCount}>{count}</Text>
+      </ContextMenuPressable>
+    </View>
   );
   const taskRow = (task: Task) => {
     const selected = selectedSet.has(task.id);
@@ -537,13 +617,21 @@ function Outline({
   const tags = [...new Set(tasks.flatMap((task) => task.tags))].sort();
   const groupBy = customPerspective ? effectiveGroupBy(customPerspective) : null;
   const visibleProjects = projects.filter((project) => !projectFilter || project.id === projectFilter);
+  const reviewProjects = projects.filter((project) => projectDueForReview(project));
+  const remainingCount = tasks.filter((task) => !task.completed).length;
+  const outlineSubtitle = perspective === "forecast"
+    ? forecastSubtitle(forecastDay)
+    : perspective === "review"
+      ? (reviewProjects.length ? `${reviewProjects.length} project${reviewProjects.length === 1 ? "" : "s"} due for review` : "All caught up")
+      : `${remainingCount} action${remainingCount === 1 ? "" : "s"}${selectedTaskIds.length > 1 ? ` • ${selectedTaskIds.length} selected` : ""}${perspective === "projects" && !projectFilter ? ` • ${projects.length} projects` : ""}${tagFilter ? ` • ${tagFilter}` : ""}`;
+  const renderGroupTasks = (id: string, groupTasks: Task[]) => collapsed.has(id) ? null : groupTasks.map(taskRow);
 
   return (
     <View style={styles.outline}>
       <View style={styles.outlineHeader}>
         <View style={styles.outlineHeaderCopy}>
           <Text numberOfLines={1} style={styles.outlineTitle}>{title}</Text>
-          <Text style={styles.outlineSubtitle}>{tasks.filter((task) => !task.completed).length} actions{selectedTaskIds.length > 1 ? ` • ${selectedTaskIds.length} selected` : ""}{perspective === "projects" && !projectFilter ? ` • ${projects.length} projects` : ""}</Text>
+          <Text style={styles.outlineSubtitle}>{outlineSubtitle}</Text>
         </View>
         <ContextMenuPressable
           accessibilityLabel="Outline options"
@@ -569,14 +657,14 @@ function Outline({
           return (
             <View key={project?.id ?? "inbox"} style={styles.projectGroup}>
               {project ? projectHeading(project, groupTasks.length) : (
-                <View style={styles.projectHeading}>
-                  <Icon name="chevron-down" size={18} color="#6e6c72" />
+                <Pressable onPress={() => toggleCollapsed("inbox")} style={styles.projectHeading}>
+                  <Icon name={collapsed.has("inbox") ? "chevron-right" : "chevron-down"} size={18} color="#6e6c72" />
                   <Icon name="inbox-arrow-down-outline" size={20} color={customPerspective?.color ?? palette.purple} />
                   <View style={styles.projectHeadingCopy}><Text style={styles.projectHeadingTitle}>Inbox</Text><Text numberOfLines={1} style={styles.projectHeadingNote}>Actions without a project</Text></View>
                   <Text style={styles.projectHeadingCount}>{groupTasks.length}</Text>
-                </View>
+                </Pressable>
               )}
-              {groupTasks.map(taskRow)}
+              {renderGroupTasks(project?.id ?? "inbox", groupTasks)}
             </View>
           );
         })}
@@ -584,27 +672,41 @@ function Outline({
           const tagged = tasks.filter((task) => task.tags.includes(tag));
           return (
             <View key={tag} style={styles.projectGroup}>
-              <View style={styles.tagHeading}><Icon name="pound" size={22} color={customPerspective?.color ?? palette.purple} /><View><Text style={styles.projectHeadingTitle}>{tag}</Text><Text style={styles.projectHeadingNote}>{tagged.length} actions</Text></View></View>
-              {tagged.map(taskRow)}
+              <Pressable onPress={() => toggleCollapsed(`tag:${tag}`)} style={styles.tagHeading}>
+                <Icon name={collapsed.has(`tag:${tag}`) ? "chevron-right" : "chevron-down"} size={18} color="#6e6c72" />
+                <Icon name="pound" size={22} color={customPerspective?.color ?? palette.purple} />
+                <View><Text style={styles.projectHeadingTitle}>{tag}</Text><Text style={styles.projectHeadingNote}>{tagged.length} actions</Text></View>
+              </Pressable>
+              {renderGroupTasks(`tag:${tag}`, tagged)}
             </View>
           );
         })}
         {groupBy === "flagged" && [true, false].map((flagged) => {
           const groupTasks = tasks.filter((task) => task.flagged === flagged);
           if (!groupTasks.length) return null;
+          const groupId = flagged ? "flagged" : "unflagged";
           return (
-            <View key={flagged ? "flagged" : "unflagged"} style={styles.projectGroup}>
-              <View style={styles.tagHeading}><Icon name={flagged ? "flag" : "flag-outline"} size={20} color={flagged ? palette.flag : "#8b888f"} /><View><Text style={styles.projectHeadingTitle}>{flagged ? "Flagged" : "Unflagged"}</Text><Text style={styles.projectHeadingNote}>{groupTasks.length} actions</Text></View></View>
-              {groupTasks.map(taskRow)}
+            <View key={groupId} style={styles.projectGroup}>
+              <Pressable onPress={() => toggleCollapsed(groupId)} style={styles.tagHeading}>
+                <Icon name={collapsed.has(groupId) ? "chevron-right" : "chevron-down"} size={18} color="#6e6c72" />
+                <Icon name={flagged ? "flag" : "flag-outline"} size={20} color={flagged ? palette.flag : "#8b888f"} />
+                <View><Text style={styles.projectHeadingTitle}>{flagged ? "Flagged" : "Unflagged"}</Text><Text style={styles.projectHeadingNote}>{groupTasks.length} actions</Text></View>
+              </Pressable>
+              {renderGroupTasks(groupId, groupTasks)}
             </View>
           );
         })}
         {groupBy === "due" && [...new Set(tasks.map((task) => task.due ?? "No Due Date"))].map((due) => {
           const groupTasks = tasks.filter((task) => (task.due ?? "No Due Date") === due);
+          const groupId = `due:${due}`;
           return (
             <View key={due} style={styles.projectGroup}>
-              <View style={styles.tagHeading}><Icon name="calendar-month-outline" size={20} color={customPerspective?.color ?? palette.purple} /><View><Text style={styles.projectHeadingTitle}>{due}</Text><Text style={styles.projectHeadingNote}>{groupTasks.length} actions</Text></View></View>
-              {groupTasks.map(taskRow)}
+              <Pressable onPress={() => toggleCollapsed(groupId)} style={styles.tagHeading}>
+                <Icon name={collapsed.has(groupId) ? "chevron-right" : "chevron-down"} size={18} color="#6e6c72" />
+                <Icon name="calendar-month-outline" size={20} color={customPerspective?.color ?? palette.purple} />
+                <View><Text style={styles.projectHeadingTitle}>{due}</Text><Text style={styles.projectHeadingNote}>{groupTasks.length} actions</Text></View>
+              </Pressable>
+              {renderGroupTasks(groupId, groupTasks)}
             </View>
           );
         })}
@@ -614,23 +716,28 @@ function Outline({
           return (
             <View key={project.id} style={styles.projectGroup}>
               {projectHeading(project, projectTasks.filter((task) => !task.completed).length)}
-              {projectTasks.map(taskRow)}
+              {renderGroupTasks(project.id, projectTasks)}
             </View>
           );
         })}
-        {!customPerspective && perspective === "tags" && tags.map((tag) => {
+        {!customPerspective && perspective === "tags" && !tagFilter && tags.map((tag) => {
           const tagged = tasks.filter((task) => task.tags.includes(tag));
           return (
             <View key={tag} style={styles.projectGroup}>
-              <View style={styles.tagHeading}><Icon name="pound" size={22} color={palette.purple} /><View><Text style={styles.projectHeadingTitle}>{tag}</Text><Text style={styles.projectHeadingNote}>{tagged.length} actions</Text></View></View>
-              {tagged.map(taskRow)}
+              <Pressable onPress={() => toggleCollapsed(`tag:${tag}`)} style={styles.tagHeading}>
+                <Icon name={collapsed.has(`tag:${tag}`) ? "chevron-right" : "chevron-down"} size={18} color="#6e6c72" />
+                <Icon name="pound" size={22} color={palette.purple} />
+                <View><Text style={styles.projectHeadingTitle}>{tag}</Text><Text style={styles.projectHeadingNote}>{tagged.length} actions</Text></View>
+              </Pressable>
+              {renderGroupTasks(`tag:${tag}`, tagged)}
             </View>
           );
         })}
-        {!customPerspective && perspective === "review" && projects.map((project) => (
-          <ContextMenuPressable key={project.id} items={projectContextItems(project, projectHandlers)} onPress={() => onFocusProject(project.id)} style={styles.reviewRow}>
+        {!customPerspective && perspective === "tags" && !!tagFilter && tasks.map(taskRow)}
+        {!customPerspective && perspective === "review" && reviewProjects.map((project) => (
+          <ContextMenuPressable key={project.id} items={projectContextItems(project, projectHandlers)} onPress={() => onSelectProject(project.id)} style={styles.reviewRow}>
             <View style={[styles.projectHeadingRing, { borderColor: project.color }]} />
-            <View style={styles.reviewCopy}><Text style={styles.projectHeadingTitle}>{project.name}</Text><Text style={styles.projectHeadingNote}>Review every {project.reviewIntervalDays} days</Text></View>
+            <View style={styles.reviewCopy}><Text style={styles.projectHeadingTitle}>{project.name}</Text><Text style={styles.projectHeadingNote}>{reviewStatusText(project)}</Text></View>
             <Pressable onPress={() => onReviewProject(project.id)} style={styles.reviewButton}><Icon name="check" size={15} color="#fff" /><Text style={styles.reviewButtonText}>Reviewed</Text></Pressable>
           </ContextMenuPressable>
         ))}
@@ -646,7 +753,13 @@ function Outline({
             </Pressable>
             <Text style={styles.migrateHint}>Or create a project with ⇧⌘N and start empty.</Text>
           </View>
-        ) : !tasks.length && (perspective !== "projects" || !visibleProjects.length) ? (
+        ) : !customPerspective && perspective === "review" && !reviewProjects.length ? (
+          <View style={styles.emptyState}>
+            <View style={styles.emptyCheck}><Icon name="check-decagram-outline" size={26} color="#aaa7ad" /></View>
+            <Text style={styles.emptyTitle}>You're all caught up</Text>
+            <Text style={styles.emptyText}>No projects are waiting for review.</Text>
+          </View>
+        ) : !tasks.length && (perspective !== "projects" || !visibleProjects.length) && perspective !== "review" ? (
           <View style={styles.emptyState}>
             <View style={styles.emptyCheck}><Icon name="check" size={26} color="#aaa7ad" /></View>
             <Text style={styles.emptyTitle}>All clear</Text>
@@ -665,6 +778,33 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   return <Text style={styles.fieldLabel}>{children}</Text>;
 }
 
+function DatePresets({ value, onChange }: {
+  value?: string;
+  onChange: (value?: string) => void;
+}) {
+  const presets: Array<{ id: string; label: string; next?: string }> = [
+    { id: "none", label: "None" },
+    { id: "today", label: "Today", next: duePresetLabel("today") },
+    { id: "tomorrow", label: "Tomorrow", next: duePresetLabel("tomorrow") },
+    { id: "weekend", label: "Weekend", next: duePresetLabel("weekend") },
+    { id: "next", label: "Next Week", next: duePresetLabel("nextWeek") },
+  ];
+  const selected = !value ? "none" : presets.find((item) => item.next && item.next === value)?.id;
+  return (
+    <View style={styles.datePresets}>
+      {presets.map((item) => (
+        <Pressable
+          key={item.id}
+          onPress={() => onChange(item.next)}
+          style={[styles.datePreset, selected === item.id && styles.datePresetSelected]}
+        >
+          <Text style={[styles.datePresetText, selected === item.id && styles.datePresetTextSelected]}>{item.label}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
 function Inspector({ task, projects, onChange, onToggle, onDelete, onClose, modal = false }: {
   task: Task;
   projects: Project[];
@@ -675,24 +815,55 @@ function Inspector({ task, projects, onChange, onToggle, onDelete, onClose, moda
   modal?: boolean;
 }) {
   const [tagDraft, setTagDraft] = useState(task.tags.join(", "));
+  const [tab, setTab] = useState<"action" | "notes" | "attachments">("action");
 
   useEffect(() => setTagDraft(task.tags.join(", ")), [task.id, task.tags]);
+  useEffect(() => setTab("action"), [task.id]);
 
   const commitTags = () => {
     onChange({ tags: tagDraft.split(",").map((tag) => tag.trim()).filter(Boolean) });
   };
 
+  const tabs: Array<{ id: "action" | "notes" | "attachments"; label: string }> = [
+    { id: "action", label: "Action" },
+    { id: "notes", label: "Notes" },
+    { id: "attachments", label: "Attachments" },
+  ];
+
   return (
     <View style={[styles.inspector, modal && styles.inspectorModal]}>
       <View style={styles.inspectorTabs}>
         {modal && <Pressable onPress={onClose} style={styles.modalClose}><Icon name="chevron-left" size={24} color={palette.purpleDark} /></Pressable>}
-        <View style={styles.inspectorTabSelected}><Text style={styles.inspectorTabText}>Action</Text></View>
-        <Text style={styles.inspectorTabText}>Notes</Text>
-        <Text style={styles.inspectorTabText}>Attachments</Text>
+        {tabs.map((item) => (
+          <Pressable key={item.id} onPress={() => setTab(item.id)} style={tab === item.id ? styles.inspectorTabSelected : styles.inspectorTab}>
+            <Text style={[styles.inspectorTabText, tab === item.id && styles.inspectorTabTextSelected]}>{item.label}</Text>
+          </Pressable>
+        ))}
       </View>
+      {tab === "notes" && (
+        <View style={styles.inspectorNotePane}>
+          <TextInput
+            value={task.note ?? ""}
+            onChangeText={(note) => onChange({ note })}
+            placeholder="Write a note…"
+            multiline
+            textAlignVertical="top"
+            style={styles.inspectorNoteEditor}
+            accessibilityLabel="Action note"
+          />
+        </View>
+      )}
+      {tab === "attachments" && (
+        <View style={styles.attachmentEmpty}>
+          <View style={styles.attachmentIcon}><Icon name="paperclip" size={26} color="#aaa7ad" /></View>
+          <Text style={styles.attachmentTitle}>No Attachments</Text>
+          <Text style={styles.attachmentText}>OmniFocus stores files on the Notes tab. OmniClone keeps notes with the action; file attachments are not imported from CSV.</Text>
+        </View>
+      )}
+      {tab === "action" && (
       <ScrollView style={styles.inspectorScroll} keyboardShouldPersistTaps="handled">
         <View style={styles.inspectorTitleRow}>
-          <StatusRing completed={task.completed} onPress={onToggle} />
+          <StatusRing completed={task.completed} flagged={task.flagged} urgency={dueUrgency(task.due)} onPress={onToggle} />
           <TextInput value={task.title} onChangeText={(title) => onChange({ title })} multiline style={styles.inspectorTitleInput} accessibilityLabel="Action title" />
           <Pressable onPress={() => onChange({ flagged: !task.flagged })} hitSlop={8}><Icon name={task.flagged ? "flag" : "flag-outline"} size={20} color={task.flagged ? palette.flag : "#aaa7ad"} /></Pressable>
         </View>
@@ -711,21 +882,26 @@ function Inspector({ task, projects, onChange, onToggle, onDelete, onClose, moda
         <View style={styles.inspectorSection}>
           <Text style={styles.inspectorSectionTitle}>DATES</Text>
           <FieldLabel>Defer Until</FieldLabel>
+          <DatePresets value={task.defer} onChange={(defer) => onChange({ defer })} />
           <TextInput value={task.defer ?? ""} onChangeText={(defer) => onChange({ defer })} placeholder="None" style={styles.fieldInput} />
           <FieldLabel>Due</FieldLabel>
+          <DatePresets value={task.due} onChange={(due) => onChange({ due })} />
           <TextInput value={task.due ?? ""} onChangeText={(due) => onChange({ due })} placeholder="None" style={styles.fieldInput} />
         </View>
 
-        <View style={styles.inspectorSection}>
-          <Text style={styles.inspectorSectionTitle}>NOTE</Text>
-          <TextInput value={task.note ?? ""} onChangeText={(note) => onChange({ note })} placeholder="Add a note…" multiline textAlignVertical="top" style={[styles.fieldInput, styles.noteInput]} />
-        </View>
+        {!!task.note && (
+          <Pressable onPress={() => setTab("notes")} style={styles.inspectorSection}>
+            <Text style={styles.inspectorSectionTitle}>NOTE</Text>
+            <Text numberOfLines={3} style={styles.notePreview}>{task.note}</Text>
+          </Pressable>
+        )}
 
         <View style={styles.inspectorSection}>
           <View style={styles.savedRow}><Icon name="cloud-check-outline" size={16} color="#6f9d70" /><Text style={styles.savedText}>Saved on this device</Text></View>
           <Pressable onPress={onDelete} style={styles.deleteButton}><Icon name="trash-can-outline" size={17} color={palette.danger} /><Text style={styles.deleteButtonText}>Delete Action</Text></Pressable>
         </View>
       </ScrollView>
+      )}
     </View>
   );
 }
@@ -777,22 +953,25 @@ function QuickEntryModal({ visible, kind, projects, defaultProjectId, onClose, o
   projects: Project[];
   defaultProjectId: string | null;
   onClose: () => void;
-  onSave: (title: string, projectId: string | null) => void;
+  onSave: (title: string, projectId: string | null, flagged?: boolean) => void;
 }) {
   const [title, setTitle] = useState("");
   const [projectId, setProjectId] = useState<string | null>(defaultProjectId);
+  const [flagged, setFlagged] = useState(false);
 
   useEffect(() => {
     if (visible) {
       setTitle("");
       setProjectId(defaultProjectId);
+      setFlagged(false);
     }
   }, [visible, defaultProjectId]);
 
   const save = () => {
     if (!title.trim()) return;
-    onSave(title.trim(), projectId);
+    onSave(title.trim(), projectId, flagged);
     setTitle("");
+    setFlagged(false);
   };
 
   return (
@@ -804,7 +983,11 @@ function QuickEntryModal({ visible, kind, projects, defaultProjectId, onClose, o
           <View style={styles.quickInputRow}>
             <View style={styles.quickRing} />
             <TextInput autoFocus value={title} onChangeText={setTitle} onSubmitEditing={save} returnKeyType="done" placeholder={kind === "task" ? "What do you want to do?" : "Project name"} style={styles.quickInput} />
-            {kind === "task" && <Icon name="flag-outline" size={21} color="#aaa7ad" />}
+            {kind === "task" && (
+              <Pressable accessibilityLabel={flagged ? "Remove flag" : "Flag"} onPress={() => setFlagged((value) => !value)} hitSlop={8}>
+                <Icon name={flagged ? "flag" : "flag-outline"} size={21} color={flagged ? palette.flag : "#aaa7ad"} />
+              </Pressable>
+            )}
           </View>
           {kind === "task" && (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickProjectRow}>
@@ -1115,6 +1298,13 @@ export default function App() {
   const [hydrated, setHydrated] = useState(false);
   const [perspective, setPerspective] = useState<ActivePerspective>("projects");
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [forecastDay, setForecastDay] = useState<ForecastDayKey>(todayKey());
+  const [focusedProjectId, setFocusedProjectId] = useState<string | null>(null);
+  const [canGoBack, setCanGoBack] = useState(false);
+  const [canGoForward, setCanGoForward] = useState(false);
+  const locationRef = useRef<LocationState>({ perspective: "projects", projectFilter: null, tagFilter: null, forecastDay: todayKey(), focusedProjectId: null });
+  const historyRef = useRef<{ stack: LocationState[]; index: number }>({ stack: [], index: -1 });
   const [selection, setSelection] = useState<SelectionState>(emptySelection);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(true);
@@ -1151,6 +1341,9 @@ export default function App() {
       }
       setSettings(nextSettings);
       setPerspective(nextSettings.defaultPerspective);
+      const initial: LocationState = { perspective: nextSettings.defaultPerspective, projectFilter: null, tagFilter: null, forecastDay: todayKey(), focusedProjectId: null };
+      locationRef.current = initial;
+      historyRef.current = { stack: [initial], index: 0 };
       setHydrated(true);
     });
   }, []);
@@ -1188,6 +1381,52 @@ export default function App() {
   const activeCustomPerspective = perspective.startsWith("custom:") ? customPerspectives.find((item) => item.id === perspective.slice(7)) ?? null : null;
   const barItems = useMemo(() => favoritePerspectives(settings, customPerspectives), [customPerspectives, settings]);
   const knownTags = useMemo(() => [...new Set(tasks.flatMap((task) => task.tags))].sort(), [tasks]);
+  const focusedProject = focusedProjectId ? projects.find((project) => project.id === focusedProjectId) : undefined;
+
+  locationRef.current = { perspective, projectFilter, tagFilter, forecastDay, focusedProjectId };
+
+  const applyLocation = useCallback((next: LocationState) => {
+    locationRef.current = next;
+    setPerspective(next.perspective);
+    setProjectFilter(next.projectFilter);
+    setTagFilter(next.tagFilter);
+    setForecastDay(next.forecastDay);
+    setFocusedProjectId(next.focusedProjectId);
+  }, []);
+
+  const syncHistoryButtons = useCallback(() => {
+    const { stack, index } = historyRef.current;
+    setCanGoBack(index > 0);
+    setCanGoForward(index >= 0 && index < stack.length - 1);
+  }, []);
+
+  const navigate = useCallback((patch: Partial<LocationState>) => {
+    const next = { ...locationRef.current, ...patch };
+    if (sameLocation(locationRef.current, next)) return;
+    applyLocation(next);
+    const { stack, index } = historyRef.current;
+    const nextStack = [...stack.slice(0, Math.max(index, -1) + 1), next];
+    historyRef.current = { stack: nextStack, index: nextStack.length - 1 };
+    syncHistoryButtons();
+  }, [applyLocation, syncHistoryButtons]);
+
+  const goBack = useCallback(() => {
+    const { stack, index } = historyRef.current;
+    if (index <= 0) return;
+    const nextIndex = index - 1;
+    historyRef.current = { stack, index: nextIndex };
+    applyLocation(stack[nextIndex] ?? locationRef.current);
+    syncHistoryButtons();
+  }, [applyLocation, syncHistoryButtons]);
+
+  const goForward = useCallback(() => {
+    const { stack, index } = historyRef.current;
+    if (index >= stack.length - 1) return;
+    const nextIndex = index + 1;
+    historyRef.current = { stack, index: nextIndex };
+    applyLocation(stack[nextIndex] ?? locationRef.current);
+    syncHistoryButtons();
+  }, [applyLocation, syncHistoryButtons]);
 
   const visibleTasks = useMemo(() => {
     let result = [...tasks];
@@ -1195,23 +1434,26 @@ export default function App() {
       const custom = activeCustomPerspective;
       result = result.filter((task) => taskMatchesCustomPerspective(task, custom));
       if (projectFilter) result = result.filter((task) => task.projectId === projectFilter);
+      if (tagFilter) result = result.filter((task) => task.tags.includes(tagFilter));
       result.sort((a, b) => compareTasks(a, b, custom.sortBy));
     } else {
       if (perspective === "inbox") result = result.filter((task) => task.projectId === null);
       if (perspective === "projects") result = result.filter((task) => task.projectId !== null);
-      if (perspective === "forecast") result = result.filter((task) => !!task.due);
+      if (perspective === "forecast") result = result.filter((task) => !!task.due && isDueOnDay(task.due, forecastDay));
       if (perspective === "flagged") result = result.filter((task) => task.flagged);
       if (projectFilter && perspective === "projects") result = result.filter((task) => task.projectId === projectFilter);
+      if (tagFilter) result = result.filter((task) => task.tags.includes(tagFilter));
       const availability = settings.standardAvailability[perspective as PerspectiveId] ?? (settings.showCompleted ? "all" : "remaining");
       if (availability === "completed") result = result.filter((task) => task.completed);
       else if (availability !== "all") result = result.filter((task) => !task.completed);
     }
+    if (focusedProjectId) result = result.filter((task) => task.projectId === focusedProjectId);
     if (query.trim()) {
       const needle = query.trim().toLowerCase();
       result = result.filter((task) => `${task.title} ${task.note ?? ""} ${task.tags.join(" ")}`.toLowerCase().includes(needle));
     }
     return result;
-  }, [tasks, perspective, projectFilter, settings.showCompleted, settings.standardAvailability, query, activeCustomPerspective]);
+  }, [tasks, perspective, projectFilter, tagFilter, forecastDay, focusedProjectId, settings.showCompleted, settings.standardAvailability, query, activeCustomPerspective]);
 
   const orderedTaskIds = useMemo(() => outlineTaskIds({
     tasks: visibleTasks,
@@ -1233,11 +1475,17 @@ export default function App() {
 
   const perspectiveTitle = activeCustomPerspective?.name ?? (projectFilter && perspective === "projects"
     ? projects.find((project) => project.id === projectFilter)?.name ?? "Projects"
+    : tagFilter && perspective === "tags"
+      ? tagFilter
     : perspectives.find((item) => item.id === perspective)?.label ?? "Projects");
 
   const selectPerspective = (id: ActivePerspective) => {
-    setPerspective(id);
-    setProjectFilter(null);
+    navigate({
+      perspective: id,
+      projectFilter: null,
+      tagFilter: null,
+      forecastDay: id === "forecast" ? todayKey() : locationRef.current.forecastDay,
+    });
   };
 
   const openViewOptions = (id?: ActivePerspective) => {
@@ -1250,8 +1498,7 @@ export default function App() {
     const created = createCustomPerspective();
     setCustomPerspectives((current) => [...current, created]);
     setSettings((current) => ({ ...current, perspectiveBarIds: [...current.perspectiveBarIds, `custom:${created.id}`] }));
-    setPerspective(`custom:${created.id}`);
-    setProjectFilter(null);
+    navigate({ perspective: `custom:${created.id}`, projectFilter: null, tagFilter: null });
     setPerspectivesListOpen(false);
     setViewMenuOpen(true);
   };
@@ -1360,21 +1607,17 @@ export default function App() {
     finalizeDeleteProject(id);
   };
 
-  const createItem = (title: string, projectId: string | null) => {
+  const createItem = (title: string, projectId: string | null, flagged?: boolean) => {
     if (quickKind === "project") {
       const project: Project = { id: makeId("project"), name: title, note: "", color: projectColors[projects.length % projectColors.length] ?? palette.purple, reviewIntervalDays: 7 };
       setProjects((current) => [...current, project]);
-      setPerspective("projects");
-      setProjectFilter(project.id);
+      navigate({ perspective: "projects", projectFilter: project.id, tagFilter: null });
     } else {
-      const task: Task = { id: makeId("task"), title, projectId, tags: [], flagged: false, completed: false, createdAt: new Date().toISOString() };
+      const task: Task = { id: makeId("task"), title, projectId, tags: [], flagged: flagged ?? false, completed: false, createdAt: new Date().toISOString() };
       setTasks((current) => [...current, task]);
       setSelection(singleSelection(task.id));
       if (projectId === null) selectPerspective("inbox");
-      else {
-        setPerspective("projects");
-        setProjectFilter(projectId);
-      }
+      else navigate({ perspective: "projects", projectFilter: projectId, tagFilter: null });
     }
     setQuickKind(null);
   };
@@ -1402,19 +1645,37 @@ export default function App() {
   }, [isPhone, orderedTaskIds, settings.openInspectorOnSelection]);
 
   const focusSelected = () => {
-    if (!selectedTask?.projectId) return;
-    setPerspective("projects");
-    setProjectFilter(selectedTask.projectId);
+    const projectId = selectedTask?.projectId ?? projectFilter;
+    if (!projectId) return;
+    if (focusedProjectId === projectId) {
+      navigate({ focusedProjectId: null });
+      return;
+    }
+    navigate({ perspective: "projects", projectFilter: projectId, tagFilter: null, focusedProjectId: projectId });
+  };
+
+  const unfocus = () => {
+    navigate({ focusedProjectId: null });
   };
 
   const focusProject = (projectId: string) => {
-    setPerspective("projects");
-    setProjectFilter(projectId);
+    navigate({ perspective: "projects", projectFilter: projectId, tagFilter: null, focusedProjectId: projectId });
+  };
+
+  const selectProject = (id: string | null) => {
+    navigate({ projectFilter: id, tagFilter: null });
+  };
+
+  const selectTag = (tag: string | null) => {
+    navigate({ perspective: "tags", tagFilter: tag, projectFilter: null });
+  };
+
+  const selectForecastDay = (day: ForecastDayKey) => {
+    navigate({ perspective: "forecast", forecastDay: day, projectFilter: null, tagFilter: null });
   };
 
   const newActionInProject = (projectId: string) => {
-    setPerspective("projects");
-    setProjectFilter(projectId);
+    navigate({ perspective: "projects", projectFilter: projectId, tagFilter: null });
     setQuickKind("task");
   };
 
@@ -1430,7 +1691,7 @@ export default function App() {
         perspectiveBarIds: current.perspectiveBarIds.filter((item) => item !== `custom:${id}`),
         perspectiveShortcuts: Object.fromEntries(Object.entries(current.perspectiveShortcuts).filter(([key]) => key !== `custom:${id}`)),
       }));
-      if (perspective === `custom:${id}`) setPerspective("projects");
+      if (perspective === `custom:${id}`) navigate({ perspective: "projects" });
       setViewMenuOpen(false);
     };
     if (Platform.OS === "web") {
@@ -1444,7 +1705,7 @@ export default function App() {
     const copy = duplicateCustomPerspective(perspectiveToCopy);
     setCustomPerspectives((current) => [...current, copy]);
     setSettings((current) => ({ ...current, perspectiveBarIds: [...current.perspectiveBarIds, `custom:${copy.id}`] }));
-    setPerspective(`custom:${copy.id}`);
+    navigate({ perspective: `custom:${copy.id}`, projectFilter: null, tagFilter: null });
     setViewMenuOpen(true);
   };
 
@@ -1499,8 +1760,7 @@ export default function App() {
       })));
     }
     setSelection(singleSelection(result.tasks[0]?.id ?? null));
-    setPerspective("projects");
-    setProjectFilter(null);
+    navigate({ perspective: "projects", projectFilter: null, tagFilter: null, focusedProjectId: null });
     setInspectorOpen(false);
     setImportPreview(null);
     const duplicateNote = result.duplicateTasks ? ` ${result.duplicateTasks} duplicate${result.duplicateTasks === 1 ? " was" : "s were"} ignored.` : "";
@@ -1523,7 +1783,7 @@ export default function App() {
   const showSidebar = !isPhone && canShowSidebar && sidebarOpen && perspective !== "inbox" && !activeCustomPerspective?.keepSidebarHidden;
   const showInspector = !isPhone && canShowInspector && inspectorOpen && selectedTaskIds.length > 0;
   const modalOpen = quickKind !== null || settingsOpen || perspectivesListOpen || quickOpenOpen || importGuideOpen || !!importPreview || !!importError || !!importSummary;
-  const nativeMenuTypes = new Set(["perspective", "toggleSidebar", "toggleInspector", "toggleSearch", "openSettings", "toggleViewMenu", "addPerspective", "showPerspectivesList", "togglePerspectivesBar", "quickOpen", "newAction", "newProject", "selectAll"]);
+  const nativeMenuTypes = new Set(["perspective", "toggleSidebar", "toggleInspector", "toggleSearch", "openSettings", "toggleViewMenu", "addPerspective", "showPerspectivesList", "togglePerspectivesBar", "quickOpen", "newAction", "newProject", "selectAll", "goBack", "goForward"]);
 
   const handleHotkeyAction = useCallback((action: HotkeyAction | MenuCommand) => {
     switch (action.type) {
@@ -1585,6 +1845,12 @@ export default function App() {
       case "focusProject":
         focusSelected();
         break;
+      case "goBack":
+        goBack();
+        break;
+      case "goForward":
+        goForward();
+        break;
       case "markReviewed":
         if (perspective === "review" && selectedTask?.projectId) {
           setProjects((current) => current.map((project) => project.id === selectedTask.projectId ? { ...project, lastReviewedAt: new Date().toISOString() } : project));
@@ -1644,6 +1910,8 @@ export default function App() {
     finalizeDeleteProject,
     finalizeDeleteTasks,
     focusSelected,
+    goBack,
+    goForward,
     importError,
     importGuideOpen,
     importPreview,
@@ -1697,6 +1965,27 @@ export default function App() {
     return window.omniclone?.onMenuCommand((command) => handleHotkeyAction(command));
   }, [handleHotkeyAction, hasNativeMenu]);
 
+  const sidebarProjects = focusedProjectId ? projects.filter((project) => project.id === focusedProjectId) : projects;
+  const forecastCounts = useMemo(() => {
+    const counts: Record<string, number> = { past: 0 };
+    const weekKeys = forecastWeek().map((day) => day.key);
+    for (const task of tasks) {
+      if (task.completed || !task.due) continue;
+      if (focusedProjectId && task.projectId !== focusedProjectId) continue;
+      if (dueUrgency(task.due) === "overdue") counts.past = (counts.past ?? 0) + 1;
+      for (const key of weekKeys) {
+        if (isDueOnDay(task.due, key)) counts[key] = (counts[key] ?? 0) + 1;
+      }
+    }
+    return counts;
+  }, [focusedProjectId, tasks]);
+  const perspectiveBadges = useMemo(() => ({
+    inbox: { count: tasks.filter((task) => task.projectId === null && !task.completed).length },
+    flagged: { count: tasks.filter((task) => task.flagged && !task.completed && (!focusedProjectId || task.projectId === focusedProjectId)).length },
+    forecast: { count: tasks.filter((task) => !task.completed && dueUrgency(task.due) === "overdue" && (!focusedProjectId || task.projectId === focusedProjectId)).length, color: palette.overdue },
+    review: { count: projects.filter((project) => (!focusedProjectId || project.id === focusedProjectId) && projectDueForReview(project)).length },
+  }), [focusedProjectId, projects, tasks]);
+
   return (
     <ContextMenuProvider>
     <SafeAreaView style={styles.safeArea}>
@@ -1719,14 +2008,15 @@ export default function App() {
             <View style={styles.trafficLights}><View style={[styles.trafficLight, { backgroundColor: "#ff5f57" }]} /><View style={[styles.trafficLight, { backgroundColor: "#febc2e" }]} /><View style={[styles.trafficLight, { backgroundColor: "#28c840" }]} /></View>
             <View style={styles.toolbarLeading}>
               <ToolbarButton icon="page-layout-sidebar-left" label="Sidebar" active={showSidebar} onPress={() => setSidebarOpen((value) => !value)} />
-              <ToolbarButton icon="chevron-left" label="Back" disabled onPress={() => undefined} />
-              <ToolbarButton icon="tune-variant" label="View" active={viewMenuOpen} onPress={() => setViewMenuOpen((value) => !value)} />
+              <ToolbarButton icon="chevron-left" label="Back" disabled={!canGoBack} onPress={goBack} />
+              <ToolbarButton icon="chevron-right" label="Forward" disabled={!canGoForward} onPress={goForward} />
+              <ToolbarButton icon="eye-outline" label="View" active={viewMenuOpen} onPress={() => setViewMenuOpen((value) => !value)} />
             </View>
             <View style={styles.toolbarCenter}>
               <ToolbarButton icon="plus" label="New Action" onPress={() => setQuickKind("task")} />
               <ToolbarButton icon="tray-arrow-down" label="Quick Entry" onPress={() => setQuickKind("task")} />
               <ToolbarButton icon="file-find-outline" label="Quick Open" onPress={() => setQuickOpenOpen(true)} />
-              <ToolbarButton icon="bullseye-arrow" label="Focus" disabled={!selectedTask?.projectId} onPress={focusSelected} />
+              <ToolbarButton icon="bullseye-arrow" label="Focus" active={!!focusedProjectId} disabled={!focusedProjectId && !selectedTask?.projectId && !projectFilter} onPress={focusSelected} />
             </View>
             <View style={styles.toolbarTrailing}>
               <ToolbarButton icon="cog-outline" label="Settings" active={settingsOpen} onPress={() => setSettingsOpen(true)} />
@@ -1738,11 +2028,21 @@ export default function App() {
           <View style={styles.mobileHeader}>
             <View><Text style={styles.mobileEyebrow}>OMNIFOCUS</Text><Text numberOfLines={1} style={styles.mobileTitle}>{perspectiveTitle}</Text></View>
             <View style={styles.mobileHeaderActions}>
-              <Pressable accessibilityLabel="View Options" onPress={() => setViewMenuOpen(true)} style={styles.mobileCircleButton}><Icon name="tune-variant" size={18} color={palette.purpleDark} /></Pressable>
+              <Pressable accessibilityLabel="View Options" onPress={() => setViewMenuOpen(true)} style={styles.mobileCircleButton}><Icon name="eye-outline" size={18} color={palette.purpleDark} /></Pressable>
               <Pressable accessibilityLabel="More and settings" onPress={() => setSettingsOpen(true)} style={styles.mobileCircleButton}><Icon name="dots-horizontal" size={20} color={palette.purpleDark} /></Pressable>
               <Pressable onPress={() => setSearchOpen((value) => !value)} style={styles.mobileCircleButton}><Icon name="magnify" size={21} color={palette.purpleDark} /></Pressable>
               <Pressable onPress={() => setQuickKind("task")} style={styles.mobileAddButton}><Icon name="plus" size={24} color="#fff" /></Pressable>
             </View>
+          </View>
+        )}
+
+        {focusedProject && (
+          <View style={styles.focusBar}>
+            <Icon name="bullseye-arrow" size={16} color={palette.purpleDark} />
+            <Text numberOfLines={1} style={styles.focusBarText}>Focusing on {focusedProject.name}</Text>
+            <Pressable accessibilityLabel="Unfocus" onPress={unfocus} style={styles.unfocusButton}>
+              <Text style={styles.unfocusButtonText}>Unfocus</Text>
+            </Pressable>
           </View>
         )}
 
@@ -1806,7 +2106,7 @@ export default function App() {
           {!isPhone && settings.perspectiveBarVisible && (
             <PerspectiveRail
               current={perspective}
-              inboxCount={tasks.filter((task) => task.projectId === null && !task.completed).length}
+              badges={perspectiveBadges}
               items={barItems}
               showTitles={settings.perspectiveBarShowsTitles}
               shortcuts={settings.perspectiveShortcuts}
@@ -1818,15 +2118,35 @@ export default function App() {
               onDelete={deleteCustomPerspective}
             />
           )}
-          {showSidebar && <ProjectSidebar perspective={sidebarPerspective} projects={projects} tasks={tasks} selectedProjectId={projectFilter} showCounts={settings.showSidebarCounts} onSelectProject={setProjectFilter} onNewProject={() => setQuickKind("project")} onFocusProject={focusProject} onNewActionInProject={newActionInProject} onDeleteProject={deleteProject} />}
+          {showSidebar && (
+            <ProjectSidebar
+              perspective={sidebarPerspective}
+              projects={sidebarProjects}
+              tasks={tasks.filter((task) => !focusedProjectId || task.projectId === focusedProjectId)}
+              selectedProjectId={projectFilter}
+              selectedTag={tagFilter}
+              forecastDay={forecastDay}
+              forecastCounts={forecastCounts}
+              showCounts={settings.showSidebarCounts}
+              onSelectProject={selectProject}
+              onSelectTag={selectTag}
+              onSelectForecastDay={selectForecastDay}
+              onNewProject={() => setQuickKind("project")}
+              onFocusProject={focusProject}
+              onNewActionInProject={newActionInProject}
+              onDeleteProject={deleteProject}
+            />
+          )}
           <Outline
             title={perspectiveTitle}
             perspective={perspective}
             customPerspective={activeCustomPerspective}
-            projects={projects}
+            projects={sidebarProjects}
             tasks={visibleTasks}
             selectedTaskIds={selectedTaskIds}
             projectFilter={projectFilter}
+            tagFilter={tagFilter}
+            forecastDay={forecastDay}
             settings={settings}
             onSelectTask={selectTask}
             onToggleTask={toggleTask}
@@ -1842,6 +2162,7 @@ export default function App() {
             onReviewProject={(id) => setProjects((current) => current.map((project) => project.id === id ? { ...project, lastReviewedAt: new Date().toISOString() } : project))}
             onOpenViewMenu={() => setViewMenuOpen(true)}
             onFocusProject={focusProject}
+            onSelectProject={(id) => navigate({ perspective: "projects", projectFilter: id, tagFilter: null })}
             onNewActionInProject={newActionInProject}
             onDeleteProject={deleteProject}
             onImport={openOmniFocusImport}
@@ -1918,7 +2239,8 @@ export default function App() {
         tags={knownTags}
         onClose={() => setQuickOpenOpen(false)}
         onSelectPerspective={selectPerspective}
-        onSelectProject={(id) => { setPerspective("projects"); setProjectFilter(id); }}
+        onSelectProject={(id) => navigate({ perspective: "projects", projectFilter: id, tagFilter: null })}
+        onSelectTag={selectTag}
       />
 
       <OmniImportModal data={importPreview} error={importError} summary={importSummary} guide={importGuideOpen} onClose={closeImport} onApply={applyImport} onChooseFile={() => void chooseOmniFocusFile()} />
@@ -2010,12 +2332,16 @@ const styles = StyleSheet.create({
   sidebarFooterText: { fontSize: 11, color: "#625f66" },
   sidebarEmpty: { paddingHorizontal: 24, paddingTop: 30, alignItems: "center", gap: 8 },
   sidebarEmptyText: { fontSize: 11, lineHeight: 16, textAlign: "center", color: "#8b888f" },
-  forecastPast: { height: 35, paddingHorizontal: 7, flexDirection: "row", alignItems: "center", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
-  forecastPastCount: { fontSize: 10, color: palette.danger },
-  forecastDays: { paddingTop: 10, flexDirection: "row", justifyContent: "space-between", gap: 3 },
-  forecastDay: { width: 38, height: 43, alignItems: "center", justifyContent: "center", borderRadius: 8 },
+  forecastPast: { height: 35, paddingHorizontal: 7, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line, borderRadius: 7 },
+  forecastPastCount: { fontSize: 10, color: palette.danger, fontWeight: "700" },
+  forecastDays: { paddingTop: 10, flexDirection: "row", justifyContent: "space-between", gap: 2 },
+  forecastDay: { flex: 1, minWidth: 0, height: 52, alignItems: "center", justifyContent: "center", borderRadius: 8, gap: 1 },
   forecastDaySelected: { backgroundColor: palette.purple },
   forecastDayText: { fontSize: 9, lineHeight: 14, textAlign: "center", color: palette.muted, fontWeight: "600" },
+  forecastDayWeek: { fontSize: 8, letterSpacing: 0.3, fontWeight: "700", color: palette.muted },
+  forecastDayNum: { fontSize: 12, fontWeight: "700", color: "#3a373d" },
+  forecastDayCount: { fontSize: 8, color: palette.purpleDark, fontWeight: "700" },
+  forecastDayCountSelected: { color: "#fff" },
   forecastDayTextSelected: { color: "#fff" },
   outline: { flex: 1, minWidth: 320, backgroundColor: palette.canvas },
   outlineHeader: { height: 69, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
@@ -2028,6 +2354,7 @@ const styles = StyleSheet.create({
   outlineContent: { paddingBottom: 48 },
   projectGroup: { borderBottomWidth: 7, borderBottomColor: "#f5f4f6" },
   projectHeading: { minHeight: 63, paddingHorizontal: 12, paddingVertical: 10, flexDirection: "row", alignItems: "flex-start", gap: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
+  projectHeadingMain: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "flex-start", gap: 7 },
   projectHeadingRing: { width: 18, height: 18, marginTop: 1, borderWidth: 3, borderRadius: 9, backgroundColor: "#fff" },
   projectHeadingCopy: { flex: 1 },
   projectHeadingTitle: { fontSize: 13.5, lineHeight: 19, fontWeight: "700", color: "#2a272c" },
@@ -2038,7 +2365,9 @@ const styles = StyleSheet.create({
   taskRowCompact: { minHeight: 45, paddingVertical: 4 },
   taskRowSelected: { backgroundColor: palette.purpleSelection },
   taskRowPressed: { opacity: .72 },
-  statusRing: { marginTop: 1, borderWidth: 1.8, alignItems: "center", justifyContent: "center", backgroundColor: "transparent" },
+  statusRing: { marginTop: 1, borderWidth: 1.8, alignItems: "center", justifyContent: "center", backgroundColor: "transparent", overflow: "visible" },
+  statusFlag: { position: "absolute", right: -6, bottom: -7 },
+  collapseButton: { width: 22, height: 22, alignItems: "center", justifyContent: "center" },
   taskBody: { flex: 1, minWidth: 0 },
   taskTitleLine: { minHeight: 19, flexDirection: "row", alignItems: "center", gap: 4 },
   taskTitle: { flexShrink: 1, fontSize: 13, lineHeight: 18, color: "#29262b" },
@@ -2053,6 +2382,8 @@ const styles = StyleSheet.create({
   taskTail: { minHeight: 38, flexDirection: "row", alignItems: "center", gap: 7, paddingLeft: 5 },
   dueText: { fontSize: 9.5, color: "#77737b" },
   dueToday: { color: palette.danger, fontWeight: "600" },
+  dueOverdue: { color: palette.overdue, fontWeight: "700" },
+  dueSoon: { color: palette.dueSoon, fontWeight: "600" },
   rowInfoButton: { marginLeft: 2 },
   newActionBar: { position: "absolute", left: 0, right: 0, bottom: 0, height: 40, paddingHorizontal: 17, flexDirection: "row", alignItems: "center", gap: 5, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.line, backgroundColor: "rgba(255,255,255,.97)" },
   newActionText: { fontSize: 11, color: "#625f66" },
@@ -2075,8 +2406,26 @@ const styles = StyleSheet.create({
   inspector: { width: 316, backgroundColor: palette.inspector, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: palette.line },
   inspectorModal: { flex: 1, width: "100%", borderLeftWidth: 0 },
   inspectorTabs: { height: 43, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", justifyContent: "space-around", gap: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
-  inspectorTabSelected: { paddingHorizontal: 18, height: 27, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: "#dedce1" },
+  inspectorTabSelected: { paddingHorizontal: 12, height: 27, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: "#dedce1" },
+  inspectorTab: { paddingHorizontal: 12, height: 27, alignItems: "center", justifyContent: "center", borderRadius: 6 },
   inspectorTabText: { fontSize: 9.5, color: "#5f5c63" },
+  inspectorTabTextSelected: { color: palette.text, fontWeight: "700" },
+  inspectorNotePane: { flex: 1, padding: 12 },
+  inspectorNoteEditor: { flex: 1, minHeight: 220, padding: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: "#cfccd2", borderRadius: 8, backgroundColor: "#fff", fontSize: 13, lineHeight: 18, color: palette.text },
+  notePreview: { fontSize: 11, lineHeight: 16, color: "#4e4a51" },
+  attachmentEmpty: { flex: 1, paddingHorizontal: 28, paddingTop: 48, alignItems: "center" },
+  attachmentIcon: { width: 52, height: 52, marginBottom: 12, alignItems: "center", justifyContent: "center", borderRadius: 26, borderWidth: 1.5, borderColor: "#cfcdd2" },
+  attachmentTitle: { marginBottom: 6, fontSize: 15, fontWeight: "700", color: "#67636a" },
+  attachmentText: { fontSize: 11, lineHeight: 16, textAlign: "center", color: "#8f8b93" },
+  datePresets: { flexDirection: "row", flexWrap: "wrap", gap: 5, marginBottom: 6 },
+  datePreset: { minHeight: 24, paddingHorizontal: 8, alignItems: "center", justifyContent: "center", borderRadius: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: "#d0ced3", backgroundColor: "#fff" },
+  datePresetSelected: { borderColor: palette.purple, backgroundColor: palette.purpleSoft },
+  datePresetText: { fontSize: 9, color: "#5f5c63" },
+  datePresetTextSelected: { color: palette.purpleDark, fontWeight: "700" },
+  focusBar: { minHeight: 34, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#ece3f4", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#d3c4e2" },
+  focusBarText: { flex: 1, fontSize: 12, fontWeight: "600", color: "#4a2d66" },
+  unfocusButton: { height: 24, paddingHorizontal: 10, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: palette.purple },
+  unfocusButtonText: { fontSize: 10, fontWeight: "700", color: "#fff" },
   modalClose: { marginRight: "auto" },
   inspectorScroll: { flex: 1 },
   multiSelectBody: { flex: 1, paddingHorizontal: 22, paddingTop: 36, alignItems: "center" },

@@ -28,6 +28,7 @@ export function QuickOpenModal({
   onClose,
   onSelectPerspective,
   onSelectProject,
+  onSelectTag,
 }: {
   visible: boolean;
   customPerspectives: CustomPerspective[];
@@ -36,6 +37,7 @@ export function QuickOpenModal({
   onClose: () => void;
   onSelectPerspective: (id: ActivePerspective) => void;
   onSelectProject: (id: string) => void;
+  onSelectTag: (tag: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
@@ -111,7 +113,7 @@ export function QuickOpenModal({
   const choose = (item: QuickOpenItem) => {
     if (item.perspective) onSelectPerspective(item.perspective);
     else if (item.projectId) onSelectProject(item.projectId);
-    else if (item.kind === "tag") onSelectPerspective("tags");
+    else if (item.kind === "tag") onSelectTag(item.label);
     onClose();
   };
 

@@ -87,6 +87,9 @@ export function buildAppMenus(options: {
         { id: "inspector", label: options.inspectorOpen ? "Hide Inspector" : "Show Inspector", shortcut: "⌥⌘I", command: { type: "toggleInspector" } },
         { id: "bar", label: options.perspectiveBarVisible ? "Hide Perspectives Bar" : "Show Perspectives Bar", shortcut: "⌥⌘P", command: { type: "togglePerspectivesBar" } },
         { id: "titles", label: settings.perspectiveBarShowsTitles ? "Perspectives Bar Hides Titles" : "Perspectives Bar Shows Titles", command: { type: "toggleTitles" } },
+        { id: "sep-view-2", separator: true },
+        { id: "back", label: "Go Back", shortcut: "⌘[", command: { type: "goBack" } },
+        { id: "forward", label: "Go Forward", shortcut: "⌘]", command: { type: "goForward" } },
       ],
     },
     {
