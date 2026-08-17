@@ -38,6 +38,7 @@ import { loadDatabase, saveDatabase } from "./src/storage";
 import { loadSettings, saveSettings } from "./src/settings";
 import { applyOmniFocusImport, parseOmniFocusFile, type ImportMode, type OmniImportData } from "./src/importOmniFocus";
 import { matchOmniFocusHotkey, type HotkeyAction } from "./src/hotkeys";
+import { ContextMenuProvider, useContextMenuTrigger } from "./src/contextMenu";
 
 type IconName = React.ComponentProps<typeof MaterialCommunityIcons>["name"];
 
@@ -87,6 +88,12 @@ function StatusRing({ completed, color = palette.purple, onPress, size = 19 }: {
   );
 }
 
+function copyToClipboard(text: string) {
+  if (Platform.OS === "web" && typeof navigator !== "undefined" && navigator.clipboard) {
+    void navigator.clipboard.writeText(text);
+  }
+}
+
 function PerspectiveRail({ current, inboxCount, customPerspectives, showTitles, onSelect, onCreate, onEdit, onOpenSettings }: {
   current: ActivePerspective;
   inboxCount: number;
@@ -97,6 +104,8 @@ function PerspectiveRail({ current, inboxCount, customPerspectives, showTitles, 
   onEdit: (perspective: CustomPerspective) => void;
   onOpenSettings: () => void;
 }) {
+  const { contextMenuProps } = useContextMenuTrigger();
+
   return (
     <View style={styles.perspectiveRail}>
       <ScrollView style={styles.perspectiveRailList} showsVerticalScrollIndicator={false} contentContainerStyle={styles.perspectiveRailScroll}>
@@ -124,8 +133,19 @@ function PerspectiveRail({ current, inboxCount, customPerspectives, showTitles, 
         {customPerspectives.map((item) => {
           const id: ActivePerspective = `custom:${item.id}`;
           const selected = current === id;
+          const menuProps = contextMenuProps([
+            { id: "edit", label: "Edit Perspective", icon: "pencil-outline", onPress: () => onEdit(item) },
+          ]);
           return (
-            <Pressable key={item.id} accessibilityRole="tab" accessibilityState={{ selected }} onPress={() => onSelect(id)} onLongPress={() => onEdit(item)} style={({ pressed }) => [styles.perspectiveItem, selected && { backgroundColor: `${item.color}20` }, pressed && styles.pressed]}>
+            <Pressable
+              key={item.id}
+              accessibilityRole="tab"
+              accessibilityState={{ selected }}
+              onPress={() => onSelect(id)}
+              onLongPress={menuProps.onLongPress}
+              {...(menuProps.onContextMenu ? { onContextMenu: menuProps.onContextMenu } : {})}
+              style={({ pressed }) => [styles.perspectiveItem, selected && { backgroundColor: `${item.color}20` }, pressed && styles.pressed]}
+            >
               <Icon name={item.icon as IconName} size={24} color={selected ? item.color : "#656269"} />
               {showTitles && <Text numberOfLines={1} style={[styles.perspectiveLabel, selected && { color: item.color, fontWeight: "700" }]}>{item.name}</Text>}
             </Pressable>
@@ -151,6 +171,8 @@ function ProjectSidebar({
   showCounts,
   onSelectProject,
   onNewProject,
+  onFocusProject,
+  onNewActionInProject,
 }: {
   perspective: PerspectiveId;
   projects: Project[];
@@ -159,15 +181,28 @@ function ProjectSidebar({
   showCounts: boolean;
   onSelectProject: (id: string | null) => void;
   onNewProject: () => void;
+  onFocusProject: (id: string) => void;
+  onNewActionInProject: (id: string) => void;
 }) {
+  const { contextMenuProps } = useContextMenuTrigger();
   const tags = useMemo(() => [...new Set(tasks.flatMap((task) => task.tags))].sort(), [tasks]);
   const title = perspectives.find((item) => item.id === perspective)?.label ?? "Projects";
+  const sidebarMenuProps = contextMenuProps([
+    { id: "new-project", label: "New Project", icon: "plus", onPress: onNewProject },
+  ]);
 
   return (
     <View style={styles.sidebar}>
       <View style={styles.sidebarHeader}>
         <Text style={styles.sidebarTitle}>{title}</Text>
-        <Icon name="dots-horizontal" size={19} color="#77747b" />
+        <Pressable
+          accessibilityLabel="Sidebar options"
+          style={styles.iconButton}
+          onPress={sidebarMenuProps.onLongPress}
+          {...(sidebarMenuProps.onContextMenu ? { onContextMenu: sidebarMenuProps.onContextMenu } : {})}
+        >
+          <Icon name="dots-horizontal" size={19} color="#77747b" />
+        </Pressable>
       </View>
       <ScrollView contentContainerStyle={styles.sidebarScroll}>
         {perspective === "projects" && (
@@ -178,13 +213,25 @@ function ProjectSidebar({
               {showCounts && <Text style={styles.sidebarCount}>{tasks.filter((task) => task.projectId && !task.completed).length}</Text>}
             </Pressable>
             <Text style={styles.sidebarSectionLabel}>PROJECTS</Text>
-            {projects.map((project) => (
-              <Pressable key={project.id} onPress={() => onSelectProject(project.id)} style={[styles.sidebarRow, selectedProjectId === project.id && styles.sidebarRowSelected]}>
-                <View style={[styles.projectDot, { borderColor: project.color }]} />
-                <Text numberOfLines={1} style={styles.sidebarRowText}>{project.name}</Text>
-                {showCounts && <Text style={styles.sidebarCount}>{tasks.filter((task) => task.projectId === project.id && !task.completed).length}</Text>}
-              </Pressable>
-            ))}
+            {projects.map((project) => {
+              const menuProps = contextMenuProps([
+                { id: "focus", label: "Focus Project", icon: "bullseye-arrow", onPress: () => onFocusProject(project.id) },
+                { id: "new-action", label: "New Action in Project", icon: "plus", onPress: () => onNewActionInProject(project.id) },
+              ]);
+              return (
+                <Pressable
+                  key={project.id}
+                  onPress={() => onSelectProject(project.id)}
+                  onLongPress={menuProps.onLongPress}
+                  {...(menuProps.onContextMenu ? { onContextMenu: menuProps.onContextMenu } : {})}
+                  style={[styles.sidebarRow, selectedProjectId === project.id && styles.sidebarRowSelected]}
+                >
+                  <View style={[styles.projectDot, { borderColor: project.color }]} />
+                  <Text numberOfLines={1} style={styles.sidebarRowText}>{project.name}</Text>
+                  {showCounts && <Text style={styles.sidebarCount}>{tasks.filter((task) => task.projectId === project.id && !task.completed).length}</Text>}
+                </Pressable>
+              );
+            })}
           </>
         )}
         {perspective === "tags" && tags.map((tag) => (
@@ -219,7 +266,7 @@ function ProjectSidebar({
   );
 }
 
-function TaskRow({ task, project, selected, settings, onSelect, onToggle, onInspect }: {
+function TaskRow({ task, project, selected, settings, onSelect, onToggle, onInspect, onToggleFlag, onDelete }: {
   task: Task;
   project?: Project;
   selected: boolean;
@@ -227,12 +274,24 @@ function TaskRow({ task, project, selected, settings, onSelect, onToggle, onInsp
   onSelect: () => void;
   onToggle: () => void;
   onInspect: () => void;
+  onToggleFlag: () => void;
+  onDelete: () => void;
 }) {
+  const { contextMenuProps } = useContextMenuTrigger();
+  const menuProps = contextMenuProps([
+    { id: "inspect", label: "Inspect", icon: "information-outline", onPress: onInspect },
+    { id: "toggle", label: task.completed ? "Mark Incomplete" : "Mark Complete", icon: task.completed ? "circle-outline" : "check-circle-outline", onPress: onToggle },
+    { id: "flag", label: task.flagged ? "Remove Flag" : "Flag", icon: task.flagged ? "flag-off-outline" : "flag-outline", onPress: onToggleFlag },
+    { id: "copy", label: "Copy Title", icon: "content-copy", onPress: () => copyToClipboard(task.title) },
+    { id: "delete", label: "Delete", icon: "trash-can-outline", destructive: true, onPress: onDelete },
+  ]);
+
   return (
     <Pressable
       accessibilityRole="button"
       onPress={onSelect}
-      onLongPress={onInspect}
+      onLongPress={menuProps.onLongPress}
+      {...(menuProps.onContextMenu ? { onContextMenu: menuProps.onContextMenu } : {})}
       style={({ pressed }) => [styles.taskRow, settings.rowDensity === "compact" && styles.taskRowCompact, selected && styles.taskRowSelected, pressed && styles.taskRowPressed]}
     >
       <StatusRing completed={task.completed} color={project?.color} onPress={onToggle} />
@@ -266,6 +325,35 @@ function TaskRow({ task, project, selected, settings, onSelect, onToggle, onInsp
   );
 }
 
+function MobileCustomPerspectiveItem({
+  item,
+  selected,
+  onSelect,
+  onEdit,
+}: {
+  item: CustomPerspective;
+  selected: boolean;
+  onSelect: () => void;
+  onEdit: (item: CustomPerspective) => void;
+}) {
+  const { contextMenuProps } = useContextMenuTrigger();
+  const menuProps = contextMenuProps([
+    { id: "edit", label: "Edit Perspective", icon: "pencil-outline", onPress: () => onEdit(item) },
+  ]);
+
+  return (
+    <Pressable
+      onPress={onSelect}
+      onLongPress={menuProps.onLongPress}
+      {...(menuProps.onContextMenu ? { onContextMenu: menuProps.onContextMenu } : {})}
+      style={styles.mobileNavItem}
+    >
+      <Icon name={item.icon as IconName} size={21} color={selected ? item.color : "#77747b"} />
+      <Text numberOfLines={1} style={[styles.mobileNavLabel, selected && { color: item.color, fontWeight: "700" }]}>{item.name}</Text>
+    </Pressable>
+  );
+}
+
 function Outline({
   title,
   perspective,
@@ -278,8 +366,11 @@ function Outline({
   onSelectTask,
   onToggleTask,
   onInspectTask,
+  onToggleFlagTask,
+  onDeleteTask,
   onNewTask,
   onReviewProject,
+  onOpenViewMenu,
 }: {
   title: string;
   perspective: ActivePerspective;
@@ -292,10 +383,18 @@ function Outline({
   onSelectTask: (id: string) => void;
   onToggleTask: (id: string) => void;
   onInspectTask: (id: string) => void;
+  onToggleFlagTask: (id: string) => void;
+  onDeleteTask: (id: string) => void;
   onNewTask: () => void;
   onReviewProject: (id: string) => void;
+  onOpenViewMenu: () => void;
 }) {
+  const { contextMenuProps } = useContextMenuTrigger();
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
+  const outlineMenuProps = contextMenuProps([
+    { id: "view-options", label: "View Options", icon: "tune-variant", onPress: onOpenViewMenu },
+    { id: "new-action", label: "New Action", icon: "plus", onPress: onNewTask },
+  ]);
   const taskRow = (task: Task) => (
     <TaskRow
       key={task.id}
@@ -306,6 +405,8 @@ function Outline({
       onSelect={() => onSelectTask(task.id)}
       onToggle={() => onToggleTask(task.id)}
       onInspect={() => onInspectTask(task.id)}
+      onToggleFlag={() => onToggleFlagTask(task.id)}
+      onDelete={() => onDeleteTask(task.id)}
     />
   );
 
@@ -318,7 +419,14 @@ function Outline({
           <Text numberOfLines={1} style={styles.outlineTitle}>{title}</Text>
           <Text style={styles.outlineSubtitle}>{tasks.filter((task) => !task.completed).length} actions{perspective === "projects" && !projectFilter ? ` • ${projects.length} projects` : ""}</Text>
         </View>
-        <Pressable style={styles.iconButton}><Icon name="dots-horizontal" size={20} color="#77747b" /></Pressable>
+        <Pressable
+          accessibilityLabel="Outline options"
+          style={styles.iconButton}
+          onPress={outlineMenuProps.onLongPress}
+          {...(outlineMenuProps.onContextMenu ? { onContextMenu: outlineMenuProps.onContextMenu } : {})}
+        >
+          <Icon name="dots-horizontal" size={20} color="#77747b" />
+        </Pressable>
       </View>
       <ScrollView style={styles.outlineScroll} contentContainerStyle={styles.outlineContent} keyboardShouldPersistTaps="handled">
         {customPerspective?.groupBy === "project" && [{ project: null, groupTasks: tasks.filter((task) => task.projectId === null) }, ...projects.map((project) => ({ project, groupTasks: tasks.filter((task) => task.projectId === project.id) }))].map(({ project, groupTasks }) => {
@@ -1048,6 +1156,22 @@ export default function App() {
     setProjectFilter(selectedTask.projectId);
   };
 
+  const focusProject = (projectId: string) => {
+    setPerspective("projects");
+    setProjectFilter(projectId);
+  };
+
+  const newActionInProject = (projectId: string) => {
+    setPerspective("projects");
+    setProjectFilter(projectId);
+    setQuickKind("task");
+  };
+
+  const toggleTaskFlag = (id: string) => {
+    const target = tasks.find((task) => task.id === id);
+    if (target) updateTask(id, { flagged: !target.flagged });
+  };
+
   const saveCustomPerspective = (savedPerspective: CustomPerspective) => {
     setCustomPerspectives((current) => {
       const exists = current.some((item) => item.id === savedPerspective.id);
@@ -1224,6 +1348,7 @@ export default function App() {
   }, [handleHotkeyAction, modalOpen, pendingDeleteTaskId]);
 
   return (
+    <ContextMenuProvider>
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
       <View style={styles.appShell}>
@@ -1281,7 +1406,7 @@ export default function App() {
 
         <View style={styles.workspace}>
           {!isPhone && <PerspectiveRail current={perspective} inboxCount={tasks.filter((task) => task.projectId === null && !task.completed).length} customPerspectives={customPerspectives} showTitles={settings.perspectiveBarShowsTitles} onSelect={selectPerspective} onCreate={() => setEditingPerspective({ draft: createCustomPerspective(), isNew: true })} onEdit={(item) => setEditingPerspective({ draft: item, isNew: false })} onOpenSettings={() => setSettingsOpen(true)} />}
-          {showSidebar && <ProjectSidebar perspective={perspective as PerspectiveId} projects={projects} tasks={tasks} selectedProjectId={projectFilter} showCounts={settings.showSidebarCounts} onSelectProject={setProjectFilter} onNewProject={() => setQuickKind("project")} />}
+          {showSidebar && <ProjectSidebar perspective={perspective as PerspectiveId} projects={projects} tasks={tasks} selectedProjectId={projectFilter} showCounts={settings.showSidebarCounts} onSelectProject={setProjectFilter} onNewProject={() => setQuickKind("project")} onFocusProject={focusProject} onNewActionInProject={newActionInProject} />}
           <Outline
             title={perspectiveTitle}
             perspective={perspective}
@@ -1294,8 +1419,11 @@ export default function App() {
             onSelectTask={selectTask}
             onToggleTask={toggleTask}
             onInspectTask={openInspector}
+            onToggleFlagTask={toggleTaskFlag}
+            onDeleteTask={(id) => deleteTask(id)}
             onNewTask={() => setQuickKind("task")}
             onReviewProject={(id) => setProjects((current) => current.map((project) => project.id === id ? { ...project, lastReviewedAt: new Date().toISOString() } : project))}
+            onOpenViewMenu={() => setViewMenuOpen(true)}
           />
           {showInspector && selectedTask && <Inspector task={selectedTask} projects={projects} onChange={(patch) => updateTask(selectedTask.id, patch)} onToggle={() => toggleTask(selectedTask.id)} onDelete={() => deleteTask(selectedTask.id)} />}
         </View>
@@ -1310,7 +1438,15 @@ export default function App() {
               {customPerspectives.map((item) => {
                 const id: ActivePerspective = `custom:${item.id}`;
                 const selected = id === perspective;
-                return <Pressable key={item.id} onPress={() => selectPerspective(id)} onLongPress={() => setEditingPerspective({ draft: item, isNew: false })} style={styles.mobileNavItem}><Icon name={item.icon as IconName} size={21} color={selected ? item.color : "#77747b"} /><Text numberOfLines={1} style={[styles.mobileNavLabel, selected && { color: item.color, fontWeight: "700" }]}>{item.name}</Text></Pressable>;
+                return (
+                  <MobileCustomPerspectiveItem
+                    key={item.id}
+                    item={item}
+                    selected={selected}
+                    onSelect={() => selectPerspective(id)}
+                    onEdit={(perspectiveItem) => setEditingPerspective({ draft: perspectiveItem, isNew: false })}
+                  />
+                );
               })}
               <Pressable onPress={() => setEditingPerspective({ draft: createCustomPerspective(), isNew: true })} style={styles.mobileNavItem}><Icon name="plus-circle-outline" size={21} color={palette.purpleDark} /><Text style={styles.mobileNavLabel}>New</Text></Pressable>
               <Pressable accessibilityLabel="Import from OmniFocus" onPress={() => void openOmniFocusImport()} style={styles.mobileNavItem}><Icon name="database-import-outline" size={21} color={palette.purpleDark} /><Text style={styles.mobileNavLabel}>Import</Text></Pressable>
@@ -1347,6 +1483,7 @@ export default function App() {
         </Modal>
       )}
     </SafeAreaView>
+    </ContextMenuProvider>
   );
 }
 
@@ -1583,7 +1720,7 @@ const styles = StyleSheet.create({
   resetSettingsButton: { minHeight: 34, alignSelf: "flex-start", paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: "#dfb5b5", borderRadius: 7, backgroundColor: "#fff9f9" },
   resetSettingsText: { fontSize: 10, fontWeight: "600", color: palette.danger },
   confirmBackdrop: { flex: 1, alignItems: "center", justifyContent: "center", padding: 18, backgroundColor: "rgba(27,24,30,.32)" },
-  confirmDismissLayer: { ...StyleSheet.absoluteFillObject, zIndex: 0 },
+  confirmDismissLayer: { ...StyleSheet.absoluteFill, zIndex: 0 },
   confirmCard: { width: "100%", maxWidth: 390, padding: 20, alignItems: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: "#aaa7ad", borderRadius: 13, backgroundColor: "#fbfafc", shadowColor: "#000", shadowOffset: { width: 0, height: 16 }, shadowOpacity: .24, shadowRadius: 32, elevation: 18, zIndex: 1 },
   confirmIcon: { width: 45, height: 45, marginBottom: 11, alignItems: "center", justifyContent: "center", borderRadius: 23, backgroundColor: "#f7e4e4" },
   confirmTitle: { maxWidth: "100%", fontSize: 15, fontWeight: "700", color: palette.text },
