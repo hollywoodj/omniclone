@@ -24,9 +24,6 @@ import {
   makeId,
   palette,
   perspectives,
-  seedCustomPerspectives,
-  seedProjects,
-  seedTasks,
   type ActivePerspective,
   type AppSettings,
   type CustomPerspective,
@@ -38,7 +35,7 @@ import { loadDatabase, saveDatabase } from "./src/storage";
 import { loadSettings, saveSettings } from "./src/settings";
 import { applyOmniFocusImport, parseOmniFocusFile, type ImportMode, type OmniImportData } from "./src/importOmniFocus";
 import { matchOmniFocusHotkey, type HotkeyAction } from "./src/hotkeys";
-import { ContextMenuProvider, useContextMenuTrigger, type ContextMenuItem } from "./src/contextMenu";
+import { ContextMenuPressable, ContextMenuProvider, useContextMenuTrigger, type ContextMenuItem } from "./src/contextMenu";
 import { MenuBar, type MenuCommand } from "./src/menuBar";
 import { ViewOptionsPanel } from "./src/viewOptions";
 import { PerspectivesListModal } from "./src/perspectivesList";
@@ -128,6 +125,19 @@ function copyToClipboard(text: string) {
   }
 }
 
+function projectContextItems(project: Project, handlers: {
+  onFocusProject: (id: string) => void;
+  onNewActionInProject: (id: string) => void;
+  onDeleteProject: (id: string) => void;
+}): ContextMenuItem[] {
+  return [
+    { id: "focus", label: "Focus Project", icon: "bullseye-arrow", onPress: () => handlers.onFocusProject(project.id) },
+    { id: "new-action", label: "New Action in Project", icon: "plus", onPress: () => handlers.onNewActionInProject(project.id) },
+    { id: "sep-delete", label: "", separator: true },
+    { id: "delete", label: "Delete Project", icon: "trash-can-outline", destructive: true, onPress: () => handlers.onDeleteProject(project.id) },
+  ];
+}
+
 function PerspectiveRail({ current, inboxCount, items, showTitles, shortcuts, onSelect, onEdit, onUnfavorite, onOpenList, onOpenSettings, onDelete }: {
   current: ActivePerspective;
   inboxCount: number;
@@ -141,8 +151,6 @@ function PerspectiveRail({ current, inboxCount, items, showTitles, shortcuts, on
   onOpenSettings: () => void;
   onDelete: (id: string) => void;
 }) {
-  const { contextMenuProps } = useContextMenuTrigger();
-
   return (
     <View style={styles.perspectiveRail}>
       <ScrollView style={styles.perspectiveRailList} showsVerticalScrollIndicator={false} contentContainerStyle={styles.perspectiveRailScroll}>
@@ -160,16 +168,14 @@ function PerspectiveRail({ current, inboxCount, items, showTitles, shortcuts, on
               { id: "delete", label: "Delete", icon: "trash-can-outline" as IconName, destructive: true, onPress: () => onDelete(item.custom!.id) },
             ] : []),
           ];
-          const menuProps = contextMenuProps(menuItems);
           return (
-            <Pressable
+            <ContextMenuPressable
               key={item.id}
+              items={menuItems}
               accessibilityRole="tab"
               accessibilityState={{ selected }}
               accessibilityHint={formatShortcut(shortcuts[item.id])}
               onPress={() => onSelect(item.id)}
-              onLongPress={menuProps.onLongPress}
-              {...(menuProps.onContextMenu ? { onContextMenu: menuProps.onContextMenu } : {})}
               style={({ pressed }) => [styles.perspectiveItem, selected && (item.custom ? { backgroundColor: `${accent}20` } : styles.perspectiveItemSelected), pressed && styles.pressed]}
             >
               <View>
@@ -179,7 +185,7 @@ function PerspectiveRail({ current, inboxCount, items, showTitles, shortcuts, on
                 )}
               </View>
               {showTitles && <Text numberOfLines={1} style={[styles.perspectiveLabel, selected && { color: accent, fontWeight: "700" }]}>{item.name}</Text>}
-            </Pressable>
+            </ContextMenuPressable>
           );
         })}
       </ScrollView>
@@ -204,6 +210,7 @@ function ProjectSidebar({
   onNewProject,
   onFocusProject,
   onNewActionInProject,
+  onDeleteProject,
 }: {
   perspective: PerspectiveId;
   projects: Project[];
@@ -214,26 +221,27 @@ function ProjectSidebar({
   onNewProject: () => void;
   onFocusProject: (id: string) => void;
   onNewActionInProject: (id: string) => void;
+  onDeleteProject: (id: string) => void;
 }) {
-  const { contextMenuProps } = useContextMenuTrigger();
   const tags = useMemo(() => [...new Set(tasks.flatMap((task) => task.tags))].sort(), [tasks]);
   const title = perspectives.find((item) => item.id === perspective)?.label ?? "Projects";
-  const sidebarMenuProps = contextMenuProps([
+  const { openMenu } = useContextMenuTrigger();
+  const sidebarMenuItems: ContextMenuItem[] = [
     { id: "new-project", label: "New Project", icon: "plus", onPress: onNewProject },
-  ]);
+  ];
 
   return (
     <View style={styles.sidebar}>
       <View style={styles.sidebarHeader}>
         <Text style={styles.sidebarTitle}>{title}</Text>
-        <Pressable
+        <ContextMenuPressable
           accessibilityLabel="Sidebar options"
+          items={sidebarMenuItems}
           style={styles.iconButton}
-          onPress={sidebarMenuProps.onLongPress}
-          {...(sidebarMenuProps.onContextMenu ? { onContextMenu: sidebarMenuProps.onContextMenu } : {})}
+          onPress={() => openMenu({ items: sidebarMenuItems, fallbackPosition: { x: 220, y: 72 } })}
         >
           <Icon name="dots-horizontal" size={19} color="#77747b" />
-        </Pressable>
+        </ContextMenuPressable>
       </View>
       <ScrollView contentContainerStyle={styles.sidebarScroll}>
         {perspective === "projects" && (
@@ -244,25 +252,21 @@ function ProjectSidebar({
               {showCounts && <Text style={styles.sidebarCount}>{tasks.filter((task) => task.projectId && !task.completed).length}</Text>}
             </Pressable>
             <Text style={styles.sidebarSectionLabel}>PROJECTS</Text>
-            {projects.map((project) => {
-              const menuProps = contextMenuProps([
-                { id: "focus", label: "Focus Project", icon: "bullseye-arrow", onPress: () => onFocusProject(project.id) },
-                { id: "new-action", label: "New Action in Project", icon: "plus", onPress: () => onNewActionInProject(project.id) },
-              ]);
-              return (
-                <Pressable
-                  key={project.id}
-                  onPress={() => onSelectProject(project.id)}
-                  onLongPress={menuProps.onLongPress}
-                  {...(menuProps.onContextMenu ? { onContextMenu: menuProps.onContextMenu } : {})}
-                  style={[styles.sidebarRow, selectedProjectId === project.id && styles.sidebarRowSelected]}
-                >
-                  <View style={[styles.projectDot, { borderColor: project.color }]} />
-                  <Text numberOfLines={1} style={styles.sidebarRowText}>{project.name}</Text>
-                  {showCounts && <Text style={styles.sidebarCount}>{tasks.filter((task) => task.projectId === project.id && !task.completed).length}</Text>}
-                </Pressable>
-              );
-            })}
+            {!projects.length && (
+              <Text style={styles.sidebarEmptyText}>No projects yet. Use New Project to add one.</Text>
+            )}
+            {projects.map((project) => (
+              <ContextMenuPressable
+                key={project.id}
+                items={projectContextItems(project, { onFocusProject, onNewActionInProject, onDeleteProject })}
+                onPress={() => onSelectProject(project.id)}
+                style={[styles.sidebarRow, selectedProjectId === project.id && styles.sidebarRowSelected]}
+              >
+                <View style={[styles.projectDot, { borderColor: project.color }]} />
+                <Text numberOfLines={1} style={styles.sidebarRowText}>{project.name}</Text>
+                {showCounts && <Text style={styles.sidebarCount}>{tasks.filter((task) => task.projectId === project.id && !task.completed).length}</Text>}
+              </ContextMenuPressable>
+            ))}
           </>
         )}
         {perspective === "tags" && tags.map((tag) => (
@@ -308,21 +312,19 @@ function TaskRow({ task, project, selected, settings, onSelect, onToggle, onInsp
   onToggleFlag: () => void;
   onDelete: () => void;
 }) {
-  const { contextMenuProps } = useContextMenuTrigger();
-  const menuProps = contextMenuProps([
+  const menuItems: ContextMenuItem[] = [
     { id: "inspect", label: "Inspect", icon: "information-outline", onPress: onInspect },
     { id: "toggle", label: task.completed ? "Mark Incomplete" : "Mark Complete", icon: task.completed ? "circle-outline" : "check-circle-outline", onPress: onToggle },
     { id: "flag", label: task.flagged ? "Remove Flag" : "Flag", icon: task.flagged ? "flag-off-outline" : "flag-outline", onPress: onToggleFlag },
     { id: "copy", label: "Copy Title", icon: "content-copy", onPress: () => copyToClipboard(task.title) },
     { id: "delete", label: "Delete", icon: "trash-can-outline", destructive: true, onPress: onDelete },
-  ]);
+  ];
 
   return (
-    <Pressable
+    <ContextMenuPressable
       accessibilityRole="button"
+      items={menuItems}
       onPress={onSelect}
-      onLongPress={menuProps.onLongPress}
-      {...(menuProps.onContextMenu ? { onContextMenu: menuProps.onContextMenu } : {})}
       style={({ pressed }) => [styles.taskRow, settings.rowDensity === "compact" && styles.taskRowCompact, selected && styles.taskRowSelected, pressed && styles.taskRowPressed]}
     >
       <StatusRing completed={task.completed} color={project?.color} onPress={onToggle} />
@@ -352,7 +354,7 @@ function TaskRow({ task, project, selected, settings, onSelect, onToggle, onInsp
         {task.flagged && <Icon name="flag" size={16} color={palette.flag} />}
         <Pressable onPress={onInspect} hitSlop={8} style={styles.rowInfoButton}><Icon name="information-outline" size={17} color="#8e8a91" /></Pressable>
       </View>
-    </Pressable>
+    </ContextMenuPressable>
   );
 }
 
@@ -373,24 +375,22 @@ function MobileCustomPerspectiveItem({
   onOpenList: () => void;
   onDelete?: () => void;
 }) {
-  const { contextMenuProps } = useContextMenuTrigger();
-  const menuProps = contextMenuProps([
+  const menuItems: ContextMenuItem[] = [
     { id: "edit", label: "Edit", icon: "pencil-outline", onPress: onEdit },
     { id: "unfavorite", label: "Unfavorite", icon: "star-off-outline", onPress: onUnfavorite },
     { id: "list", label: "Perspectives", icon: "view-list-outline", onPress: onOpenList },
     ...(item.custom && onDelete ? [{ id: "delete", label: "Delete", icon: "trash-can-outline" as IconName, destructive: true, onPress: onDelete }] : []),
-  ]);
+  ];
 
   return (
-    <Pressable
+    <ContextMenuPressable
+      items={menuItems}
       onPress={onSelect}
-      onLongPress={menuProps.onLongPress}
-      {...(menuProps.onContextMenu ? { onContextMenu: menuProps.onContextMenu } : {})}
       style={styles.mobileNavItem}
     >
       <Icon name={item.icon as IconName} size={21} color={selected ? item.color : "#77747b"} />
       <Text numberOfLines={1} style={[styles.mobileNavLabel, selected && { color: item.color, fontWeight: "700" }]}>{item.name}</Text>
-    </Pressable>
+    </ContextMenuPressable>
   );
 }
 
@@ -411,6 +411,9 @@ function Outline({
   onNewTask,
   onReviewProject,
   onOpenViewMenu,
+  onFocusProject,
+  onNewActionInProject,
+  onDeleteProject,
 }: {
   title: string;
   perspective: ActivePerspective;
@@ -428,13 +431,28 @@ function Outline({
   onNewTask: () => void;
   onReviewProject: (id: string) => void;
   onOpenViewMenu: () => void;
+  onFocusProject: (id: string) => void;
+  onNewActionInProject: (id: string) => void;
+  onDeleteProject: (id: string) => void;
 }) {
-  const { contextMenuProps } = useContextMenuTrigger();
+  const { openMenu } = useContextMenuTrigger();
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
-  const outlineMenuProps = contextMenuProps([
+  const outlineMenuItems: ContextMenuItem[] = [
     { id: "view-options", label: "View Options", icon: "tune-variant", onPress: onOpenViewMenu },
     { id: "new-action", label: "New Action", icon: "plus", onPress: onNewTask },
-  ]);
+  ];
+  const projectHandlers = { onFocusProject, onNewActionInProject, onDeleteProject };
+  const projectHeading = (project: Project, count: number) => (
+    <ContextMenuPressable items={projectContextItems(project, projectHandlers)} onPress={() => onFocusProject(project.id)} style={styles.projectHeading}>
+      <Icon name="chevron-down" size={18} color="#6e6c72" />
+      <View style={[styles.projectHeadingRing, { borderColor: project.color }]} />
+      <View style={styles.projectHeadingCopy}>
+        <Text style={styles.projectHeadingTitle}>{project.name}</Text>
+        <Text numberOfLines={1} style={styles.projectHeadingNote}>{project.note}</Text>
+      </View>
+      <Text style={styles.projectHeadingCount}>{count}</Text>
+    </ContextMenuPressable>
+  );
   const taskRow = (task: Task) => (
     <TaskRow
       key={task.id}
@@ -452,6 +470,7 @@ function Outline({
 
   const tags = [...new Set(tasks.flatMap((task) => task.tags))].sort();
   const groupBy = customPerspective ? effectiveGroupBy(customPerspective) : null;
+  const visibleProjects = projects.filter((project) => !projectFilter || project.id === projectFilter);
 
   return (
     <View style={styles.outline}>
@@ -460,26 +479,28 @@ function Outline({
           <Text numberOfLines={1} style={styles.outlineTitle}>{title}</Text>
           <Text style={styles.outlineSubtitle}>{tasks.filter((task) => !task.completed).length} actions{perspective === "projects" && !projectFilter ? ` • ${projects.length} projects` : ""}</Text>
         </View>
-        <Pressable
+        <ContextMenuPressable
           accessibilityLabel="Outline options"
+          items={outlineMenuItems}
           style={styles.iconButton}
-          onPress={outlineMenuProps.onLongPress}
-          {...(outlineMenuProps.onContextMenu ? { onContextMenu: outlineMenuProps.onContextMenu } : {})}
+          onPress={() => openMenu({ items: outlineMenuItems, fallbackPosition: { x: 640, y: 72 } })}
         >
           <Icon name="dots-horizontal" size={20} color="#77747b" />
-        </Pressable>
+        </ContextMenuPressable>
       </View>
       <ScrollView style={styles.outlineScroll} contentContainerStyle={styles.outlineContent} keyboardShouldPersistTaps="handled">
-        {groupBy === "project" && [{ project: null, groupTasks: tasks.filter((task) => task.projectId === null) }, ...projects.map((project) => ({ project, groupTasks: tasks.filter((task) => task.projectId === project.id) }))].map(({ project, groupTasks }) => {
-          if (!groupTasks.length) return null;
+        {groupBy === "project" && [{ project: null as Project | null, groupTasks: tasks.filter((task) => task.projectId === null) }, ...projects.map((project) => ({ project, groupTasks: tasks.filter((task) => task.projectId === project.id) }))].map(({ project, groupTasks }) => {
+          if (!groupTasks.length && !project) return null;
           return (
             <View key={project?.id ?? "inbox"} style={styles.projectGroup}>
-              <View style={styles.projectHeading}>
-                <Icon name="chevron-down" size={18} color="#6e6c72" />
-                {project ? <View style={[styles.projectHeadingRing, { borderColor: project.color }]} /> : <Icon name="inbox-arrow-down-outline" size={20} color={customPerspective?.color ?? palette.purple} />}
-                <View style={styles.projectHeadingCopy}><Text style={styles.projectHeadingTitle}>{project?.name ?? "Inbox"}</Text><Text numberOfLines={1} style={styles.projectHeadingNote}>{project?.note || "Actions without a project"}</Text></View>
-                <Text style={styles.projectHeadingCount}>{groupTasks.length}</Text>
-              </View>
+              {project ? projectHeading(project, groupTasks.length) : (
+                <View style={styles.projectHeading}>
+                  <Icon name="chevron-down" size={18} color="#6e6c72" />
+                  <Icon name="inbox-arrow-down-outline" size={20} color={customPerspective?.color ?? palette.purple} />
+                  <View style={styles.projectHeadingCopy}><Text style={styles.projectHeadingTitle}>Inbox</Text><Text numberOfLines={1} style={styles.projectHeadingNote}>Actions without a project</Text></View>
+                  <Text style={styles.projectHeadingCount}>{groupTasks.length}</Text>
+                </View>
+              )}
               {groupTasks.map(taskRow)}
             </View>
           );
@@ -513,20 +534,11 @@ function Outline({
           );
         })}
         {groupBy === "none" && tasks.map(taskRow)}
-        {!customPerspective && perspective === "projects" && projects.filter((project) => !projectFilter || project.id === projectFilter).map((project) => {
+        {!customPerspective && perspective === "projects" && visibleProjects.map((project) => {
           const projectTasks = tasks.filter((task) => task.projectId === project.id);
-          if (!projectTasks.length) return null;
           return (
             <View key={project.id} style={styles.projectGroup}>
-              <View style={styles.projectHeading}>
-                <Icon name="chevron-down" size={18} color="#6e6c72" />
-                <View style={[styles.projectHeadingRing, { borderColor: project.color }]} />
-                <View style={styles.projectHeadingCopy}>
-                  <Text style={styles.projectHeadingTitle}>{project.name}</Text>
-                  <Text numberOfLines={1} style={styles.projectHeadingNote}>{project.note}</Text>
-                </View>
-                <Text style={styles.projectHeadingCount}>{projectTasks.filter((task) => !task.completed).length}</Text>
-              </View>
+              {projectHeading(project, projectTasks.filter((task) => !task.completed).length)}
               {projectTasks.map(taskRow)}
             </View>
           );
@@ -541,14 +553,14 @@ function Outline({
           );
         })}
         {!customPerspective && perspective === "review" && projects.map((project) => (
-          <View key={project.id} style={styles.reviewRow}>
+          <ContextMenuPressable key={project.id} items={projectContextItems(project, projectHandlers)} onPress={() => onFocusProject(project.id)} style={styles.reviewRow}>
             <View style={[styles.projectHeadingRing, { borderColor: project.color }]} />
             <View style={styles.reviewCopy}><Text style={styles.projectHeadingTitle}>{project.name}</Text><Text style={styles.projectHeadingNote}>Review every {project.reviewIntervalDays} days</Text></View>
             <Pressable onPress={() => onReviewProject(project.id)} style={styles.reviewButton}><Icon name="check" size={15} color="#fff" /><Text style={styles.reviewButtonText}>Reviewed</Text></Pressable>
-          </View>
+          </ContextMenuPressable>
         ))}
         {!customPerspective && perspective !== "projects" && perspective !== "tags" && perspective !== "review" && tasks.map(taskRow)}
-        {!tasks.length && (
+        {!tasks.length && (perspective !== "projects" || !visibleProjects.length) && (
           <View style={styles.emptyState}>
             <View style={styles.emptyCheck}><Icon name="check" size={26} color="#aaa7ad" /></View>
             <Text style={styles.emptyTitle}>All clear</Text>
@@ -859,9 +871,10 @@ function SettingsModal({
   );
 }
 
-function ConfirmDeleteModal({ visible, title, onCancel, onConfirm }: {
+function ConfirmDeleteModal({ visible, title, message, onCancel, onConfirm }: {
   visible: boolean;
   title: string;
+  message?: string;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -872,7 +885,7 @@ function ConfirmDeleteModal({ visible, title, onCancel, onConfirm }: {
         <View style={styles.confirmCard}>
           <View style={styles.confirmIcon}><Icon name="trash-can-outline" size={23} color={palette.danger} /></View>
           <Text style={styles.confirmTitle}>Delete “{title}”?</Text>
-          <Text style={styles.confirmText}>This action will be permanently removed from your local database.</Text>
+          <Text style={styles.confirmText}>{message ?? "This action will be permanently removed from your local database."}</Text>
           <View style={styles.confirmActions}>
             <Pressable onPress={onCancel} style={styles.cancelButton}><Text style={styles.cancelButtonText}>Cancel</Text></Pressable>
             <Pressable onPress={onConfirm} style={styles.confirmDeleteButton}><Text style={styles.confirmDeleteText}>Delete</Text></Pressable>
@@ -944,13 +957,13 @@ export default function App() {
   const isPhone = width < 720;
   const canShowSidebar = width >= 850;
   const canShowInspector = width >= 960;
-  const [projects, setProjects] = useState<Project[]>(seedProjects);
-  const [tasks, setTasks] = useState<Task[]>(seedTasks);
-  const [customPerspectives, setCustomPerspectives] = useState<CustomPerspective[]>(seedCustomPerspectives);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [customPerspectives, setCustomPerspectives] = useState<CustomPerspective[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [perspective, setPerspective] = useState<ActivePerspective>("projects");
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>("cake");
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -960,6 +973,7 @@ export default function App() {
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [pendingDeleteTaskId, setPendingDeleteTaskId] = useState<string | null>(null);
   const [pendingDeleteDirection, setPendingDeleteDirection] = useState<"menu" | "previous" | "next">("menu");
+  const [pendingDeleteProjectId, setPendingDeleteProjectId] = useState<string | null>(null);
   const [quickKind, setQuickKind] = useState<"task" | "project" | null>(null);
   const [perspectivesListOpen, setPerspectivesListOpen] = useState(false);
   const [quickOpenOpen, setQuickOpenOpen] = useState(false);
@@ -1128,6 +1142,31 @@ export default function App() {
     finalizeDeleteTask(id, direction);
   };
 
+  const finalizeDeleteProject = (id: string) => {
+    setProjects((current) => current.filter((project) => project.id !== id));
+    setTasks((current) => current.filter((task) => task.projectId !== id));
+    setCustomPerspectives((current) => current.map((item) => ({
+      ...item,
+      rules: item.rules.map((rule) => rule.kind === "containedIn"
+        ? { ...rule, projectIds: (rule.projectIds ?? []).filter((projectId) => projectId !== id) }
+        : rule),
+    })));
+    setProjectFilter((current) => current === id ? null : current);
+    setSelectedTaskId((current) => {
+      const selected = tasks.find((task) => task.id === current);
+      return selected?.projectId === id ? null : current;
+    });
+    setPendingDeleteProjectId(null);
+  };
+
+  const deleteProject = (id: string) => {
+    if (settings.confirmBeforeDelete) {
+      setPendingDeleteProjectId(id);
+      return;
+    }
+    finalizeDeleteProject(id);
+  };
+
   const createItem = (title: string, projectId: string | null) => {
     if (quickKind === "project") {
       const project: Project = { id: makeId("project"), name: title, note: "", color: projectColors[projects.length % projectColors.length] ?? palette.purple, reviewIntervalDays: 7 };
@@ -1263,6 +1302,13 @@ export default function App() {
   };
 
   const defaultProjectId = projectFilter ?? selectedProject?.id ?? null;
+  const pendingDeleteProject = pendingDeleteProjectId ? projects.find((project) => project.id === pendingDeleteProjectId) : undefined;
+  const pendingDeleteProjectActionCount = pendingDeleteProjectId ? tasks.filter((task) => task.projectId === pendingDeleteProjectId).length : 0;
+  const pendingDeleteMessage = pendingDeleteProjectId
+    ? pendingDeleteProjectActionCount
+      ? `This project and ${pendingDeleteProjectActionCount} action${pendingDeleteProjectActionCount === 1 ? "" : "s"} will be permanently removed from your local database.`
+      : "This project will be permanently removed from your local database."
+    : undefined;
   const sidebarPerspective: PerspectiveId = activeCustomPerspective
     ? (activeCustomPerspective.organizeBy === "projects" || effectiveGroupBy(activeCustomPerspective) === "project" ? "projects" : effectiveGroupBy(activeCustomPerspective) === "tag" ? "tags" : "projects")
     : perspective.startsWith("custom:") ? "projects" : perspective as PerspectiveId;
@@ -1326,6 +1372,7 @@ export default function App() {
         break;
       case "delete":
         if (selectedTaskId) deleteTask(selectedTaskId, action.direction);
+        else if (projectFilter) deleteProject(projectFilter);
         break;
       case "focusProject":
         focusSelected();
@@ -1339,9 +1386,14 @@ export default function App() {
         selectAdjacentTask(action.direction);
         break;
       case "confirmDelete":
-        if (pendingDeleteTaskId) finalizeDeleteTask(pendingDeleteTaskId, pendingDeleteDirection);
+        if (pendingDeleteProjectId) finalizeDeleteProject(pendingDeleteProjectId);
+        else if (pendingDeleteTaskId) finalizeDeleteTask(pendingDeleteTaskId, pendingDeleteDirection);
         break;
       case "cancel":
+        if (pendingDeleteProjectId) {
+          setPendingDeleteProjectId(null);
+          break;
+        }
         if (pendingDeleteTaskId) {
           setPendingDeleteTaskId(null);
           setPendingDeleteDirection("menu");
@@ -1366,13 +1418,16 @@ export default function App() {
     canShowInspector,
     canShowSidebar,
     closeImport,
+    deleteProject,
     deleteTask,
+    finalizeDeleteProject,
     finalizeDeleteTask,
     focusSelected,
     importError,
     importPreview,
     importSummary,
     pendingDeleteDirection,
+    pendingDeleteProjectId,
     pendingDeleteTaskId,
     perspective,
     perspectivesListOpen,
@@ -1384,13 +1439,14 @@ export default function App() {
     selectedTaskId,
     settingsOpen,
     viewMenuOpen,
+    projectFilter,
   ]);
 
   useEffect(() => {
     if (Platform.OS !== "web" || typeof window === "undefined") return;
     const onKeyDown = (event: KeyboardEvent) => {
       const action = matchOmniFocusHotkey(event, {
-        deleteDialogOpen: !!pendingDeleteTaskId,
+        deleteDialogOpen: !!pendingDeleteTaskId || !!pendingDeleteProjectId,
         perspectiveShortcuts: settings.perspectiveShortcuts,
         shortcutCapture: !!shortcutRecordingId,
       });
@@ -1402,7 +1458,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handleHotkeyAction, hasNativeMenu, modalOpen, pendingDeleteTaskId, settings.perspectiveShortcuts, shortcutRecordingId]);
+  }, [handleHotkeyAction, hasNativeMenu, modalOpen, pendingDeleteProjectId, pendingDeleteTaskId, settings.perspectiveShortcuts, shortcutRecordingId]);
 
   useEffect(() => {
     if (!hasNativeMenu || typeof window === "undefined") return;
@@ -1539,7 +1595,7 @@ export default function App() {
               onDelete={deleteCustomPerspective}
             />
           )}
-          {showSidebar && <ProjectSidebar perspective={sidebarPerspective} projects={projects} tasks={tasks} selectedProjectId={projectFilter} showCounts={settings.showSidebarCounts} onSelectProject={setProjectFilter} onNewProject={() => setQuickKind("project")} onFocusProject={focusProject} onNewActionInProject={newActionInProject} />}
+          {showSidebar && <ProjectSidebar perspective={sidebarPerspective} projects={projects} tasks={tasks} selectedProjectId={projectFilter} showCounts={settings.showSidebarCounts} onSelectProject={setProjectFilter} onNewProject={() => setQuickKind("project")} onFocusProject={focusProject} onNewActionInProject={newActionInProject} onDeleteProject={deleteProject} />}
           <Outline
             title={perspectiveTitle}
             perspective={perspective}
@@ -1557,6 +1613,9 @@ export default function App() {
             onNewTask={() => setQuickKind("task")}
             onReviewProject={(id) => setProjects((current) => current.map((project) => project.id === id ? { ...project, lastReviewedAt: new Date().toISOString() } : project))}
             onOpenViewMenu={() => setViewMenuOpen(true)}
+            onFocusProject={focusProject}
+            onNewActionInProject={newActionInProject}
+            onDeleteProject={deleteProject}
           />
           {showInspector && selectedTask && <Inspector task={selectedTask} projects={projects} onChange={(patch) => updateTask(selectedTask.id, patch)} onToggle={() => toggleTask(selectedTask.id)} onDelete={() => deleteTask(selectedTask.id)} />}
         </View>
@@ -1621,13 +1680,19 @@ export default function App() {
       <OmniImportModal data={importPreview} error={importError} summary={importSummary} onClose={closeImport} onApply={applyImport} />
 
       <ConfirmDeleteModal
-        visible={!!pendingDeleteTaskId}
-        title={tasks.find((task) => task.id === pendingDeleteTaskId)?.title ?? "this action"}
+        visible={!!pendingDeleteTaskId || !!pendingDeleteProjectId}
+        title={pendingDeleteProject?.name ?? tasks.find((task) => task.id === pendingDeleteTaskId)?.title ?? (pendingDeleteProjectId ? "this project" : "this action")}
+        message={pendingDeleteMessage}
         onCancel={() => {
           setPendingDeleteTaskId(null);
           setPendingDeleteDirection("menu");
+          setPendingDeleteProjectId(null);
         }}
         onConfirm={() => {
+          if (pendingDeleteProjectId) {
+            finalizeDeleteProject(pendingDeleteProjectId);
+            return;
+          }
           if (!pendingDeleteTaskId) return;
           finalizeDeleteTask(pendingDeleteTaskId, pendingDeleteDirection);
         }}

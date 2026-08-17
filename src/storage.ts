@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getDb } from "./db/client";
-import { seedCustomPerspectives, type CustomPerspective, type PersistedState, type Project, type Task } from "./model";
+import { type CustomPerspective, type PersistedState, type Project, type Task } from "./model";
 import { normalizeCustomPerspective } from "./perspectiveRules";
 
 const LEGACY_STORAGE_KEY = "omniclone.database.v1";
@@ -63,7 +63,7 @@ async function migrateLegacyAsyncStorage(): Promise<PersistedState | null> {
     const state: PersistedState =
       parsed.version === 2 && Array.isArray(parsed.customPerspectives)
         ? (parsed as PersistedState)
-        : { version: 2, projects: parsed.projects, tasks: parsed.tasks, customPerspectives: seedCustomPerspectives };
+        : { version: 2, projects: parsed.projects, tasks: parsed.tasks, customPerspectives: parsed.customPerspectives ?? [] };
     await AsyncStorage.removeItem(LEGACY_STORAGE_KEY);
     return state;
   } catch {
