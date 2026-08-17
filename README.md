@@ -20,6 +20,22 @@ npm run web
 npm run typecheck
 ```
 
+## Desktop releases
+
+Every push to `main` automatically creates the next patch release and publishes
+Windows (`.exe`) and macOS (`.dmg`) installers on GitHub Releases. Include
+`[skip release]` in a commit message to suppress a release. A specific version
+can also be published from **Actions → Release → Run workflow**.
+
+Build installers locally on their target operating systems:
+
+```bash
+npm run electron:build:win
+npm run electron:build:mac
+```
+
+Installers are written to `release/`.
+
 ## Product architecture
 
 - `App.tsx` contains the adaptive desktop, tablet, and phone experience.
