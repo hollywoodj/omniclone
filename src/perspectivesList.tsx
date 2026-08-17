@@ -2,7 +2,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import React, { useEffect, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import type { ContextMenuItem } from "./contextMenu";
-import { useContextMenuTrigger } from "./contextMenu";
+import { ContextMenuPressable, useContextMenuTrigger } from "./contextMenu";
 import {
   palette,
   perspectives,
@@ -64,7 +64,7 @@ export function PerspectivesListModal({
   onStartRecording: (id: ActivePerspective) => void;
   onStopRecording: () => void;
 }) {
-  const { contextMenuProps } = useContextMenuTrigger();
+  const { openMenu } = useContextMenuTrigger();
   const [query, setQuery] = useState("");
 
   useEffect(() => {
@@ -139,13 +139,11 @@ export function PerspectivesListModal({
                   { id: "delete", label: "Delete", icon: "trash-can-outline" as IconName, destructive: true, onPress: () => onDelete(item.custom!.id) },
                 ] : []),
               ];
-              const menuProps = contextMenuProps(menuItems);
               return (
-                <Pressable
+                <ContextMenuPressable
                   key={item.id}
+                  items={menuItems}
                   onPress={() => onOpen(item.id)}
-                  onLongPress={menuProps.onLongPress}
-                  {...(menuProps.onContextMenu ? { onContextMenu: menuProps.onContextMenu } : {})}
                   style={[styles.row, selected && styles.rowSelected]}
                 >
                   <Pressable accessibilityLabel={favorite ? "Unfavorite" : "Favorite"} onPress={() => onToggleFavorite(item.id)} style={styles.starButton}>
@@ -171,10 +169,10 @@ export function PerspectivesListModal({
                       <Icon name="close" size={14} color="#8b888f" />
                     </Pressable>
                   )}
-                  <Pressable accessibilityLabel="Perspective actions" onPress={menuProps.onLongPress} style={styles.moreButton}>
+                  <Pressable accessibilityLabel="Perspective actions" onPress={() => openMenu({ items: menuItems })} style={styles.moreButton}>
                     <Icon name="dots-horizontal" size={18} color="#8b888f" />
                   </Pressable>
-                </Pressable>
+                </ContextMenuPressable>
               );
             })}
           </ScrollView>

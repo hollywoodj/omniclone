@@ -39,7 +39,7 @@ Installers are written to `release/`.
 ## Product architecture
 
 - `App.tsx` contains the adaptive desktop, tablet, and phone experience.
-- `src/model.ts` defines the task/project domain and starter database.
+- `src/model.ts` defines the task/project domain. New databases start empty.
 - `src/storage.ts` persists the database locally with AsyncStorage on every supported platform.
 - `src/importOmniFocus.ts` parses OmniFocus CSV and TaskPaper exports, including UTF-8 and UTF-16 files, and performs duplicate-safe merges.
 - `app.json` contains the iOS and Android identifiers and Expo native configuration.
