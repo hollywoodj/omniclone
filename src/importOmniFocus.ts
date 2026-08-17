@@ -14,6 +14,7 @@ export type OmniImportData = {
 export type ImportMode = "merge" | "replace";
 
 const importColors = ["#8f57c8", "#2f8de4", "#58a65c", "#dd7c38", "#d65774", "#4b9b91", "#7b77d6"];
+const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function hashText(value: string) {
   let hash = 2166136261;
@@ -30,6 +31,11 @@ function clean(value: unknown) {
 
 function normalizeHeader(value: string) {
   return clean(value).toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function leafName(value: string) {
+  const parts = value.split(/\s*[:/]\s*/).filter(Boolean);
+  return parts[parts.length - 1] ?? value;
 }
 
 function decodeBytes(bytes: Uint8Array) {
@@ -85,19 +91,96 @@ function splitTags(value: string) {
   return [...new Set(source.split(/[,;]+/).map((tag) => tag.trim()).filter(Boolean))];
 }
 
-function projectRecord(name: string, index: number): Project {
+export function parseOmniTimestamp(raw: string): Date | undefined {
+  const value = clean(raw);
+  if (!value) return undefined;
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+  if (match) {
+    return new Date(
+      Number(match[1]),
+      Number(match[2]) - 1,
+      Number(match[3]),
+      Number(match[4] ?? 0),
+      Number(match[5] ?? 0),
+      Number(match[6] ?? 0),
+    );
+  }
+  const fallback = Date.parse(value);
+  if (!Number.isNaN(fallback)) return new Date(fallback);
+  return undefined;
+}
+
+function pad(value: number) {
+  return value.toString().padStart(2, "0");
+}
+
+function formatClock(date: Date) {
+  const hours = date.getHours();
+  const minutes = date.getMinutes();
+  const period = hours >= 12 ? "PM" : "AM";
+  const hour12 = hours % 12 || 12;
+  return minutes ? `${hour12}:${pad(minutes)} ${period}` : `${hour12}:00 ${period}`;
+}
+
+function startOfLocalDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+export function formatOmniFocusDate(raw: string, now = new Date()): string | undefined {
+  const value = clean(raw);
+  if (!value) return undefined;
+  const parsed = parseOmniTimestamp(value);
+  if (!parsed) return value;
+
+  const hasTime = parsed.getHours() !== 0 || parsed.getMinutes() !== 0 || parsed.getSeconds() !== 0;
+  const dayDelta = Math.round((startOfLocalDay(parsed) - startOfLocalDay(now)) / 86_400_000);
+  let label: string;
+  if (dayDelta === 0) label = "Today";
+  else if (dayDelta === 1) label = "Tomorrow";
+  else if (dayDelta === -1) label = "Yesterday";
+  else {
+    const month = monthNames[parsed.getMonth()] ?? "";
+    label = parsed.getFullYear() === now.getFullYear()
+      ? `${month} ${parsed.getDate()}`
+      : `${month} ${parsed.getDate()}, ${parsed.getFullYear()}`;
+  }
+  return hasTime ? `${label}, ${formatClock(parsed)}` : label;
+}
+
+function formatDuration(raw: string) {
+  const value = clean(raw);
+  if (!value || value === "0") return "";
+  const minutes = Number(value);
+  if (!Number.isFinite(minutes) || minutes <= 0) return `Estimated duration: ${value}`;
+  if (minutes < 60) return `Estimated duration: ${minutes} minute${minutes === 1 ? "" : "s"}`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  if (!remainder) return `Estimated duration: ${hours} hour${hours === 1 ? "" : "s"}`;
+  return `Estimated duration: ${hours}h ${remainder}m`;
+}
+
+function joinNotes(...parts: Array<string | undefined>) {
+  return parts.map((part) => clean(part)).filter(Boolean).join("\n\n") || undefined;
+}
+
+function projectRecord(name: string, index: number, note = ""): Project {
   const normalized = name.toLowerCase();
   return {
     id: `of-project-${hashText(normalized)}`,
     importKey: `omnifocus:project:${normalized}`,
     name,
     color: importColors[index % importColors.length] ?? "#8f57c8",
-    note: "",
+    note,
     reviewIntervalDays: 7,
   };
 }
 
-function parseOmniCsv(sourceName: string, text: string): OmniImportData {
+function addProjectAlias(aliases: Map<string, string>, alias: string, id: string) {
+  const key = clean(alias).toLowerCase();
+  if (key) aliases.set(key, id);
+}
+
+function parseOmniCsv(sourceName: string, text: string, now: Date): OmniImportData {
   const rows = parseCsv(text);
   if (rows.length < 2) throw new Error("The CSV file does not contain any OmniFocus records.");
   const headerRow = rows[0];
@@ -111,62 +194,110 @@ function parseOmniCsv(sourceName: string, text: string): OmniImportData {
     throw new Error("This CSV is missing an OmniFocus Name or Title column.");
   }
 
-  const projectNames: string[] = [];
-  const rawTasks: Array<{ row: string[]; projectName: string }> = [];
+  const projects: Project[] = [];
+  const projectAliases = new Map<string, string>();
+  const rawTasks: Array<{ row: string[]; projectName: string; inbox: boolean }> = [];
   let skipped = 0;
-  for (const row of rows.slice(1)) {
+  let folderCount = 0;
+  let droppedCount = 0;
+  let onHoldCount = 0;
+
+  const ensureProject = (name: string, note = "") => {
+    const normalized = name.toLowerCase();
+    const existingId = projectAliases.get(normalized);
+    const existing = existingId ? projects.find((project) => project.id === existingId) : undefined;
+    if (existing) {
+      if (note && !existing.note) existing.note = note;
+      return existing;
+    }
+    const project = projectRecord(name, projects.length, note);
+    projects.push(project);
+    addProjectAlias(projectAliases, name, project.id);
+    addProjectAlias(projectAliases, leafName(name), project.id);
+    return project;
+  };
+
+  const body = rows.slice(1);
+  for (const row of body) {
+    const type = value(row, "Type", "Task Type").toLowerCase();
+    const name = value(row, "Name", "Title");
+    if (!name) continue;
+    if (type.includes("folder")) {
+      folderCount += 1;
+      continue;
+    }
+    if (type.includes("project")) {
+      const container = value(row, "Project", "Project Name", "Container", "Folder");
+      const fullName = container && leafName(container).toLowerCase() !== name.toLowerCase()
+        ? `${container} : ${name}`
+        : name;
+      const note = value(row, "Notes", "Note");
+      const review = Number(value(row, "Review Interval", "Review", "Repeat Interval"));
+      const project = ensureProject(fullName, note);
+      if (Number.isFinite(review) && review > 0) project.reviewIntervalDays = review;
+      addProjectAlias(projectAliases, name, project.id);
+    }
+  }
+
+  for (const row of body) {
     const type = value(row, "Type", "Task Type").toLowerCase();
     const name = value(row, "Name", "Title");
     if (!name) {
       skipped += 1;
       continue;
     }
-    if (type.includes("folder") || type === "tag" || type === "context") {
-      skipped += 1;
+    if (type === "tag" || type === "context" || type === "perspective" || type.includes("folder") || type.includes("project")) {
+      if (type === "tag" || type === "context" || type === "perspective") skipped += 1;
       continue;
     }
-    if (type.includes("project")) {
-      if (!projectNames.some((item) => item.toLowerCase() === name.toLowerCase())) projectNames.push(name);
-      continue;
-    }
-    const projectName = value(row, "Project", "Project Name", "Container");
-    if (projectName && !projectNames.some((item) => item.toLowerCase() === projectName.toLowerCase())) projectNames.push(projectName);
-    rawTasks.push({ row, projectName });
+    const inbox = type === "inbox" || type.includes("inbox item");
+    const projectName = inbox ? "" : value(row, "Project", "Project Name", "Container");
+    if (projectName) ensureProject(projectName);
+    rawTasks.push({ row, projectName, inbox });
   }
 
-  const projects = projectNames.map(projectRecord);
-  const projectIds = new Map(projects.map((project) => [project.name.toLowerCase(), project.id]));
   const warnings: string[] = [];
-  let droppedCount = 0;
-  const importedAt = Date.now();
-  const tasks: Task[] = rawTasks.map(({ row, projectName }, index) => {
+  const importedAt = now.getTime();
+  const tasks: Task[] = rawTasks.map(({ row, projectName, inbox }, index) => {
     const title = value(row, "Name", "Title");
     const status = value(row, "Status", "State").toLowerCase();
     const completion = value(row, "Completion Date", "Completed", "Completed Date");
     const sourceId = value(row, "Task ID", "ID", "Identifier");
-    const due = value(row, "Due Date", "Due");
-    const defer = value(row, "Start Date", "Defer Date", "Defer Until", "Defer");
+    const due = formatOmniFocusDate(value(row, "Due Date", "Due"), now);
+    const defer = formatOmniFocusDate(value(row, "Start Date", "Defer Date", "Defer Until", "Defer"), now);
+    const addedAt = parseOmniTimestamp(value(row, "Added", "Added Date", "Creation Date", "Created"));
     const note = value(row, "Notes", "Note");
+    const duration = formatDuration(value(row, "Duration", "Estimated Duration", "Estimated Time"));
     const tagValues = [...splitTags(value(row, "Tags")), ...splitTags(value(row, "Context", "Contexts"))];
     const tags = [...new Set(tagValues)];
     const dropped = status.includes("dropped");
+    const onHold = status.includes("hold") || status.includes("on-hold");
     if (dropped) droppedCount += 1;
-    const signature = `${projectName}|${title}|${due}|${defer}|${note}`.toLowerCase();
+    if (onHold) onHoldCount += 1;
+    const signature = `${projectName}|${title}|${due ?? ""}|${defer ?? ""}|${note}`.toLowerCase();
+    const projectId = inbox || !projectName ? null : projectAliases.get(projectName.toLowerCase()) ?? projectAliases.get(leafName(projectName).toLowerCase()) ?? null;
     return {
       id: `of-task-${hashText(sourceId || signature)}`,
       importKey: sourceId ? `omnifocus:task:${sourceId}` : `omnifocus:task:${hashText(signature)}`,
       title,
-      projectId: projectName ? projectIds.get(projectName.toLowerCase()) ?? null : null,
+      projectId,
       tags,
-      due: due || undefined,
-      defer: defer || undefined,
-      note: dropped ? [note, "Imported OmniFocus status: Dropped"].filter(Boolean).join("\n\n") : note || undefined,
+      due,
+      defer,
+      note: joinNotes(
+        note,
+        duration,
+        dropped ? "Imported OmniFocus status: Dropped" : undefined,
+        onHold ? "Imported OmniFocus status: On Hold" : undefined,
+      ),
       flagged: /^(1|true|yes|y|flagged|★)$/i.test(value(row, "Flagged", "Flag")),
       completed: !!completion || status.includes("completed") || status.includes("done") || dropped,
-      createdAt: value(row, "Added", "Added Date", "Creation Date", "Created") || new Date(importedAt + index).toISOString(),
+      createdAt: addedAt?.toISOString() ?? new Date(importedAt + index).toISOString(),
     };
   });
+  if (folderCount) warnings.push(`${folderCount} folder${folderCount === 1 ? " was" : "s were"} folded into project names.`);
   if (droppedCount) warnings.push(`${droppedCount} dropped item${droppedCount === 1 ? " was" : "s were"} preserved as completed.`);
+  if (onHoldCount) warnings.push(`${onHoldCount} on-hold item${onHoldCount === 1 ? " was" : "s were"} kept remaining, with the original status in the note.`);
   return { sourceName, format: "OmniFocus CSV", projects, tasks, skipped, warnings };
 }
 
@@ -181,13 +312,13 @@ function extractTaskPaperParameters(value: string) {
   return { title, parameters };
 }
 
-function parseTaskPaper(sourceName: string, text: string): OmniImportData {
+function parseTaskPaper(sourceName: string, text: string, now: Date): OmniImportData {
   const projects: Project[] = [];
   const tasks: Task[] = [];
   const projectAtIndent = new Map<number, Project>();
   let lastTask: Task | null = null;
   let skipped = 0;
-  const importedAt = Date.now();
+  const importedAt = now.getTime();
 
   for (const rawLine of text.replace(/\r\n?/g, "\n").split("\n")) {
     if (!rawLine.trim()) continue;
@@ -204,8 +335,9 @@ function parseTaskPaper(sourceName: string, text: string): OmniImportData {
       const tagsParameter = typeof parsed.parameters.tags === "string" ? parsed.parameters.tags : "";
       const contextParameter = typeof parsed.parameters.context === "string" ? parsed.parameters.context : "";
       const tags = [...new Set([...splitTags(tagsParameter), ...splitTags(contextParameter)])];
-      const due = typeof parsed.parameters.due === "string" ? parsed.parameters.due : undefined;
-      const defer = typeof parsed.parameters.defer === "string" ? parsed.parameters.defer : undefined;
+      const due = typeof parsed.parameters.due === "string" ? formatOmniFocusDate(parsed.parameters.due, now) : undefined;
+      const defer = typeof parsed.parameters.defer === "string" ? formatOmniFocusDate(parsed.parameters.defer, now) : undefined;
+      const duration = typeof parsed.parameters.duration === "string" ? formatDuration(parsed.parameters.duration) : "";
       const signature = `${project?.name ?? ""}|${parsed.title}|${due ?? ""}|${defer ?? ""}`.toLowerCase();
       const task: Task = {
         id: `of-task-${hashText(signature)}`,
@@ -215,6 +347,7 @@ function parseTaskPaper(sourceName: string, text: string): OmniImportData {
         tags,
         due,
         defer,
+        note: duration || undefined,
         flagged: parsed.parameters.flagged === true || parsed.parameters.flagged === "true",
         completed: "done" in parsed.parameters,
         createdAt: new Date(importedAt + tasks.length).toISOString(),
@@ -225,8 +358,12 @@ function parseTaskPaper(sourceName: string, text: string): OmniImportData {
     }
     const parsed = extractTaskPaperParameters(line);
     if (parsed.title.endsWith(":")) {
-      const name = parsed.title.slice(0, -1).trim();
-      if (!name) continue;
+      const rawName = parsed.title.slice(0, -1).trim();
+      if (!rawName) continue;
+      const parent = [...projectAtIndent.entries()].filter(([level]) => level < indent).sort((a, b) => b[0] - a[0])[0]?.[1];
+      const name = parent && !rawName.toLowerCase().startsWith(`${parent.name.toLowerCase()} :`)
+        ? `${parent.name} : ${rawName}`
+        : rawName;
       const project = projectRecord(name, projects.length);
       const duplicate = projects.find((item) => item.name.toLowerCase() === name.toLowerCase());
       const selected = duplicate ?? project;
@@ -236,24 +373,27 @@ function parseTaskPaper(sourceName: string, text: string): OmniImportData {
       lastTask = null;
       continue;
     }
-    if (lastTask && indent > 0) lastTask.note = [lastTask.note, line].filter(Boolean).join("\n");
+    if (lastTask && indent > 0) lastTask.note = joinNotes(lastTask.note, line);
     else skipped += 1;
   }
   if (!tasks.length && !projects.length) throw new Error("The TaskPaper file does not contain any projects or actions.");
   return { sourceName, format: "OmniFocus TaskPaper", projects, tasks, skipped, warnings: [] };
 }
 
-export function parseOmniFocusFile(sourceName: string, bytes: Uint8Array): OmniImportData {
+function looksLikeCsv(text: string) {
+  const firstLine = text.split(/\r?\n/, 1)[0] ?? "";
+  return firstLine.includes(",") && /task\s*id|type|name|title|project/i.test(firstLine);
+}
+
+export function parseOmniFocusFile(sourceName: string, bytes: Uint8Array, now = new Date()): OmniImportData {
   const lowerName = sourceName.toLowerCase();
-  if (lowerName.endsWith(".ofocus") || lowerName.endsWith(".ofocus-backup")) {
+  if (lowerName.endsWith(".ofocus") || lowerName.endsWith(".ofocus-backup") || lowerName.includes(".ofocus.")) {
     throw new Error("OmniFocus backup packages cannot be imported directly. Export the old database as CSV (recommended) or TaskPaper first.");
   }
   const text = decodeBytes(bytes);
-  if (lowerName.endsWith(".csv")) return parseOmniCsv(sourceName, text);
-  if (lowerName.endsWith(".taskpaper") || lowerName.endsWith(".txt")) return parseTaskPaper(sourceName, text);
-  const firstLine = text.split(/\r?\n/, 1)[0] ?? "";
-  if (/task\s*id|type|name|title/i.test(firstLine) && firstLine.includes(",")) return parseOmniCsv(sourceName, text);
-  if (/^\s*(?:-|.+:)/m.test(text)) return parseTaskPaper(sourceName, text);
+  if (lowerName.endsWith(".csv") || looksLikeCsv(text)) return parseOmniCsv(sourceName, text, now);
+  if (lowerName.endsWith(".taskpaper") || lowerName.endsWith(".txt")) return parseTaskPaper(sourceName, text, now);
+  if (/^\s*(?:-|.+:)/m.test(text)) return parseTaskPaper(sourceName, text, now);
   throw new Error("Choose an OmniFocus CSV, TaskPaper, or plain-text TaskPaper export.");
 }
 
@@ -267,9 +407,11 @@ export function applyOmniFocusImport(currentProjects: Project[], currentTasks: T
   const projectIdMap = new Map<string, string>();
   let addedProjects = 0;
   for (const incoming of imported.projects) {
-    const existing = projects.find((project) => project.importKey === incoming.importKey || project.name.toLowerCase() === incoming.name.toLowerCase());
-    if (existing) projectIdMap.set(incoming.id, existing.id);
-    else {
+    const existing = projects.find((project) => project.importKey === incoming.importKey || project.name.toLowerCase() === incoming.name.toLowerCase() || leafName(project.name).toLowerCase() === leafName(incoming.name).toLowerCase());
+    if (existing) {
+      projectIdMap.set(incoming.id, existing.id);
+      if (incoming.note && !existing.note) existing.note = incoming.note;
+    } else {
       let id = incoming.id;
       while (projects.some((project) => project.id === id)) id = `${incoming.id}-${addedProjects + 1}`;
       projects.push({ ...incoming, id });
