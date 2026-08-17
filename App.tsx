@@ -20,6 +20,7 @@ import {
 } from "react-native";
 import {
   createCustomPerspective,
+  defaultSettings,
   makeId,
   palette,
   perspectives,
@@ -27,12 +28,14 @@ import {
   seedProjects,
   seedTasks,
   type ActivePerspective,
+  type AppSettings,
   type CustomPerspective,
   type PerspectiveId,
   type Project,
   type Task,
 } from "./src/model";
 import { loadDatabase, saveDatabase } from "./src/storage";
+import { loadSettings, saveSettings } from "./src/settings";
 import { applyOmniFocusImport, parseOmniFocusFile, type ImportMode, type OmniImportData } from "./src/importOmniFocus";
 
 type IconName = React.ComponentProps<typeof MaterialCommunityIcons>["name"];
@@ -83,13 +86,15 @@ function StatusRing({ completed, color = palette.purple, onPress, size = 19 }: {
   );
 }
 
-function PerspectiveRail({ current, inboxCount, customPerspectives, onSelect, onCreate, onEdit }: {
+function PerspectiveRail({ current, inboxCount, customPerspectives, showTitles, onSelect, onCreate, onEdit, onOpenSettings }: {
   current: ActivePerspective;
   inboxCount: number;
   customPerspectives: CustomPerspective[];
+  showTitles: boolean;
   onSelect: (id: ActivePerspective) => void;
   onCreate: () => void;
   onEdit: (perspective: CustomPerspective) => void;
+  onOpenSettings: () => void;
 }) {
   return (
     <View style={styles.perspectiveRail}>
@@ -110,7 +115,7 @@ function PerspectiveRail({ current, inboxCount, customPerspectives, onSelect, on
                   <View style={[styles.badge, selected && styles.badgeSelected]}><Text style={styles.badgeText}>{inboxCount}</Text></View>
                 )}
               </View>
-              <Text numberOfLines={1} style={[styles.perspectiveLabel, selected && styles.perspectiveLabelSelected]}>{item.label}</Text>
+              {showTitles && <Text numberOfLines={1} style={[styles.perspectiveLabel, selected && styles.perspectiveLabelSelected]}>{item.label}</Text>}
             </Pressable>
           );
         })}
@@ -121,14 +126,17 @@ function PerspectiveRail({ current, inboxCount, customPerspectives, onSelect, on
           return (
             <Pressable key={item.id} accessibilityRole="tab" accessibilityState={{ selected }} onPress={() => onSelect(id)} onLongPress={() => onEdit(item)} style={({ pressed }) => [styles.perspectiveItem, selected && { backgroundColor: `${item.color}20` }, pressed && styles.pressed]}>
               <Icon name={item.icon as IconName} size={24} color={selected ? item.color : "#656269"} />
-              <Text numberOfLines={1} style={[styles.perspectiveLabel, selected && { color: item.color, fontWeight: "700" }]}>{item.name}</Text>
+              {showTitles && <Text numberOfLines={1} style={[styles.perspectiveLabel, selected && { color: item.color, fontWeight: "700" }]}>{item.name}</Text>}
             </Pressable>
           );
         })}
       </ScrollView>
       <Pressable onPress={onCreate} style={styles.perspectiveItem}>
         <Icon name="plus-circle-outline" size={23} color={palette.purpleDark} />
-        <Text style={styles.perspectiveLabel}>Perspective</Text>
+        {showTitles && <Text style={styles.perspectiveLabel}>Perspective</Text>}
+      </Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel="Settings" onPress={onOpenSettings} style={styles.railSettingsButton}>
+        <Icon name="cog-outline" size={21} color="#706d74" />
       </Pressable>
     </View>
   );
@@ -139,6 +147,7 @@ function ProjectSidebar({
   projects,
   tasks,
   selectedProjectId,
+  showCounts,
   onSelectProject,
   onNewProject,
 }: {
@@ -146,6 +155,7 @@ function ProjectSidebar({
   projects: Project[];
   tasks: Task[];
   selectedProjectId: string | null;
+  showCounts: boolean;
   onSelectProject: (id: string | null) => void;
   onNewProject: () => void;
 }) {
@@ -164,14 +174,14 @@ function ProjectSidebar({
             <Pressable onPress={() => onSelectProject(null)} style={[styles.sidebarRow, selectedProjectId === null && styles.sidebarRowSelected]}>
               <Icon name="folder-multiple-outline" size={17} color="#6f6c73" />
               <Text numberOfLines={1} style={styles.sidebarRowText}>All Projects</Text>
-              <Text style={styles.sidebarCount}>{tasks.filter((task) => task.projectId && !task.completed).length}</Text>
+              {showCounts && <Text style={styles.sidebarCount}>{tasks.filter((task) => task.projectId && !task.completed).length}</Text>}
             </Pressable>
             <Text style={styles.sidebarSectionLabel}>PROJECTS</Text>
             {projects.map((project) => (
               <Pressable key={project.id} onPress={() => onSelectProject(project.id)} style={[styles.sidebarRow, selectedProjectId === project.id && styles.sidebarRowSelected]}>
                 <View style={[styles.projectDot, { borderColor: project.color }]} />
                 <Text numberOfLines={1} style={styles.sidebarRowText}>{project.name}</Text>
-                <Text style={styles.sidebarCount}>{tasks.filter((task) => task.projectId === project.id && !task.completed).length}</Text>
+                {showCounts && <Text style={styles.sidebarCount}>{tasks.filter((task) => task.projectId === project.id && !task.completed).length}</Text>}
               </Pressable>
             ))}
           </>
@@ -180,7 +190,7 @@ function ProjectSidebar({
           <View key={tag} style={styles.sidebarRow}>
             <Icon name="pound" size={16} color="#77747b" />
             <Text style={styles.sidebarRowText}>{tag}</Text>
-            <Text style={styles.sidebarCount}>{tasks.filter((task) => task.tags.includes(tag) && !task.completed).length}</Text>
+            {showCounts && <Text style={styles.sidebarCount}>{tasks.filter((task) => task.tags.includes(tag) && !task.completed).length}</Text>}
           </View>
         ))}
         {perspective === "forecast" && (
@@ -208,10 +218,11 @@ function ProjectSidebar({
   );
 }
 
-function TaskRow({ task, project, selected, onSelect, onToggle, onInspect }: {
+function TaskRow({ task, project, selected, settings, onSelect, onToggle, onInspect }: {
   task: Task;
   project?: Project;
   selected: boolean;
+  settings: AppSettings;
   onSelect: () => void;
   onToggle: () => void;
   onInspect: () => void;
@@ -221,12 +232,23 @@ function TaskRow({ task, project, selected, onSelect, onToggle, onInspect }: {
       accessibilityRole="button"
       onPress={onSelect}
       onLongPress={onInspect}
-      style={({ pressed }) => [styles.taskRow, selected && styles.taskRowSelected, pressed && styles.taskRowPressed]}
+      style={({ pressed }) => [styles.taskRow, settings.rowDensity === "compact" && styles.taskRowCompact, selected && styles.taskRowSelected, pressed && styles.taskRowPressed]}
     >
       <StatusRing completed={task.completed} color={project?.color} onPress={onToggle} />
       <View style={styles.taskBody}>
         <View style={styles.taskTitleLine}>
-          <Text numberOfLines={1} style={[styles.taskTitle, task.completed && styles.taskTitleCompleted]}>{task.title}</Text>
+          <Text
+            numberOfLines={1}
+            style={[
+              styles.taskTitle,
+              settings.textSize === "small" && styles.taskTitleSmall,
+              settings.textSize === "large" && styles.taskTitleLarge,
+              task.completed && styles.taskTitleResolved,
+              task.completed && settings.strikeResolvedItems && styles.taskTitleCompleted,
+            ]}
+          >
+            {task.title}
+          </Text>
           {!!task.note && <Icon name="note-outline" size={13} color="#99969c" />}
         </View>
         <View style={styles.taskMeta}>
@@ -235,7 +257,7 @@ function TaskRow({ task, project, selected, onSelect, onToggle, onInspect }: {
         </View>
       </View>
       <View style={styles.taskTail}>
-        {!!task.due && <Text style={[styles.dueText, task.due.startsWith("Today") && styles.dueToday]}>{task.due}</Text>}
+        {!!task.due && <Text style={[styles.dueText, settings.colorDueItems && task.due.startsWith("Today") && styles.dueToday]}>{task.due}</Text>}
         {task.flagged && <Icon name="flag" size={16} color={palette.flag} />}
         <Pressable onPress={onInspect} hitSlop={8} style={styles.rowInfoButton}><Icon name="information-outline" size={17} color="#8e8a91" /></Pressable>
       </View>
@@ -251,6 +273,7 @@ function Outline({
   tasks,
   selectedTaskId,
   projectFilter,
+  settings,
   onSelectTask,
   onToggleTask,
   onInspectTask,
@@ -264,6 +287,7 @@ function Outline({
   tasks: Task[];
   selectedTaskId: string | null;
   projectFilter: string | null;
+  settings: AppSettings;
   onSelectTask: (id: string) => void;
   onToggleTask: (id: string) => void;
   onInspectTask: (id: string) => void;
@@ -277,6 +301,7 @@ function Outline({
       task={task}
       project={task.projectId ? projectById.get(task.projectId) : undefined}
       selected={selectedTaskId === task.id}
+      settings={settings}
       onSelect={() => onSelectTask(task.id)}
       onToggle={() => onToggleTask(task.id)}
       onInspect={() => onInspectTask(task.id)}
@@ -500,6 +525,187 @@ function RuleChoices({ value, options, onChange }: {
   );
 }
 
+type SettingsSection = "general" | "appearance" | "data";
+
+function SettingsRow({ title, detail, children }: {
+  title: string;
+  detail?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <View style={styles.settingsRow}>
+      <View style={styles.settingsRowCopy}>
+        <Text style={styles.settingsRowTitle}>{title}</Text>
+        {!!detail && <Text style={styles.settingsRowDetail}>{detail}</Text>}
+      </View>
+      <View style={styles.settingsRowControl}>{children}</View>
+    </View>
+  );
+}
+
+function SettingsModal({
+  settings,
+  projectCount,
+  taskCount,
+  onChange,
+  onClose,
+  onImport,
+  onReset,
+}: {
+  settings: AppSettings;
+  projectCount: number;
+  taskCount: number;
+  onChange: (patch: Partial<AppSettings>) => void;
+  onClose: () => void;
+  onImport: () => void;
+  onReset: () => void;
+}) {
+  const [section, setSection] = useState<SettingsSection>("general");
+  const sections: Array<{ id: SettingsSection; label: string; icon: IconName }> = [
+    { id: "general", label: "General", icon: "tune" },
+    { id: "appearance", label: "Appearance", icon: "format-paint" },
+    { id: "data", label: "Data", icon: "database-outline" },
+  ];
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.settingsBackdrop}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <View style={styles.settingsWindow}>
+          <View style={styles.settingsTitlebar}>
+            <View style={styles.settingsTrafficLights}>
+              <Pressable accessibilityLabel="Close settings" onPress={onClose} style={[styles.settingsTrafficLight, { backgroundColor: "#ff5f57" }]} />
+              <View style={[styles.settingsTrafficLight, { backgroundColor: "#febc2e" }]} />
+              <View style={[styles.settingsTrafficLight, { backgroundColor: "#28c840" }]} />
+            </View>
+            <Text style={styles.settingsTitle}>Settings</Text>
+            <Pressable onPress={onClose} style={styles.settingsDoneButton}><Text style={styles.settingsDoneText}>Done</Text></Pressable>
+          </View>
+          <View style={styles.settingsBody}>
+            <View style={styles.settingsSidebar}>
+              {sections.map((item) => {
+                const selected = section === item.id;
+                return (
+                  <Pressable key={item.id} onPress={() => setSection(item.id)} style={[styles.settingsNavItem, selected && styles.settingsNavItemSelected]}>
+                    <View style={[styles.settingsNavIcon, selected && styles.settingsNavIconSelected]}><Icon name={item.icon} size={17} color={selected ? "#fff" : "#66626a"} /></View>
+                    <Text style={[styles.settingsNavText, selected && styles.settingsNavTextSelected]}>{item.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <ScrollView style={styles.settingsContent} contentContainerStyle={styles.settingsContentInner}>
+              {section === "general" && (
+                <>
+                  <Text style={styles.settingsPageTitle}>General</Text>
+                  <Text style={styles.settingsPageIntro}>Choose how OmniClone behaves when you open and organize your tasks.</Text>
+                  <View style={styles.settingsGroup}>
+                    <View style={styles.settingsStackedRow}>
+                      <Text style={styles.settingsRowTitle}>Default perspective</Text>
+                      <Text style={styles.settingsRowDetail}>The perspective shown when the app opens.</Text>
+                      <RuleChoices
+                        value={settings.defaultPerspective}
+                        onChange={(defaultPerspective) => onChange({ defaultPerspective: defaultPerspective as PerspectiveId })}
+                        options={perspectives.map((item) => ({ label: item.label, value: item.id }))}
+                      />
+                    </View>
+                    <SettingsRow title="Show completed actions" detail="Include resolved actions in built-in perspectives.">
+                      <Switch value={settings.showCompleted} onValueChange={(showCompleted) => onChange({ showCompleted })} trackColor={{ true: palette.purple }} />
+                    </SettingsRow>
+                    <SettingsRow title="Open Inspector on selection" detail="Reveal action details when you select an item.">
+                      <Switch value={settings.openInspectorOnSelection} onValueChange={(openInspectorOnSelection) => onChange({ openInspectorOnSelection })} trackColor={{ true: palette.purple }} />
+                    </SettingsRow>
+                    <SettingsRow title="Confirm before deleting" detail="Ask before removing actions from the database.">
+                      <Switch value={settings.confirmBeforeDelete} onValueChange={(confirmBeforeDelete) => onChange({ confirmBeforeDelete })} trackColor={{ true: palette.purple }} />
+                    </SettingsRow>
+                  </View>
+                </>
+              )}
+
+              {section === "appearance" && (
+                <>
+                  <Text style={styles.settingsPageTitle}>Appearance</Text>
+                  <Text style={styles.settingsPageIntro}>Tune outline density, typography, and the information shown in each view.</Text>
+                  <Text style={styles.settingsGroupLabel}>OUTLINE</Text>
+                  <View style={styles.settingsGroup}>
+                    <View style={styles.settingsStackedRow}>
+                      <Text style={styles.settingsRowTitle}>Font size</Text>
+                      <RuleChoices value={settings.textSize} onChange={(textSize) => onChange({ textSize: textSize as AppSettings["textSize"] })} options={[{ label: "Small", value: "small" }, { label: "Medium", value: "medium" }, { label: "Large", value: "large" }]} />
+                    </View>
+                    <View style={styles.settingsStackedRow}>
+                      <Text style={styles.settingsRowTitle}>Row spacing</Text>
+                      <RuleChoices value={settings.rowDensity} onChange={(rowDensity) => onChange({ rowDensity: rowDensity as AppSettings["rowDensity"] })} options={[{ label: "Compact", value: "compact" }, { label: "Comfortable", value: "comfortable" }]} />
+                    </View>
+                    <SettingsRow title="Color text for due items">
+                      <Switch value={settings.colorDueItems} onValueChange={(colorDueItems) => onChange({ colorDueItems })} trackColor={{ true: palette.purple }} />
+                    </SettingsRow>
+                    <SettingsRow title="Strike resolved items">
+                      <Switch value={settings.strikeResolvedItems} onValueChange={(strikeResolvedItems) => onChange({ strikeResolvedItems })} trackColor={{ true: palette.purple }} />
+                    </SettingsRow>
+                  </View>
+                  <Text style={styles.settingsGroupLabel}>SIDEBAR</Text>
+                  <View style={styles.settingsGroup}>
+                    <SettingsRow title="Perspectives bar shows titles">
+                      <Switch value={settings.perspectiveBarShowsTitles} onValueChange={(perspectiveBarShowsTitles) => onChange({ perspectiveBarShowsTitles })} trackColor={{ true: palette.purple }} />
+                    </SettingsRow>
+                    <SettingsRow title="Show item counts">
+                      <Switch value={settings.showSidebarCounts} onValueChange={(showSidebarCounts) => onChange({ showSidebarCounts })} trackColor={{ true: palette.purple }} />
+                    </SettingsRow>
+                  </View>
+                </>
+              )}
+
+              {section === "data" && (
+                <>
+                  <Text style={styles.settingsPageTitle}>Data</Text>
+                  <Text style={styles.settingsPageIntro}>Your database stays on this device and remains available offline.</Text>
+                  <View style={styles.databaseCard}>
+                    <View style={styles.databaseIcon}><Icon name="database-check-outline" size={28} color={palette.purpleDark} /></View>
+                    <View style={styles.databaseCopy}>
+                      <Text style={styles.databaseTitle}>Local database</Text>
+                      <Text style={styles.databaseDetail}>{projectCount} projects · {taskCount} actions</Text>
+                    </View>
+                    <View style={styles.databaseStatus}><View style={styles.databaseStatusDot} /><Text style={styles.databaseStatusText}>Saved</Text></View>
+                  </View>
+                  <View style={styles.settingsGroup}>
+                    <SettingsRow title="Import from OmniFocus" detail="Merge a CSV or TaskPaper export into this database.">
+                      <Pressable onPress={onImport} style={styles.settingsActionButton}><Icon name="database-import-outline" size={16} color={palette.purpleDark} /><Text style={styles.settingsActionText}>Import…</Text></Pressable>
+                    </SettingsRow>
+                  </View>
+                  <Pressable onPress={onReset} style={styles.resetSettingsButton}><Icon name="restore" size={16} color={palette.danger} /><Text style={styles.resetSettingsText}>Restore Default Settings</Text></Pressable>
+                </>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function ConfirmDeleteModal({ visible, title, onCancel, onConfirm }: {
+  visible: boolean;
+  title: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+      <View style={styles.confirmBackdrop}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onCancel} />
+        <View style={styles.confirmCard}>
+          <View style={styles.confirmIcon}><Icon name="trash-can-outline" size={23} color={palette.danger} /></View>
+          <Text style={styles.confirmTitle}>Delete “{title}”?</Text>
+          <Text style={styles.confirmText}>This action will be permanently removed from your local database.</Text>
+          <View style={styles.confirmActions}>
+            <Pressable onPress={onCancel} style={styles.cancelButton}><Text style={styles.cancelButtonText}>Cancel</Text></Pressable>
+            <Pressable onPress={onConfirm} style={styles.confirmDeleteButton}><Text style={styles.confirmDeleteText}>Delete</Text></Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 function CustomPerspectiveModal({ perspective, projects, isNew, onClose, onSave, onDelete }: {
   perspective: CustomPerspective;
   projects: Project[];
@@ -656,8 +862,10 @@ export default function App() {
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [showCompleted, setShowCompleted] = useState(true);
+  const [settings, setSettings] = useState<AppSettings>(defaultSettings);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
+  const [pendingDeleteTaskId, setPendingDeleteTaskId] = useState<string | null>(null);
   const [quickKind, setQuickKind] = useState<"task" | "project" | null>(null);
   const [editingPerspective, setEditingPerspective] = useState<{ draft: CustomPerspective; isNew: boolean } | null>(null);
   const [importPreview, setImportPreview] = useState<OmniImportData | null>(null);
@@ -665,12 +873,14 @@ export default function App() {
   const [importSummary, setImportSummary] = useState<string | null>(null);
 
   useEffect(() => {
-    loadDatabase().then((saved) => {
+    Promise.all([loadDatabase(), loadSettings()]).then(([saved, savedSettings]) => {
       if (saved) {
         setProjects(saved.projects);
         setTasks(saved.tasks);
         setCustomPerspectives(saved.customPerspectives);
       }
+      setSettings(savedSettings);
+      setPerspective(savedSettings.defaultPerspective);
       setHydrated(true);
     });
   }, []);
@@ -682,6 +892,14 @@ export default function App() {
     }, 180);
     return () => clearTimeout(timer);
   }, [hydrated, projects, tasks, customPerspectives]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const timer = setTimeout(() => {
+      void saveSettings(settings);
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [hydrated, settings]);
 
   useEffect(() => {
     if (!canShowSidebar) setSidebarOpen(false);
@@ -724,14 +942,14 @@ export default function App() {
       if (perspective === "forecast") result = result.filter((task) => !!task.due);
       if (perspective === "flagged") result = result.filter((task) => task.flagged);
       if (projectFilter && perspective === "projects") result = result.filter((task) => task.projectId === projectFilter);
-      if (!showCompleted) result = result.filter((task) => !task.completed);
+      if (!settings.showCompleted) result = result.filter((task) => !task.completed);
     }
     if (query.trim()) {
       const needle = query.trim().toLowerCase();
       result = result.filter((task) => `${task.title} ${task.note ?? ""} ${task.tags.join(" ")}`.toLowerCase().includes(needle));
     }
     return result;
-  }, [tasks, perspective, projectFilter, showCompleted, query, activeCustomPerspective]);
+  }, [tasks, perspective, projectFilter, settings.showCompleted, query, activeCustomPerspective]);
 
   const perspectiveTitle = activeCustomPerspective?.name ?? (projectFilter && perspective === "projects"
     ? projects.find((project) => project.id === projectFilter)?.name ?? "Projects"
@@ -757,9 +975,10 @@ export default function App() {
       setTasks((current) => current.filter((task) => task.id !== id));
       setSelectedTaskId((current) => current === id ? null : current);
       setInspectorOpen(false);
+      setPendingDeleteTaskId(null);
     };
-    if (Platform.OS === "web") performDelete();
-    else Alert.alert("Delete Action?", "This action will be removed from your database.", [{ text: "Cancel", style: "cancel" }, { text: "Delete", style: "destructive", onPress: performDelete }]);
+    if (settings.confirmBeforeDelete) setPendingDeleteTaskId(id);
+    else performDelete();
   };
 
   const createItem = (title: string, projectId: string | null) => {
@@ -784,6 +1003,11 @@ export default function App() {
   const openInspector = (id: string) => {
     setSelectedTaskId(id);
     setInspectorOpen(true);
+  };
+
+  const selectTask = (id: string) => {
+    setSelectedTaskId(id);
+    if (isPhone || settings.openInspectorOnSelection) setInspectorOpen(true);
   };
 
   const focusSelected = () => {
@@ -878,10 +1102,11 @@ export default function App() {
                     {activeCustomPerspective ? (
                       <Pressable onPress={() => { setEditingPerspective({ draft: activeCustomPerspective, isNew: false }); setViewMenuOpen(false); }} style={styles.viewMenuAction}><Icon name="pencil-outline" size={17} color={activeCustomPerspective.color} /><Text style={styles.viewMenuText}>Edit “{activeCustomPerspective.name}”</Text></Pressable>
                     ) : (
-                      <View style={styles.viewMenuRow}><Text style={styles.viewMenuText}>Show completed</Text><Switch value={showCompleted} onValueChange={setShowCompleted} trackColor={{ true: palette.purple }} /></View>
+                      <View style={styles.viewMenuRow}><Text style={styles.viewMenuText}>Show completed</Text><Switch value={settings.showCompleted} onValueChange={(showCompleted) => setSettings((current) => ({ ...current, showCompleted }))} trackColor={{ true: palette.purple }} /></View>
                     )}
                     <Pressable onPress={() => { setEditingPerspective({ draft: createCustomPerspective(), isNew: true }); setViewMenuOpen(false); }} style={styles.viewMenuAction}><Icon name="plus-circle-outline" size={17} color={palette.purpleDark} /><Text style={styles.viewMenuText}>New Custom Perspective</Text></Pressable>
                     <Pressable accessibilityLabel="Import from OmniFocus" onPress={() => void openOmniFocusImport()} style={styles.viewMenuAction}><Icon name="database-import-outline" size={17} color={palette.purpleDark} /><Text style={styles.viewMenuText}>Import from OmniFocus…</Text></Pressable>
+                    <Pressable onPress={() => { setSettingsOpen(true); setViewMenuOpen(false); }} style={styles.viewMenuAction}><Icon name="cog-outline" size={17} color="#656169" /><Text style={styles.viewMenuText}>Settings…</Text></Pressable>
                     <Text style={styles.viewMenuFoot}>{activeCustomPerspective ? `${visibleTasks.length} matching actions` : "Remaining actions • Grouped naturally"}</Text>
                   </View>
                 )}
@@ -893,6 +1118,7 @@ export default function App() {
               <ToolbarButton icon="bullseye-arrow" label="Focus" disabled={!selectedTask?.projectId} onPress={focusSelected} />
             </View>
             <View style={styles.toolbarTrailing}>
+              <ToolbarButton icon="cog-outline" label="Settings" active={settingsOpen} onPress={() => setSettingsOpen(true)} />
               <ToolbarButton icon="magnify" label="Search" active={searchOpen} onPress={() => setSearchOpen((value) => !value)} />
               <ToolbarButton icon="information-outline" label="Inspect" active={showInspector} onPress={() => setInspectorOpen((value) => !value)} />
             </View>
@@ -912,9 +1138,11 @@ export default function App() {
           </View>
         )}
 
+        {viewMenuOpen && <Pressable accessibilityLabel="Close view options" onPress={() => setViewMenuOpen(false)} style={styles.menuDismissLayer} />}
+
         <View style={styles.workspace}>
-          {!isPhone && <PerspectiveRail current={perspective} inboxCount={tasks.filter((task) => task.projectId === null && !task.completed).length} customPerspectives={customPerspectives} onSelect={selectPerspective} onCreate={() => setEditingPerspective({ draft: createCustomPerspective(), isNew: true })} onEdit={(item) => setEditingPerspective({ draft: item, isNew: false })} />}
-          {showSidebar && <ProjectSidebar perspective={perspective as PerspectiveId} projects={projects} tasks={tasks} selectedProjectId={projectFilter} onSelectProject={setProjectFilter} onNewProject={() => setQuickKind("project")} />}
+          {!isPhone && <PerspectiveRail current={perspective} inboxCount={tasks.filter((task) => task.projectId === null && !task.completed).length} customPerspectives={customPerspectives} showTitles={settings.perspectiveBarShowsTitles} onSelect={selectPerspective} onCreate={() => setEditingPerspective({ draft: createCustomPerspective(), isNew: true })} onEdit={(item) => setEditingPerspective({ draft: item, isNew: false })} onOpenSettings={() => setSettingsOpen(true)} />}
+          {showSidebar && <ProjectSidebar perspective={perspective as PerspectiveId} projects={projects} tasks={tasks} selectedProjectId={projectFilter} showCounts={settings.showSidebarCounts} onSelectProject={setProjectFilter} onNewProject={() => setQuickKind("project")} />}
           <Outline
             title={perspectiveTitle}
             perspective={perspective}
@@ -923,7 +1151,8 @@ export default function App() {
             tasks={visibleTasks}
             selectedTaskId={selectedTaskId}
             projectFilter={projectFilter}
-            onSelectTask={setSelectedTaskId}
+            settings={settings}
+            onSelectTask={selectTask}
             onToggleTask={toggleTask}
             onInspectTask={openInspector}
             onNewTask={() => setQuickKind("task")}
@@ -946,6 +1175,7 @@ export default function App() {
               })}
               <Pressable onPress={() => setEditingPerspective({ draft: createCustomPerspective(), isNew: true })} style={styles.mobileNavItem}><Icon name="plus-circle-outline" size={21} color={palette.purpleDark} /><Text style={styles.mobileNavLabel}>New</Text></Pressable>
               <Pressable accessibilityLabel="Import from OmniFocus" onPress={() => void openOmniFocusImport()} style={styles.mobileNavItem}><Icon name="database-import-outline" size={21} color={palette.purpleDark} /><Text style={styles.mobileNavLabel}>Import</Text></Pressable>
+              <Pressable accessibilityLabel="Settings" onPress={() => setSettingsOpen(true)} style={styles.mobileNavItem}><Icon name="cog-outline" size={21} color={palette.purpleDark} /><Text style={styles.mobileNavLabel}>Settings</Text></Pressable>
             </ScrollView>
           </View>
         )}
@@ -953,9 +1183,24 @@ export default function App() {
 
       <QuickEntryModal visible={quickKind !== null} kind={quickKind ?? "task"} projects={projects} defaultProjectId={defaultProjectId} onClose={() => setQuickKind(null)} onSave={createItem} />
 
+      {settingsOpen && <SettingsModal settings={settings} projectCount={projects.length} taskCount={tasks.length} onChange={(patch) => setSettings((current) => ({ ...current, ...patch }))} onClose={() => setSettingsOpen(false)} onImport={() => { setSettingsOpen(false); void openOmniFocusImport(); }} onReset={() => setSettings(defaultSettings)} />}
+
       {editingPerspective && <CustomPerspectiveModal perspective={editingPerspective.draft} isNew={editingPerspective.isNew} projects={projects} onClose={() => setEditingPerspective(null)} onSave={saveCustomPerspective} onDelete={deleteCustomPerspective} />}
 
       <OmniImportModal data={importPreview} error={importError} summary={importSummary} onClose={closeImport} onApply={applyImport} />
+
+      <ConfirmDeleteModal
+        visible={!!pendingDeleteTaskId}
+        title={tasks.find((task) => task.id === pendingDeleteTaskId)?.title ?? "this action"}
+        onCancel={() => setPendingDeleteTaskId(null)}
+        onConfirm={() => {
+          if (!pendingDeleteTaskId) return;
+          setTasks((current) => current.filter((task) => task.id !== pendingDeleteTaskId));
+          setSelectedTaskId((current) => current === pendingDeleteTaskId ? null : current);
+          setInspectorOpen(false);
+          setPendingDeleteTaskId(null);
+        }}
+      />
 
       {isPhone && selectedTask && (
         <Modal visible={inspectorOpen} animationType="slide" onRequestClose={() => setInspectorOpen(false)}>
@@ -986,6 +1231,7 @@ const styles = StyleSheet.create({
   viewMenuAction: { minHeight: 38, flexDirection: "row", alignItems: "center", gap: 7, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.line },
   viewMenuText: { fontSize: 12 },
   viewMenuFoot: { paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.line, fontSize: 10, color: palette.muted },
+  menuDismissLayer: { position: "absolute", top: 62, left: 0, right: 0, bottom: 0, zIndex: 10 },
   mobileHeader: { minHeight: 66, paddingHorizontal: 16, paddingVertical: 9, flexDirection: "row", justifyContent: "space-between", alignItems: "center", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line, backgroundColor: "#f7f5f8" },
   mobileEyebrow: { fontSize: 8, letterSpacing: 1.2, fontWeight: "700", color: palette.purpleDark },
   mobileTitle: { maxWidth: 220, fontSize: 23, fontWeight: "700", letterSpacing: -.4, color: palette.text },
@@ -1005,6 +1251,7 @@ const styles = StyleSheet.create({
   perspectiveLabelSelected: { color: palette.purpleDark, fontWeight: "600" },
   perspectiveMore: { marginTop: "auto" },
   customRailDivider: { height: StyleSheet.hairlineWidth, marginHorizontal: 9, marginVertical: 5, backgroundColor: palette.line },
+  railSettingsButton: { height: 36, alignItems: "center", justifyContent: "center", borderRadius: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.line },
   badge: { position: "absolute", right: -11, top: -4, minWidth: 15, height: 15, borderRadius: 8, paddingHorizontal: 3, alignItems: "center", justifyContent: "center", backgroundColor: "#8d8a91" },
   badgeSelected: { backgroundColor: palette.purpleDark },
   badgeText: { color: "#fff", fontSize: 8, fontWeight: "700" },
@@ -1046,13 +1293,17 @@ const styles = StyleSheet.create({
   projectHeadingCount: { fontSize: 10, color: "#89868c" },
   tagHeading: { minHeight: 54, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
   taskRow: { minHeight: 55, paddingHorizontal: 17, paddingVertical: 7, flexDirection: "row", alignItems: "flex-start", gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#e7e5e9" },
+  taskRowCompact: { minHeight: 45, paddingVertical: 4 },
   taskRowSelected: { backgroundColor: palette.purpleSelection },
   taskRowPressed: { opacity: .72 },
   statusRing: { marginTop: 1, borderWidth: 1.8, alignItems: "center", justifyContent: "center", backgroundColor: "transparent" },
   taskBody: { flex: 1, minWidth: 0 },
   taskTitleLine: { minHeight: 19, flexDirection: "row", alignItems: "center", gap: 4 },
   taskTitle: { flexShrink: 1, fontSize: 13, lineHeight: 18, color: "#29262b" },
-  taskTitleCompleted: { color: "#969299", textDecorationLine: "line-through" },
+  taskTitleSmall: { fontSize: 12, lineHeight: 17 },
+  taskTitleLarge: { fontSize: 15, lineHeight: 20 },
+  taskTitleResolved: { color: "#969299" },
+  taskTitleCompleted: { textDecorationLine: "line-through" },
   taskMeta: { minHeight: 17, flexDirection: "row", alignItems: "center", gap: 5, overflow: "hidden" },
   taskMetaText: { maxWidth: 165, fontSize: 9.5, color: "#8b878f" },
   tagChip: { paddingHorizontal: 6, paddingVertical: 1, borderRadius: 7, backgroundColor: "rgba(110,108,115,.11)" },
@@ -1147,6 +1398,54 @@ const styles = StyleSheet.create({
   matchRowText: { fontSize: 10, color: "#67636b" },
   deletePerspectiveButton: { height: 38, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: "#dfb5b5", borderRadius: 8, backgroundColor: "#fff9f9" },
   deletePerspectiveText: { fontSize: 11, fontWeight: "600", color: palette.danger },
+  settingsBackdrop: { flex: 1, alignItems: "center", justifyContent: "center", padding: 18, backgroundColor: "rgba(27,24,30,.34)" },
+  settingsWindow: { width: "100%", maxWidth: 780, height: "82%", maxHeight: 610, minHeight: 480, overflow: "hidden", borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: "#aaa7ad", backgroundColor: "#f7f6f8", shadowColor: "#000", shadowOffset: { width: 0, height: 24 }, shadowOpacity: .3, shadowRadius: 48, elevation: 20 },
+  settingsTitlebar: { height: 49, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#c9c6cc", backgroundColor: "#eceaed" },
+  settingsTrafficLights: { position: "absolute", left: 15, flexDirection: "row", gap: 8 },
+  settingsTrafficLight: { width: 12, height: 12, borderRadius: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(0,0,0,.18)" },
+  settingsTitle: { fontSize: 13, fontWeight: "700", color: "#37343a" },
+  settingsDoneButton: { position: "absolute", right: 12, minWidth: 48, height: 28, alignItems: "center", justifyContent: "center", borderRadius: 6 },
+  settingsDoneText: { fontSize: 11, fontWeight: "600", color: palette.purpleDark },
+  settingsBody: { flex: 1, minHeight: 0, flexDirection: "row" },
+  settingsSidebar: { width: 178, padding: 12, gap: 3, backgroundColor: "#e8e6ea", borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: "#c9c6cc" },
+  settingsNavItem: { height: 39, paddingHorizontal: 8, flexDirection: "row", alignItems: "center", gap: 9, borderRadius: 7 },
+  settingsNavItemSelected: { backgroundColor: "#d8c9e5" },
+  settingsNavIcon: { width: 27, height: 27, alignItems: "center", justifyContent: "center", borderRadius: 7, backgroundColor: "#d5d2d8" },
+  settingsNavIconSelected: { backgroundColor: palette.purple },
+  settingsNavText: { fontSize: 11.5, color: "#4c4850" },
+  settingsNavTextSelected: { color: "#3d254f", fontWeight: "600" },
+  settingsContent: { flex: 1, backgroundColor: "#f8f7f9" },
+  settingsContentInner: { paddingHorizontal: 28, paddingTop: 25, paddingBottom: 35 },
+  settingsPageTitle: { fontSize: 21, lineHeight: 27, fontWeight: "700", letterSpacing: -.35, color: palette.text },
+  settingsPageIntro: { marginTop: 4, marginBottom: 20, fontSize: 10.5, lineHeight: 16, color: palette.muted },
+  settingsGroupLabel: { marginTop: 2, marginBottom: 6, marginLeft: 3, fontSize: 8, letterSpacing: .7, fontWeight: "700", color: "#817d85" },
+  settingsGroup: { marginBottom: 18, overflow: "hidden", borderWidth: StyleSheet.hairlineWidth, borderColor: "#d2cfd5", borderRadius: 10, backgroundColor: "#fff" },
+  settingsRow: { minHeight: 58, paddingHorizontal: 13, paddingVertical: 9, flexDirection: "row", alignItems: "center", gap: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#e3e1e5" },
+  settingsStackedRow: { minHeight: 74, paddingHorizontal: 13, paddingVertical: 11, gap: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#e3e1e5" },
+  settingsRowCopy: { flex: 1, minWidth: 0 },
+  settingsRowTitle: { fontSize: 11.5, fontWeight: "600", color: "#37343a" },
+  settingsRowDetail: { marginTop: 2, fontSize: 9, lineHeight: 13, color: "#89858d" },
+  settingsRowControl: { alignItems: "flex-end" },
+  databaseCard: { minHeight: 76, marginBottom: 18, padding: 12, flexDirection: "row", alignItems: "center", gap: 11, borderWidth: StyleSheet.hairlineWidth, borderColor: "#d2cfd5", borderRadius: 10, backgroundColor: "#fff" },
+  databaseIcon: { width: 48, height: 48, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: palette.purpleSoft },
+  databaseCopy: { flex: 1 },
+  databaseTitle: { fontSize: 12, fontWeight: "700", color: palette.text },
+  databaseDetail: { marginTop: 3, fontSize: 9.5, color: palette.muted },
+  databaseStatus: { flexDirection: "row", alignItems: "center", gap: 4 },
+  databaseStatusDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#58a65c" },
+  databaseStatusText: { fontSize: 9, color: "#667368" },
+  settingsActionButton: { minHeight: 30, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 5, borderWidth: StyleSheet.hairlineWidth, borderColor: "#c9c6cc", borderRadius: 7, backgroundColor: "#f7f6f8" },
+  settingsActionText: { fontSize: 10, fontWeight: "600", color: palette.purpleDark },
+  resetSettingsButton: { minHeight: 34, alignSelf: "flex-start", paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: "#dfb5b5", borderRadius: 7, backgroundColor: "#fff9f9" },
+  resetSettingsText: { fontSize: 10, fontWeight: "600", color: palette.danger },
+  confirmBackdrop: { flex: 1, alignItems: "center", justifyContent: "center", padding: 18, backgroundColor: "rgba(27,24,30,.32)" },
+  confirmCard: { width: "100%", maxWidth: 390, padding: 20, alignItems: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: "#aaa7ad", borderRadius: 13, backgroundColor: "#fbfafc", shadowColor: "#000", shadowOffset: { width: 0, height: 16 }, shadowOpacity: .24, shadowRadius: 32, elevation: 18 },
+  confirmIcon: { width: 45, height: 45, marginBottom: 11, alignItems: "center", justifyContent: "center", borderRadius: 23, backgroundColor: "#f7e4e4" },
+  confirmTitle: { maxWidth: "100%", fontSize: 15, fontWeight: "700", color: palette.text },
+  confirmText: { marginTop: 5, fontSize: 10, lineHeight: 15, textAlign: "center", color: palette.muted },
+  confirmActions: { width: "100%", marginTop: 18, flexDirection: "row", justifyContent: "flex-end", gap: 8 },
+  confirmDeleteButton: { height: 29, minWidth: 72, alignItems: "center", justifyContent: "center", borderRadius: 7, backgroundColor: palette.danger },
+  confirmDeleteText: { fontSize: 10.5, fontWeight: "700", color: "#fff" },
   importBackdrop: { flex: 1, alignItems: "center", justifyContent: "center", padding: 16, backgroundColor: "rgba(29,25,32,.34)" },
   importCard: { width: "100%", maxWidth: 620, maxHeight: "90%", overflow: "hidden", borderRadius: 15, borderWidth: StyleSheet.hairlineWidth, borderColor: "#aaa7ad", backgroundColor: "#f8f7f9", shadowColor: "#000", shadowOffset: { width: 0, height: 20 }, shadowOpacity: .3, shadowRadius: 42, elevation: 18 },
   importHeader: { minHeight: 53, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line, backgroundColor: "#efedf0" },

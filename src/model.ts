@@ -1,6 +1,20 @@
 export type PerspectiveId = "inbox" | "projects" | "tags" | "forecast" | "flagged" | "review";
 export type ActivePerspective = PerspectiveId | `custom:${string}`;
 
+export type AppSettings = {
+  version: 1;
+  defaultPerspective: PerspectiveId;
+  showCompleted: boolean;
+  openInspectorOnSelection: boolean;
+  confirmBeforeDelete: boolean;
+  rowDensity: "compact" | "comfortable";
+  textSize: "small" | "medium" | "large";
+  colorDueItems: boolean;
+  strikeResolvedItems: boolean;
+  perspectiveBarShowsTitles: boolean;
+  showSidebarCounts: boolean;
+};
+
 export type CustomPerspective = {
   id: string;
   name: string;
@@ -62,6 +76,20 @@ export const palette = {
   canvas: "#ffffff",
   danger: "#d94b4b",
   flag: "#e2a13b",
+};
+
+export const defaultSettings: AppSettings = {
+  version: 1,
+  defaultPerspective: "projects",
+  showCompleted: true,
+  openInspectorOnSelection: true,
+  confirmBeforeDelete: true,
+  rowDensity: "comfortable",
+  textSize: "medium",
+  colorDueItems: true,
+  strikeResolvedItems: true,
+  perspectiveBarShowsTitles: true,
+  showSidebarCounts: true,
 };
 
 export const seedProjects: Project[] = [
