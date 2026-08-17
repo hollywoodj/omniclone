@@ -131,8 +131,10 @@ jobs:
     needs: [prepare, build]
     if: needs.prepare.outputs.skip != 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download installers
         uses: actions/download-artifact@v4
         with:
@@ -142,69 +144,9 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.prepare.outputs.tag }}
           SHA: ${{ github.sha }}
+          DIST: dist
         shell: bash
-        run: |
-          set -uo pipefail
-          mapfile -d '' files < <(find artifacts -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.blockmap' \) -print0)
-          files=("${files[@]}")
-          compact=()
-          for file in "${files[@]}"; do
-            if [ -n "$file" ] && [ -f "$file" ]; then
-              compact+=("$file")
-            fi
-          done
-          files=("${compact[@]}")
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "No installer files found under artifacts/."
-            find artifacts -type f -print || true
-            exit 1
-          fi
-          printf 'Publishing %s with %s file(s):\n' "$TAG" "${#files[@]}"
-          printf '  %s\n' "${files[@]}"
-
-          existing_id() {
-            gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
-              --jq "[.[] | select(.tag_name == \"$TAG\") | .id] | first // empty"
-          }
-
-          update_release() {
-            gh release upload "$TAG" "${files[@]}" --clobber &&
-            gh release edit "$TAG" --draft=false --latest --title "OmniClone ${TAG}" --target "$SHA"
-          }
-
-          create_release() {
-            gh release create "$TAG" "${files[@]}" \
-              --target "$SHA" \
-              --title "OmniClone ${TAG}" \
-              --generate-notes \
-              --latest
-          }
-
-          publish_release() {
-            local id
-            id="$(existing_id)"
-            if [ -n "${id:-}" ]; then
-              echo "Updating existing release ${id} for ${TAG}"
-              update_release
-            else
-              echo "Creating release ${TAG}"
-              create_release || update_release
-            fi
-          }
-
-          delay=8
-          attempt=1
-          while [ "$attempt" -le 6 ]; do
-            if publish_release; then
-              echo "Published ${TAG}"
-              exit 0
-            fi
-            echo "Publish attempt ${attempt} failed; retrying in ${delay}s..."
-            sleep "$delay"
-            attempt=$((attempt + 1))
-            delay=$((delay * 2))
-          done
-          echo "Failed to publish ${TAG} after retries."
-          exit 1
+        run: bash .github/scripts/publish-release.sh
