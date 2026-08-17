@@ -1,0 +1,56 @@
+{
+  "name": "omniclone",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
+    "export:web": "expo export --platform web",
+    "electron:dev": "concurrently -k -s first \"expo start --web --port 8099\" \"wait-on http://localhost:8099 && cross-env ELECTRON_START_URL=http://localhost:8099 electron ./electron/main.cjs\"",
+    "electron:start": "electron ./electron/main.cjs",
+    "electron:pack": "npm run export:web && npm run electron:start",
+    "electron:build": "npm run export:web && electron-builder --win"
+  },
+  "dependencies": {
+    "@expo/metro-runtime": "~57.0.10",
+    "@expo/vector-icons": "^15.0.2",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "expo": "~57.0.13",
+    "expo-blur": "~57.0.2",
+    "expo-document-picker": "~57.0.1",
+    "expo-file-system": "~57.0.4",
+    "expo-sqlite": "~57.0.1",
+    "expo-status-bar": "~57.0.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.2",
+    "react-native-web": "^0.21.2"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "concurrently": "^10.0.5",
+    "cross-env": "^10.1.0",
+    "electron": "^43.4.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "~6.0.3",
+    "wait-on": "^9.1.0"
+  },
+  "build": {
+    "appId": "com.omniclone.focus",
+    "productName": "OmniClone",
+    "files": ["electron/**/*", "dist/**/*"],
+    "extraMetadata": {
+      "main": "electron/main.cjs"
+    },
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "nsis"
+    }
+  }
+}
