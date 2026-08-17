@@ -221,11 +221,13 @@ const styles = StyleSheet.create({
   menu: {
     position: "absolute",
     zIndex: 201,
-    paddingVertical: MENU_PADDING,
-    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 5,
+    borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "#bcb9bf",
     backgroundColor: "#fbfafc",
+    overflow: "hidden",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.2,
@@ -234,14 +236,14 @@ const styles = StyleSheet.create({
   },
   menuItem: {
     minHeight: MENU_ITEM_HEIGHT,
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+    borderRadius: 6,
   },
   menuItemBorder: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: palette.line,
+    borderTopWidth: 0,
   },
   menuItemPressed: {
     backgroundColor: "rgba(0,0,0,.04)",

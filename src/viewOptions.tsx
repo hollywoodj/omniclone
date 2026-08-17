@@ -402,7 +402,7 @@ const styles = StyleSheet.create({
     width: 372,
     maxHeight: 620,
     overflow: "hidden",
-    borderRadius: 12,
+    borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "#b7b4ba",
     backgroundColor: "#f4f3f5",
@@ -432,8 +432,8 @@ const styles = StyleSheet.create({
   },
   sheet: {
     maxHeight: "92%",
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
     backgroundColor: "#f4f3f5",
     overflow: "hidden",
   },
@@ -472,7 +472,7 @@ const styles = StyleSheet.create({
   iconButton: {
     width: 48,
     height: 48,
-    borderRadius: 12,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -497,7 +497,7 @@ const styles = StyleSheet.create({
   },
   pickerCard: {
     padding: 10,
-    borderRadius: 10,
+    borderRadius: 14,
     backgroundColor: "#fff",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "#d8d5da",
@@ -517,7 +517,7 @@ const styles = StyleSheet.create({
   iconCell: {
     width: 36,
     height: 36,
-    borderRadius: 8,
+    borderRadius: 10,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "#d4d1d6",
     alignItems: "center",
@@ -550,7 +550,7 @@ const styles = StyleSheet.create({
   },
   ruleTree: {
     padding: 10,
-    borderRadius: 10,
+    borderRadius: 14,
     backgroundColor: "#fff",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "#d8d5da",
@@ -598,7 +598,7 @@ const styles = StyleSheet.create({
   },
   addMenu: {
     overflow: "hidden",
-    borderRadius: 8,
+    borderRadius: 10,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "#d0cdd3",
     backgroundColor: "#fbfafc",
@@ -617,7 +617,7 @@ const styles = StyleSheet.create({
   segmented: {
     flexDirection: "row",
     padding: 2,
-    borderRadius: 8,
+    borderRadius: 10,
     backgroundColor: "#e4e2e6",
   },
   segment: {
@@ -625,7 +625,7 @@ const styles = StyleSheet.create({
     minHeight: 28,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 6,
+    borderRadius: 8,
     paddingHorizontal: 4,
   },
   segmentSelected: {
@@ -650,7 +650,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    borderRadius: 7,
+    borderRadius: 10,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "#cfcdd2",
     backgroundColor: "#f7f6f8",
@@ -662,7 +662,7 @@ const styles = StyleSheet.create({
   popupMenu: {
     marginTop: 4,
     overflow: "hidden",
-    borderRadius: 8,
+    borderRadius: 10,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "#d0cdd3",
     backgroundColor: "#fff",
@@ -694,7 +694,7 @@ const styles = StyleSheet.create({
   field: {
     minHeight: 32,
     paddingHorizontal: 8,
-    borderRadius: 7,
+    borderRadius: 10,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "#cfcdd2",
     backgroundColor: "#fff",
@@ -712,7 +712,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    borderRadius: 7,
+    borderRadius: 10,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "#d0cdd3",
     backgroundColor: "#f7f6f8",
@@ -732,7 +732,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    borderRadius: 10,
+    borderRadius: 12,
     backgroundColor: "#fff",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "#d8d5da",

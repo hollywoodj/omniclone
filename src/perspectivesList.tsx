@@ -109,9 +109,11 @@ export function PerspectivesListModal({
           <View style={styles.titlebar}>
             {!compact && (
               <View style={styles.lights}>
-                <Pressable accessibilityLabel="Close perspectives list" onPress={onClose} style={[styles.light, { backgroundColor: "#ff5f57" }]} />
-                <View style={[styles.light, { backgroundColor: "#febc2e" }]} />
-                <View style={[styles.light, { backgroundColor: "#28c840" }]} />
+                <Pressable accessibilityLabel="Close perspectives list" onPress={onClose} style={[styles.light, { backgroundColor: "#ff5f57" }]}>
+                  <View style={styles.lightShine} />
+                </Pressable>
+                <View style={[styles.light, { backgroundColor: "#febc2e" }]}><View style={styles.lightShine} /></View>
+                <View style={[styles.light, { backgroundColor: "#28c840" }]}><View style={styles.lightShine} /></View>
               </View>
             )}
             <Text style={styles.title}>Perspectives</Text>
@@ -206,7 +208,7 @@ const styles = StyleSheet.create({
     height: "78%",
     maxHeight: 560,
     overflow: "hidden",
-    borderRadius: 12,
+    borderRadius: 18,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "#aaa7ad",
     backgroundColor: "#f7f6f8",
@@ -241,7 +243,17 @@ const styles = StyleSheet.create({
     height: 12,
     borderRadius: 6,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(0,0,0,.18)",
+    borderColor: "rgba(0,0,0,.22)",
+    overflow: "hidden",
+  },
+  lightShine: {
+    position: "absolute",
+    top: 1,
+    left: 2,
+    width: 6,
+    height: 3.5,
+    borderRadius: 2,
+    backgroundColor: "rgba(255,255,255,.5)",
   },
   title: {
     fontSize: 13,
@@ -262,14 +274,14 @@ const styles = StyleSheet.create({
     color: palette.purpleDark,
   },
   searchRow: {
-    height: 40,
+    height: 36,
     margin: 12,
     marginBottom: 4,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    borderRadius: 8,
+    borderRadius: 18,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "#d0cdd3",
     backgroundColor: "#fff",
@@ -293,7 +305,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    borderRadius: 8,
+    borderRadius: 12,
   },
   rowSelected: {
     backgroundColor: "#e4d8ef",
@@ -307,7 +319,7 @@ const styles = StyleSheet.create({
   iconWell: {
     width: 30,
     height: 30,
-    borderRadius: 8,
+    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -331,7 +343,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 6,
+    borderRadius: 8,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "#d0cdd3",
     backgroundColor: "#fff",
@@ -375,7 +387,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    borderRadius: 7,
+    borderRadius: 10,
     backgroundColor: palette.purple,
   },
   addText: {
