@@ -11,7 +11,7 @@ import {
   type PerspectiveSortBy,
   type Project,
   type Task,
-} from "./model";
+} from "./model.ts";
 
 export const ruleKindLabels: Record<PerspectiveRuleKind, string> = {
   availability: "Availability",

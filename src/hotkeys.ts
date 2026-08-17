@@ -1,5 +1,5 @@
-import type { ActivePerspective, PerspectiveId } from "./model";
-import { commandPressed, eventMatchesShortcut, isMacPlatform } from "./shortcuts";
+import type { ActivePerspective, PerspectiveId } from "./model.ts";
+import { commandPressed, eventMatchesShortcut, isMacPlatform } from "./shortcuts.ts";
 
 export type HotkeyAction =
   | { type: "perspective"; id: ActivePerspective }

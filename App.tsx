@@ -2,71 +2,38 @@ import * as DocumentPicker from "expo-document-picker";
 import { File as ExpoFile } from "expo-file-system";
 import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
-import {
-  Alert,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  SafeAreaView,
-  ScrollView,
-  Text,
-  TextInput,
-  useWindowDimensions,
-  View,
-} from "react-native";
+import { Alert, Modal, Platform, SafeAreaView, View } from "react-native";
 import {
   createCustomPerspective,
   defaultSettings,
   makeId,
   palette,
-  perspectives,
   type ActivePerspective,
-  type AppSettings,
   type CustomPerspective,
+  type PerspectiveAvailability,
   type PerspectiveId,
   type Project,
   type Task,
 } from "./src/model";
-import { loadDatabase, saveDatabase } from "./src/storage";
-import { loadSettings, saveSettings } from "./src/settings";
 import { applyOmniFocusImport, parseOmniFocusFile, type ImportMode, type OmniImportData } from "./src/importOmniFocus";
-import { isTextInputTarget, matchOmniFocusHotkey, type HotkeyAction } from "./src/hotkeys";
 import { ContextMenuProvider } from "./src/contextMenu";
-import { MenuBar, type MenuCommand } from "./src/menuBar";
-import { ViewOptionsPanel } from "./src/viewOptions";
+import { MenuBar } from "./src/menuBar";
 import { PerspectivesListModal } from "./src/perspectivesList";
 import { QuickOpenModal } from "./src/quickOpen";
-import { compareTasks, duplicateCustomPerspective, effectiveGroupBy, normalizeCustomPerspective, taskMatchesCustomPerspective } from "./src/perspectiveRules";
-import { formatShortcut, toElectronAccelerator } from "./src/shortcuts";
+import { duplicateCustomPerspective, effectiveGroupBy } from "./src/perspectiveRules";
 import {
-  applyRepeat,
   convertActionToProject,
-  descendantsOf,
   flattenTasks,
   indentTasks,
   insertTaskAfter,
   moveSiblings,
   outdentTasks,
-  projectInFolder,
   projectIsStalled,
   renameTag,
   skipReviewTimestamp,
-  taskMatchesView,
   toTaskPaper,
-  withLingeringTasks,
 } from "./src/outline";
-import {
-  dueUrgency,
-  forecastWeek,
-  isDueOnDay,
-  isForecastItem,
-  projectDueForReview,
-  sameLocation,
-  todayKey,
-  type ForecastDayKey,
-  type LocationState,
-} from "./src/dates";
+import { todayKey, type ForecastDayKey } from "./src/dates";
 import {
   applyClick,
   applyMarquee,
@@ -81,72 +48,91 @@ import {
   type SelectionState,
 } from "./src/selection";
 import { appStyles as styles } from "./src/styles/appStyles";
-import { Icon } from "./src/components/ui/Icon";
-import { TrafficLights } from "./src/components/ui/TrafficLights";
-import { ToolbarButton } from "./src/components/ui/ToolbarButton";
 import { PaneResizeHandle, clampPane } from "./src/components/ui/PaneResizeHandle";
 import { PerspectiveRail } from "./src/components/perspective/PerspectiveRail";
 import { ProjectSidebar } from "./src/components/sidebar/ProjectSidebar";
 import { Outline } from "./src/components/outline/Outline";
-import { MobileCustomPerspectiveItem } from "./src/components/outline/MobileCustomPerspectiveItem";
+import { InspectorPane } from "./src/components/inspector/InspectorPane";
 import { Inspector } from "./src/components/inspector/Inspector";
 import { ProjectInspector } from "./src/components/inspector/ProjectInspector";
-import { MultiSelectInspector } from "./src/components/inspector/MultiSelectInspector";
-import { TagInspector } from "./src/components/inspector/TagInspector";
-import { EmptyInspector } from "./src/components/inspector/EmptyInspector";
 import { QuickEntryModal } from "./src/components/modals/QuickEntryModal";
 import { SettingsModal } from "./src/components/modals/SettingsModal";
 import { ConfirmDeleteModal } from "./src/components/modals/ConfirmDeleteModal";
 import { OmniImportModal } from "./src/components/modals/OmniImportModal";
+import { DesktopToolbar } from "./src/components/chrome/DesktopToolbar";
+import { MobileHeader } from "./src/components/chrome/MobileHeader";
+import { FocusBar } from "./src/components/chrome/FocusBar";
+import { SearchBar } from "./src/components/chrome/SearchBar";
+import { MobileNav } from "./src/components/chrome/MobileNav";
+import { ViewOptionsHost } from "./src/components/chrome/ViewOptionsHost";
 import { favoritePerspectives, projectColors } from "./src/perspectives/rail";
+import { defaultProjectIdFor, filterVisibleTasks, knownTagsFrom, perspectiveTitle, sidebarPerspectiveFor } from "./src/perspectives/query";
+import { forecastCountsFor, perspectiveBadgesFor, remainingCountForProject } from "./src/perspectives/counts";
+import {
+  applyCompleteToggle,
+  applyFlagToggle,
+  applyMoveToProject,
+  applyTaskPatch,
+  deleteTaskIds,
+  duplicateTasksByIds,
+  extraFoldersAfterCreate,
+  lingeringIdsAfterCompletion,
+  lingeringIdsAfterPatch,
+  pendingDeleteCopy,
+  removeProjectFromLibrary,
+  retainProjectsInPerspectives,
+  selectionAfterProjectDelete,
+} from "./src/library/mutations";
+import { dispatchAppCommand, type AppCommand, type AppCommandHandlers } from "./src/commands/dispatch";
+import { usePersistedLibrary } from "./src/hooks/usePersistedLibrary";
+import { useLocationHistory } from "./src/hooks/useLocationHistory";
+import { useUndoStack } from "./src/hooks/useUndoStack";
+import { useAppLayout } from "./src/hooks/useAppLayout";
+import { hasNativeMenu, useAppHotkeys } from "./src/hooks/useAppHotkeys";
 import { copyToClipboard } from "./src/lib/clipboard";
-
-declare global {
-  interface Window {
-    omniclone?: {
-      onMenuCommand: (cb: (command: MenuCommand) => void) => () => void;
-      setPerspectivesMenu: (items: Array<{ id: string; label: string; accelerator?: string }>) => void;
-    };
-  }
-}
+import "./src/desktopBridge";
 
 export default function App() {
-  const { width } = useWindowDimensions();
-  const isPhone = width < 720;
-  const canShowSidebar = width >= 850;
-  const canShowInspector = width >= 960;
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [customPerspectives, setCustomPerspectives] = useState<CustomPerspective[]>([]);
-  const [hydrated, setHydrated] = useState(false);
-  const [perspective, setPerspective] = useState<ActivePerspective>("projects");
-  const [projectFilter, setProjectFilter] = useState<string | null>(null);
-  const [tagFilter, setTagFilter] = useState<string | null>(null);
-  const [folderFilter, setFolderFilter] = useState<string | null>(null);
-  const [forecastDay, setForecastDay] = useState<ForecastDayKey>(todayKey());
-  const [focusedProjectId, setFocusedProjectId] = useState<string | null>(null);
-  const [canGoBack, setCanGoBack] = useState(false);
-  const [canGoForward, setCanGoForward] = useState(false);
-  const locationRef = useRef<LocationState>({ perspective: "projects", projectFilter: null, tagFilter: null, folderFilter: null, forecastDay: todayKey(), focusedProjectId: null });
-  const historyRef = useRef<{ stack: LocationState[]; index: number }>({ stack: [], index: -1 });
+  const { isPhone, canShowSidebar, canShowInspector, sidebarOpen, setSidebarOpen, inspectorOpen, setInspectorOpen } = useAppLayout();
+  const retainInspectionIds = useRef<Set<string>>(new Set());
+  const {
+    perspective,
+    projectFilter,
+    tagFilter,
+    folderFilter,
+    forecastDay,
+    focusedProjectId,
+    canGoBack,
+    canGoForward,
+    locationRef,
+    setProjectFilter,
+    hydrateLocation,
+    navigate,
+    goBack,
+    goForward,
+  } = useLocationHistory(() => {
+    retainInspectionIds.current = new Set();
+  });
+  const {
+    projects,
+    setProjects,
+    tasks,
+    setTasks,
+    customPerspectives,
+    setCustomPerspectives,
+    settings,
+    setSettings,
+    hydrated,
+  } = usePersistedLibrary(hydrateLocation);
+  const { pushUndo, undo: takeUndo, redo: takeRedo } = useUndoStack({ projects, tasks });
   const [selection, setSelection] = useState<SelectionState>(emptySelection);
   const [inspectedProjectId, setInspectedProjectId] = useState<string | null>(null);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [collapseNonce, setCollapseNonce] = useState<{ action: "expand" | "collapse"; n: number } | null>(null);
   const [pendingCleanupIds, setPendingCleanupIds] = useState<string[]>([]);
-  const retainInspectionIds = useRef<Set<string>>(new Set());
   const [, startSidebarTransition] = useTransition();
-  const undoStack = useRef<Array<{ projects: Project[]; tasks: Task[] }>>([]);
-  const redoStack = useRef<Array<{ projects: Project[]; tasks: Task[] }>>([]);
-  const pushUndo = useCallback(() => {
-    undoStack.current = [...undoStack.current.slice(-19), { projects, tasks }];
-    redoStack.current = [];
-  }, [projects, tasks]);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [inspectorOpen, setInspectorOpen] = useState(true);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [pendingDeleteTaskIds, setPendingDeleteTaskIds] = useState<string[]>([]);
@@ -160,149 +146,40 @@ export default function App() {
   const [importError, setImportError] = useState<string | null>(null);
   const [importSummary, setImportSummary] = useState<string | null>(null);
   const [importGuideOpen, setImportGuideOpen] = useState(false);
-  const hasNativeMenu = typeof window !== "undefined" && !!window.omniclone;
-
-  useEffect(() => {
-    Promise.all([loadDatabase(), loadSettings()]).then(([saved, savedSettings]) => {
-      let nextSettings = savedSettings;
-      if (saved) {
-        setProjects(saved.projects);
-        setTasks(saved.tasks);
-        const customs = saved.customPerspectives.map((item) => normalizeCustomPerspective(item));
-        setCustomPerspectives(customs);
-        const extraBarIds = customs.map((item) => `custom:${item.id}`).filter((id) => !savedSettings.perspectiveBarIds.includes(id));
-        if (extraBarIds.length && savedSettings.perspectiveBarIds.join() === defaultSettings.perspectiveBarIds.join()) {
-          nextSettings = { ...savedSettings, perspectiveBarIds: [...savedSettings.perspectiveBarIds, ...extraBarIds] };
-        }
-      }
-      setSettings(nextSettings);
-      setPerspective(nextSettings.defaultPerspective);
-      const initial: LocationState = { perspective: nextSettings.defaultPerspective, projectFilter: null, tagFilter: null, folderFilter: null, forecastDay: todayKey(), focusedProjectId: null };
-      locationRef.current = initial;
-      historyRef.current = { stack: [initial], index: 0 };
-      setHydrated(true);
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    const timer = setTimeout(() => {
-      void saveDatabase({ version: 2, projects, tasks, customPerspectives });
-    }, 180);
-    return () => clearTimeout(timer);
-  }, [hydrated, projects, tasks, customPerspectives]);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    const timer = setTimeout(() => {
-      void saveSettings(settings);
-    }, 120);
-    return () => clearTimeout(timer);
-  }, [hydrated, settings]);
-
-  useEffect(() => {
-    if (!canShowSidebar) setSidebarOpen(false);
-  }, [canShowSidebar]);
-
-  useEffect(() => {
-    if (isPhone) setInspectorOpen(false);
-  }, [isPhone]);
+  const nativeMenu = hasNativeMenu();
+  const marqueeBaseRef = useRef<SelectionState>(emptySelection);
 
   const selectedTaskIds = selection.ids;
   const selectedTaskId = selection.headId ?? selection.ids[0] ?? null;
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
   const selectedTasks = tasks.filter((task) => selectedTaskIds.includes(task.id));
   const selectedProject = selectedTask?.projectId ? projects.find((project) => project.id === selectedTask.projectId) : undefined;
-  const defaultProjectId = projectFilter ?? selectedProject?.id ?? (folderFilter ? projects.find((project) => projectInFolder(project, folderFilter))?.id ?? null : null);
+  const defaultProjectId = defaultProjectIdFor({
+    projectFilter,
+    folderFilter,
+    selectedProjectId: selectedProject?.id,
+    projects,
+  });
   const inspectedProject = inspectedProjectId ? projects.find((project) => project.id === inspectedProjectId) : undefined;
-  const marqueeBaseRef = useRef<SelectionState>(emptySelection);
   const activeCustomPerspective = perspective.startsWith("custom:") ? customPerspectives.find((item) => item.id === perspective.slice(7)) ?? null : null;
   const barItems = useMemo(() => favoritePerspectives(settings, customPerspectives), [customPerspectives, settings]);
-  const knownTags = useMemo(() => [...new Set(tasks.flatMap((task) => task.tags))].sort(), [tasks]);
+  const knownTags = useMemo(() => knownTagsFrom(tasks), [tasks]);
   const focusedProject = focusedProjectId ? projects.find((project) => project.id === focusedProjectId) : undefined;
 
-  locationRef.current = { perspective, projectFilter, tagFilter, folderFilter, forecastDay, focusedProjectId };
-
-  const applyLocation = useCallback((next: LocationState) => {
-    locationRef.current = next;
-    setPerspective(next.perspective);
-    setProjectFilter(next.projectFilter);
-    setTagFilter(next.tagFilter);
-    setFolderFilter(next.folderFilter);
-    setForecastDay(next.forecastDay);
-    setFocusedProjectId(next.focusedProjectId);
-  }, []);
-
-  const syncHistoryButtons = useCallback(() => {
-    const { stack, index } = historyRef.current;
-    setCanGoBack(index > 0);
-    setCanGoForward(index >= 0 && index < stack.length - 1);
-  }, []);
-
-  const navigate = useCallback((patch: Partial<LocationState>) => {
-    const next = { ...locationRef.current, ...patch };
-    if (sameLocation(locationRef.current, next)) return;
-    retainInspectionIds.current = new Set();
-    applyLocation(next);
-    const { stack, index } = historyRef.current;
-    const nextStack = [...stack.slice(0, Math.max(index, -1) + 1), next];
-    historyRef.current = { stack: nextStack, index: nextStack.length - 1 };
-    syncHistoryButtons();
-  }, [applyLocation, syncHistoryButtons]);
-
-  const goBack = useCallback(() => {
-    const { stack, index } = historyRef.current;
-    if (index <= 0) return;
-    const nextIndex = index - 1;
-    historyRef.current = { stack, index: nextIndex };
-    applyLocation(stack[nextIndex] ?? locationRef.current);
-    syncHistoryButtons();
-  }, [applyLocation, syncHistoryButtons]);
-
-  const goForward = useCallback(() => {
-    const { stack, index } = historyRef.current;
-    if (index >= stack.length - 1) return;
-    const nextIndex = index + 1;
-    historyRef.current = { stack, index: nextIndex };
-    applyLocation(stack[nextIndex] ?? locationRef.current);
-    syncHistoryButtons();
-  }, [applyLocation, syncHistoryButtons]);
-
-  const visibleTasks = useMemo(() => {
-    let result = [...tasks];
-    const lingering = new Set(pendingCleanupIds);
-    if (activeCustomPerspective) {
-      const custom = activeCustomPerspective;
-      result = result.filter((task) => taskMatchesCustomPerspective(task, custom, { tasks, projects }) || lingering.has(task.id));
-      if (projectFilter) result = result.filter((task) => task.projectId === projectFilter);
-      if (folderFilter) {
-        const allowed = new Set(projects.filter((project) => projectInFolder(project, folderFilter)).map((project) => project.id));
-        result = result.filter((task) => task.projectId && allowed.has(task.projectId));
-      }
-      if (tagFilter) result = result.filter((task) => task.tags.includes(tagFilter));
-      result.sort((a, b) => compareTasks(a, b, custom.sortBy));
-    } else {
-      if (perspective === "inbox") result = result.filter((task) => task.projectId === null || lingering.has(task.id));
-      if (perspective === "projects") result = result.filter((task) => task.projectId !== null);
-      if (perspective === "forecast") result = result.filter((task) => isForecastItem(task, forecastDay));
-      if (perspective === "flagged") result = result.filter((task) => task.flagged);
-      if (perspective === "completed") result = result.filter((task) => task.completed || (task.status ?? "active") === "dropped");
-      if (projectFilter && perspective === "projects") result = result.filter((task) => task.projectId === projectFilter);
-      if (folderFilter && perspective === "projects") {
-        const allowed = new Set(projects.filter((project) => projectInFolder(project, folderFilter)).map((project) => project.id));
-        result = result.filter((task) => task.projectId && allowed.has(task.projectId));
-      }
-      if (tagFilter) result = result.filter((task) => task.tags.includes(tagFilter));
-      const availability = settings.standardAvailability[perspective as PerspectiveId] ?? (settings.showCompleted ? "all" : "remaining");
-      result = result.filter((task) => taskMatchesView(task, availability, { tasks, projects }) || lingering.has(task.id));
-    }
-    if (focusedProjectId) result = result.filter((task) => task.projectId === focusedProjectId);
-    if (query.trim()) {
-      const needle = query.trim().toLowerCase();
-      result = result.filter((task) => `${task.title} ${task.note ?? ""} ${task.tags.join(" ")}`.toLowerCase().includes(needle));
-    }
-    return withLingeringTasks(result, tasks, lingering);
-  }, [tasks, projects, perspective, projectFilter, tagFilter, folderFilter, forecastDay, focusedProjectId, settings.showCompleted, settings.standardAvailability, query, activeCustomPerspective, pendingCleanupIds]);
+  const visibleTasks = useMemo(() => filterVisibleTasks({
+    tasks,
+    projects,
+    perspective,
+    projectFilter,
+    tagFilter,
+    folderFilter,
+    forecastDay,
+    focusedProjectId,
+    query,
+    settings,
+    customPerspective: activeCustomPerspective,
+    pendingCleanupIds,
+  }), [tasks, projects, perspective, projectFilter, tagFilter, folderFilter, forecastDay, focusedProjectId, settings, query, activeCustomPerspective, pendingCleanupIds]);
 
   const orderedTaskIds = useMemo(() => outlineTaskIds({
     tasks: visibleTasks,
@@ -325,13 +202,14 @@ export default function App() {
     });
   }, [orderedTaskIds, tasks]);
 
-  const perspectiveTitle = activeCustomPerspective?.name ?? (projectFilter && perspective === "projects"
-    ? projects.find((project) => project.id === projectFilter)?.name ?? "Projects"
-    : folderFilter && perspective === "projects"
-      ? folderFilter
-    : tagFilter && perspective === "tags"
-      ? tagFilter
-    : perspectives.find((item) => item.id === perspective)?.label ?? "Projects");
+  const title = perspectiveTitle({
+    perspective,
+    customPerspective: activeCustomPerspective,
+    projects,
+    projectFilter,
+    folderFilter,
+    tagFilter,
+  });
 
   const selectPerspective = (id: ActivePerspective) => {
     navigate({
@@ -382,23 +260,13 @@ export default function App() {
   };
 
   const updateTask = (id: string, patch: Partial<Task>) => {
-    setTasks((current) => current.map((task) => {
-      if (task.id !== id) return task;
-      const next = { ...task, ...patch };
-      if (patch.completed === true) next.completedAt = patch.completedAt ?? new Date().toISOString();
-      if (patch.completed === false) next.completedAt = undefined;
-      return next;
-    }));
+    setTasks((current) => applyTaskPatch(current, id, patch));
     const current = tasks.find((task) => task.id === id);
     if (patch.projectId !== undefined && current && current.projectId !== patch.projectId) {
       retainInspectionIds.current = new Set([...retainInspectionIds.current, id]);
     }
     if (!settings.cleanUpImmediately) {
-      if (patch.completed === true) setPendingCleanupIds((ids) => ids.includes(id) ? ids : [...ids, id]);
-      if (patch.completed === false) setPendingCleanupIds((ids) => ids.filter((item) => item !== id));
-      if (patch.projectId !== undefined && current && current.projectId !== patch.projectId) {
-        setPendingCleanupIds((ids) => ids.includes(id) ? ids : [...ids, id]);
-      }
+      setPendingCleanupIds((ids) => lingeringIdsAfterPatch(ids, id, patch, current));
     }
   };
 
@@ -414,57 +282,27 @@ export default function App() {
     const targets = tasks.filter((task) => ids.includes(task.id));
     if (!targets.length) return;
     const nextCompleted = !targets.every((task) => task.completed);
-    const completedAt = nextCompleted ? new Date().toISOString() : undefined;
     pushUndo();
-    setTasks((current) => {
-      const next = current.map((task) => ({ ...task }));
-      const byId = new Map(next.map((task) => [task.id, task]));
-      const affected = new Set(ids);
-      if (nextCompleted) {
-        for (const id of ids) {
-          for (const child of descendantsOf(id, next)) affected.add(child.id);
-        }
-      }
-      for (const id of affected) {
-        const task = byId.get(id);
-        if (!task) continue;
-        if (nextCompleted && ids.includes(id)) {
-          const repeat = applyRepeat(task);
-          if (repeat) {
-            Object.assign(task, repeat);
-            continue;
-          }
-        }
-        task.completed = nextCompleted;
-        task.completedAt = completedAt;
-      }
-      return next;
-    });
+    setTasks((current) => applyCompleteToggle(current, ids));
     if (!settings.cleanUpImmediately) {
-      setPendingCleanupIds((current) => nextCompleted
-        ? [...new Set([...current, ...ids])]
-        : current.filter((id) => !ids.includes(id)));
+      setPendingCleanupIds((current) => lingeringIdsAfterCompletion(current, ids, nextCompleted));
     }
   };
 
   const toggleTaskFlags = (ids: string[]) => {
     if (!ids.length) return;
-    const targets = tasks.filter((task) => ids.includes(task.id));
-    if (!targets.length) return;
-    const nextFlagged = !targets.every((task) => task.flagged);
-    setTasks((current) => current.map((task) => ids.includes(task.id) ? { ...task, flagged: nextFlagged } : task));
+    setTasks((current) => applyFlagToggle(current, ids));
   };
 
   const finalizeDeleteTasks = useCallback((ids: string[], direction: "menu" | "previous" | "next") => {
-    const extra = ids.flatMap((id) => descendantsOf(id, tasks).map((task) => task.id));
-    const unique = [...new Set([...ids, ...extra])];
-    const nextId = neighborAfterDelete(orderedTaskIds, unique, direction);
-    setTasks((current) => current.filter((task) => !unique.includes(task.id)));
+    const { remaining, removed } = deleteTaskIds(tasks, ids);
+    const nextId = neighborAfterDelete(orderedTaskIds, removed, direction);
+    setTasks(remaining);
     setPendingDeleteTaskIds([]);
     setPendingDeleteDirection("menu");
     setSelection(singleSelection(nextId));
     if (!nextId) setInspectorOpen(false);
-  }, [orderedTaskIds, tasks]);
+  }, [orderedTaskIds, setInspectorOpen, tasks]);
 
   const deleteTasks = (ids: string[], direction: "menu" | "previous" | "next" = "menu") => {
     const unique = [...new Set(ids.filter(Boolean))];
@@ -483,25 +321,13 @@ export default function App() {
   };
 
   const finalizeDeleteProject = (id: string) => {
-    setProjects((current) => current.filter((project) => project.id !== id));
-    setTasks((current) => current.filter((task) => task.projectId !== id));
-    setCustomPerspectives((current) => current.map((item) => ({
-      ...item,
-      rules: item.rules.map((rule) => rule.kind === "containedIn"
-        ? { ...rule, projectIds: (rule.projectIds ?? []).filter((projectId) => projectId !== id) }
-        : rule),
-    })));
+    const next = removeProjectFromLibrary(projects, tasks, customPerspectives, id);
+    setProjects(next.projects);
+    setTasks(next.tasks);
+    setCustomPerspectives(next.customPerspectives);
     setProjectFilter((current) => current === id ? null : current);
     setInspectedProjectId((current) => current === id ? null : current);
-    setSelection((current) => {
-      const remaining = current.ids.filter((taskId) => tasks.find((task) => task.id === taskId)?.projectId !== id);
-      if (!remaining.length) return emptySelection;
-      return {
-        ids: remaining,
-        anchorId: current.anchorId && remaining.includes(current.anchorId) ? current.anchorId : remaining[0] ?? null,
-        headId: current.headId && remaining.includes(current.headId) ? current.headId : remaining[remaining.length - 1] ?? null,
-      };
-    });
+    setSelection((current) => selectionAfterProjectDelete(current, tasks, id));
     setPendingDeleteProjectId(null);
   };
 
@@ -519,7 +345,7 @@ export default function App() {
       const name = payload.title.trim();
       setSettings((current) => ({
         ...current,
-        extraFolders: current.extraFolders.includes(name) ? current.extraFolders : [...current.extraFolders, name],
+        extraFolders: extraFoldersAfterCreate(current.extraFolders, name),
       }));
       navigate({ perspective: "projects", folderFilter: name, projectFilter: null, tagFilter: null });
     } else if (quickKind === "project") {
@@ -584,7 +410,7 @@ export default function App() {
       if (next.headId && !extend && (isPhone || settings.openInspectorOnSelection)) setInspectorOpen(true);
       return next;
     });
-  }, [isPhone, orderedTaskIds, settings.openInspectorOnSelection]);
+  }, [isPhone, orderedTaskIds, setInspectorOpen, settings.openInspectorOnSelection]);
 
   const focusSelected = () => {
     const projectId = selectedTask?.projectId ?? projectFilter;
@@ -674,16 +500,14 @@ export default function App() {
     copyToClipboard(toTaskPaper(tasks.filter((task) => ids.has(task.id)), tasks, projects));
   };
   const undo = () => {
-    const previous = undoStack.current.pop();
+    const previous = takeUndo();
     if (!previous) return;
-    redoStack.current.push({ projects, tasks });
     setProjects(previous.projects);
     setTasks(previous.tasks);
   };
   const redo = () => {
-    const next = redoStack.current.pop();
+    const next = takeRedo();
     if (!next) return;
-    undoStack.current.push({ projects, tasks });
     setProjects(next.projects);
     setTasks(next.tasks);
   };
@@ -699,26 +523,12 @@ export default function App() {
 
   const duplicateTasks = (id: string) => {
     const ids = idsForRow(id);
-    const copies: Task[] = [];
+    let copies: Task[] = [];
     pushUndo();
     setTasks((current) => {
-      const next = [...current];
-      for (const taskId of ids) {
-        const task = current.find((item) => item.id === taskId);
-        if (!task) continue;
-        const copy: Task = {
-          ...task,
-          id: makeId("task"),
-          importKey: undefined,
-          createdAt: new Date().toISOString(),
-          completed: false,
-          completedAt: undefined,
-        };
-        copies.push(copy);
-        const index = next.findIndex((item) => item.id === taskId);
-        next.splice(index >= 0 ? index + 1 : next.length, 0, copy);
-      }
-      return next;
+      const result = duplicateTasksByIds(current, ids);
+      copies = result.copies;
+      return result.tasks;
     });
     if (copies.length === 1) setSelection(singleSelection(copies[0]?.id ?? null));
     else if (copies.length) setSelection({ ids: copies.map((item) => item.id), anchorId: copies[0]?.id ?? null, headId: copies[copies.length - 1]?.id ?? null });
@@ -728,7 +538,7 @@ export default function App() {
     const ids = idsForRow(id);
     const fromInbox = tasks.filter((task) => ids.includes(task.id) && task.projectId === null);
     pushUndo();
-    setTasks((current) => current.map((task) => ids.includes(task.id) ? { ...task, projectId } : task));
+    setTasks((current) => applyMoveToProject(current, ids, projectId));
     if (!settings.cleanUpImmediately && projectId && fromInbox.length && perspective === "inbox") {
       setPendingCleanupIds((current) => [...new Set([...current, ...fromInbox.map((task) => task.id)])]);
     }
@@ -857,10 +667,7 @@ export default function App() {
     setTasks(result.tasks);
     if (mode === "replace") {
       const retainedProjectIds = new Set(result.projects.map((project) => project.id));
-      setCustomPerspectives((current) => current.map((item) => ({
-        ...item,
-        rules: item.rules.map((rule) => rule.kind === "containedIn" ? { ...rule, projectIds: (rule.projectIds ?? []).filter((id) => retainedProjectIds.has(id)) } : rule),
-      })));
+      setCustomPerspectives((current) => retainProjectsInPerspectives(current, retainedProjectIds));
     }
     setSelection(singleSelection(result.tasks[0]?.id ?? null));
     navigate({ perspective: "projects", projectFilter: null, tagFilter: null, focusedProjectId: null });
@@ -872,293 +679,127 @@ export default function App() {
 
   const pendingDeleteProject = pendingDeleteProjectId ? projects.find((project) => project.id === pendingDeleteProjectId) : undefined;
   const pendingDeleteProjectActionCount = pendingDeleteProjectId ? tasks.filter((task) => task.projectId === pendingDeleteProjectId).length : 0;
-  const pendingDeleteMessage = pendingDeleteProjectId
-    ? pendingDeleteProjectActionCount
-      ? `This project and ${pendingDeleteProjectActionCount} action${pendingDeleteProjectActionCount === 1 ? "" : "s"} will be permanently removed from your local database.`
-      : "This project will be permanently removed from your local database."
-    : pendingDeleteTaskIds.length > 1
-      ? `These ${pendingDeleteTaskIds.length} actions will be permanently removed from your local database.`
-      : undefined;
-  const sidebarPerspective: PerspectiveId = activeCustomPerspective
-    ? (activeCustomPerspective.organizeBy === "projects" || effectiveGroupBy(activeCustomPerspective) === "project" ? "projects" : effectiveGroupBy(activeCustomPerspective) === "tag" ? "tags" : "projects")
-    : perspective.startsWith("custom:") ? "projects" : perspective as PerspectiveId;
+  const pendingDelete = pendingDeleteCopy({
+    projectName: pendingDeleteProject?.name,
+    projectActionCount: pendingDeleteProjectActionCount,
+    taskCount: pendingDeleteTaskIds.length,
+    taskTitle: tasks.find((task) => task.id === pendingDeleteTaskIds[0])?.title,
+    deletingProject: !!pendingDeleteProjectId,
+  });
+  const sidebarPerspective = sidebarPerspectiveFor(perspective, activeCustomPerspective);
   const showSidebar = !isPhone && canShowSidebar && sidebarOpen && perspective !== "inbox" && perspective !== "completed" && !activeCustomPerspective?.keepSidebarHidden;
   const showInspector = !isPhone && canShowInspector && inspectorOpen;
   const modalOpen = quickKind !== null || settingsOpen || perspectivesListOpen || quickOpenOpen || importGuideOpen || !!importPreview || !!importError || !!importSummary;
-  const nativeMenuTypes = new Set(["perspective", "toggleSidebar", "toggleInspector", "toggleSearch", "openSettings", "toggleViewMenu", "addPerspective", "showPerspectivesList", "togglePerspectivesBar", "quickOpen", "newAction", "newProject", "newFolder", "selectAll", "goBack", "goForward", "cleanUp", "duplicate", "expandAll", "collapseAll", "moveRow", "undo", "redo", "copyTaskPaper", "convertToProject"]);
 
-  const handleHotkeyAction = useCallback((action: HotkeyAction | MenuCommand) => {
-    switch (action.type) {
-      case "perspective":
-        selectPerspective(action.id);
-        break;
-      case "toggleSidebar":
-        if (canShowSidebar) setSidebarOpen((value) => !value);
-        break;
-      case "toggleInspector":
-        if (canShowInspector) setInspectorOpen((value) => !value);
-        break;
-      case "toggleSearch":
-        setSearchOpen((value) => !value);
-        break;
-      case "openSettings":
-        setSettingsOpen(true);
-        break;
-      case "toggleViewMenu":
-        setViewMenuOpen((value) => !value);
-        break;
-      case "addPerspective":
-        addCustomPerspective();
-        break;
-      case "showPerspectivesList":
-        setPerspectivesListOpen((value) => !value);
-        break;
-      case "togglePerspectivesBar":
-        setSettings((current) => ({ ...current, perspectiveBarVisible: !current.perspectiveBarVisible }));
-        break;
-      case "quickOpen":
-        setQuickOpenOpen(true);
-        break;
-      case "importOmniFocus":
-        openOmniFocusImport();
-        break;
-      case "toggleTitles":
-        setSettings((current) => ({ ...current, perspectiveBarShowsTitles: !current.perspectiveBarShowsTitles }));
-        break;
-      case "newAction":
-        insertAction();
-        break;
-      case "newProject":
-        setQuickKind("project");
-        break;
-      case "newFolder":
-        setQuickKind("folder");
-        break;
-      case "quickEntry":
-        setQuickKind("task");
-        break;
-      case "toggleComplete":
-        if (selectedTaskIds.length) toggleTasks(selectedTaskIds);
-        break;
-      case "toggleFlag":
-        if (selectedTaskIds.length) toggleTaskFlags(selectedTaskIds);
-        break;
-      case "delete":
-        if (selectedTaskIds.length) deleteTasks(selectedTaskIds, action.direction);
-        else if (projectFilter) deleteProject(projectFilter);
-        break;
-      case "focusProject":
-        focusSelected();
-        break;
-      case "goBack":
-        goBack();
-        break;
-      case "goForward":
-        goForward();
-        break;
-      case "markReviewed":
-        if (perspective === "review" && selectedTask?.projectId) {
-          setProjects((current) => current.map((project) => project.id === selectedTask.projectId ? { ...project, lastReviewedAt: new Date().toISOString() } : project));
-        }
-        break;
-      case "selectRow":
-        selectAdjacentTask(action.direction);
-        break;
-      case "extendRow":
-        selectAdjacentTask(action.direction, true);
-        break;
-      case "selectAll":
-        if (typeof document !== "undefined" && isTextInputTarget(document.activeElement)) {
-          const field = document.activeElement as HTMLInputElement | HTMLTextAreaElement;
-          if (typeof field.select === "function") field.select();
-          else document.execCommand("selectAll");
-          break;
-        }
-        selectAllVisible();
-        break;
-      case "cleanUp":
-        cleanUp();
-        break;
-      case "duplicate":
-        if (selectedTaskIds.length) duplicateTasks(selectedTaskIds[0] ?? "");
-        break;
-      case "editTitle":
-        startEditTitle();
-        break;
-      case "expandAll":
-        expandAll();
-        break;
-      case "collapseAll":
-        collapseAll();
-        break;
-      case "indent":
-        if (selectedTaskId) indentSelected(selectedTaskId);
-        break;
-      case "outdent":
-        if (selectedTaskId) outdentSelected(selectedTaskId);
-        break;
-      case "moveRow":
-        if (selectedTaskId) moveSelected(selectedTaskId, action.direction === "up" ? -1 : 1);
-        break;
-      case "undo":
-        if (typeof document !== "undefined" && isTextInputTarget(document.activeElement)) {
-          document.execCommand("undo");
-          break;
-        }
-        undo();
-        break;
-      case "redo":
-        if (typeof document !== "undefined" && isTextInputTarget(document.activeElement)) {
-          document.execCommand("redo");
-          break;
-        }
-        redo();
-        break;
-      case "copyTaskPaper":
-        if (selectedTaskId) copySelectedTaskPaper(selectedTaskId);
-        break;
-      case "convertToProject":
-        convertSelectedToProject();
-        break;
-      case "confirmDelete":
-        if (pendingDeleteProjectId) finalizeDeleteProject(pendingDeleteProjectId);
-        else if (pendingDeleteTaskIds.length) finalizeDeleteTasks(pendingDeleteTaskIds, pendingDeleteDirection);
-        break;
-      case "cancel":
-        if (pendingDeleteProjectId) {
-          setPendingDeleteProjectId(null);
-          break;
-        }
-        if (pendingDeleteTaskIds.length) {
-          setPendingDeleteTaskIds([]);
-          setPendingDeleteDirection("menu");
-          break;
-        }
-        if (quickKind) setQuickKind(null);
-        else if (settingsOpen) setSettingsOpen(false);
-        else if (perspectivesListOpen) {
-          setShortcutRecordingId(null);
-          setPerspectivesListOpen(false);
-        }
-        else if (quickOpenOpen) setQuickOpenOpen(false);
-        else if (importPreview || importError || importSummary || importGuideOpen) closeImport();
-        else if (viewMenuOpen) setViewMenuOpen(false);
-        else if (searchOpen) {
-          setQuery("");
-          setSearchOpen(false);
-        }
-        else if (editingTaskId) setEditingTaskId(null);
-        else if (selectedTaskIds.length || inspectedProjectId) {
-          setSelection(emptySelection);
-          setInspectedProjectId(null);
-        }
-        break;
-    }
-  }, [
-    canShowInspector,
+  const commandHandlersRef = useRef<AppCommandHandlers>(null!);
+  commandHandlersRef.current = {
+    selectPerspective,
     canShowSidebar,
-    closeImport,
-    deleteProject,
+    canShowInspector,
+    setSidebarOpen,
+    setInspectorOpen,
+    setSearchOpen,
+    setSettingsOpen,
+    setViewMenuOpen,
+    addCustomPerspective,
+    setPerspectivesListOpen,
+    togglePerspectivesBar: () => setSettings((current) => ({ ...current, perspectiveBarVisible: !current.perspectiveBarVisible })),
+    setQuickOpenOpen,
+    openOmniFocusImport,
+    toggleTitles: () => setSettings((current) => ({ ...current, perspectiveBarShowsTitles: !current.perspectiveBarShowsTitles })),
+    insertAction: () => insertAction(),
+    setQuickKind,
+    selectedTaskIds,
+    toggleTasks,
+    toggleTaskFlags,
     deleteTasks,
-    finalizeDeleteProject,
-    finalizeDeleteTasks,
+    projectFilter,
+    deleteProject,
     focusSelected,
     goBack,
     goForward,
-    importError,
-    importGuideOpen,
-    importPreview,
-    importSummary,
-    pendingDeleteDirection,
-    pendingDeleteProjectId,
-    pendingDeleteTaskIds,
-    perspective,
-    perspectivesListOpen,
-    quickKind,
-    quickOpenOpen,
-    searchOpen,
+    markSelectedReviewed: () => {
+      if (perspective === "review" && selectedTask?.projectId) {
+        setProjects((current) => current.map((project) => project.id === selectedTask.projectId ? { ...project, lastReviewedAt: new Date().toISOString() } : project));
+      }
+    },
     selectAdjacentTask,
     selectAllVisible,
-    selectedTask,
-    selectedTaskIds,
-    settingsOpen,
-    viewMenuOpen,
-    projectFilter,
     cleanUp,
-    duplicateTasks,
-    startEditTitle,
+    duplicateSelected: () => {
+      if (selectedTaskIds.length) duplicateTasks(selectedTaskIds[0] ?? "");
+    },
+    startEditTitle: () => startEditTitle(),
     expandAll,
     collapseAll,
-    editingTaskId,
-    inspectedProjectId,
-    selectedTaskId,
-    indentSelected,
-    outdentSelected,
-    moveSelected,
+    indentSelected: () => { if (selectedTaskId) indentSelected(selectedTaskId); },
+    outdentSelected: () => { if (selectedTaskId) outdentSelected(selectedTaskId); },
+    moveSelected: (direction) => { if (selectedTaskId) moveSelected(selectedTaskId, direction); },
     undo,
     redo,
-    copySelectedTaskPaper,
-    insertAction,
-  ]);
+    copySelectedTaskPaper: () => { if (selectedTaskId) copySelectedTaskPaper(selectedTaskId); },
+    convertSelectedToProject: () => convertSelectedToProject(),
+    confirmPendingDelete: () => {
+      if (pendingDeleteProjectId) finalizeDeleteProject(pendingDeleteProjectId);
+      else if (pendingDeleteTaskIds.length) finalizeDeleteTasks(pendingDeleteTaskIds, pendingDeleteDirection);
+    },
+    cancelTopOverlay: () => {
+      if (pendingDeleteProjectId) {
+        setPendingDeleteProjectId(null);
+        return;
+      }
+      if (pendingDeleteTaskIds.length) {
+        setPendingDeleteTaskIds([]);
+        setPendingDeleteDirection("menu");
+        return;
+      }
+      if (quickKind) setQuickKind(null);
+      else if (settingsOpen) setSettingsOpen(false);
+      else if (perspectivesListOpen) {
+        setShortcutRecordingId(null);
+        setPerspectivesListOpen(false);
+      }
+      else if (quickOpenOpen) setQuickOpenOpen(false);
+      else if (importPreview || importError || importSummary || importGuideOpen) closeImport();
+      else if (viewMenuOpen) setViewMenuOpen(false);
+      else if (searchOpen) {
+        setQuery("");
+        setSearchOpen(false);
+      }
+      else if (editingTaskId) setEditingTaskId(null);
+      else if (selectedTaskIds.length || inspectedProjectId) {
+        setSelection(emptySelection);
+        setInspectedProjectId(null);
+      }
+    },
+  };
 
-  useEffect(() => {
-    if (Platform.OS !== "web" || typeof window === "undefined") return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      const action = matchOmniFocusHotkey(event, {
-        deleteDialogOpen: !!pendingDeleteTaskIds.length || !!pendingDeleteProjectId,
-        perspectiveShortcuts: settings.perspectiveShortcuts,
-        shortcutCapture: !!shortcutRecordingId,
-      });
-      if (!action) return;
-      if (hasNativeMenu && nativeMenuTypes.has(action.type)) return;
-      if (modalOpen && action.type !== "cancel" && action.type !== "confirmDelete") return;
-      event.preventDefault();
-      handleHotkeyAction(action);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handleHotkeyAction, hasNativeMenu, modalOpen, pendingDeleteProjectId, pendingDeleteTaskIds, settings.perspectiveShortcuts, shortcutRecordingId]);
+  const handleHotkeyAction = useCallback((action: AppCommand) => {
+    dispatchAppCommand(action, commandHandlersRef.current);
+  }, []);
 
-  useEffect(() => {
-    if (!hasNativeMenu || typeof window === "undefined") return;
-    window.omniclone?.setPerspectivesMenu(customPerspectives.map((item) => ({
-      id: `custom:${item.id}`,
-      label: item.name,
-      accelerator: toElectronAccelerator(settings.perspectiveShortcuts[`custom:${item.id}`]),
-    })));
-  }, [customPerspectives, hasNativeMenu, settings.perspectiveShortcuts]);
-
-  useEffect(() => {
-    if (!hasNativeMenu || typeof window === "undefined") return;
-    return window.omniclone?.onMenuCommand((command) => handleHotkeyAction(command));
-  }, [handleHotkeyAction, hasNativeMenu]);
+  useAppHotkeys({
+    enabled: true,
+    modalOpen,
+    pendingDeleteOpen: !!pendingDeleteTaskIds.length || !!pendingDeleteProjectId,
+    perspectiveShortcuts: settings.perspectiveShortcuts,
+    shortcutRecordingId,
+    customPerspectives,
+    onCommand: handleHotkeyAction,
+  });
 
   const sidebarProjects = focusedProjectId ? projects.filter((project) => project.id === focusedProjectId) : projects;
-  const forecastCounts = useMemo(() => {
-    const counts: Record<string, number> = { past: 0, upcoming: 0 };
-    const weekKeys = forecastWeek().map((day) => day.key);
-    for (const task of tasks) {
-      if (task.completed || (task.status ?? "active") === "dropped") continue;
-      if (focusedProjectId && task.projectId !== focusedProjectId) continue;
-      if (task.due) {
-        if (dueUrgency(task.due) === "overdue") counts.past = (counts.past ?? 0) + 1;
-        if (isDueOnDay(task.due, "upcoming")) counts.upcoming = (counts.upcoming ?? 0) + 1;
-        for (const key of weekKeys) {
-          if (isDueOnDay(task.due, key)) counts[key] = (counts[key] ?? 0) + 1;
-        }
-      } else if (task.flagged) {
-        const today = todayKey();
-        counts[today] = (counts[today] ?? 0) + 1;
-      }
-    }
-    return counts;
-  }, [focusedProjectId, tasks]);
-  const perspectiveBadges = useMemo(() => ({
-    inbox: { count: tasks.filter((task) => task.projectId === null && !task.completed).length },
-    flagged: { count: tasks.filter((task) => task.flagged && !task.completed && (!focusedProjectId || task.projectId === focusedProjectId)).length },
-    forecast: { count: tasks.filter((task) => !task.completed && dueUrgency(task.due) === "overdue" && (!focusedProjectId || task.projectId === focusedProjectId)).length, color: palette.overdue },
-    review: { count: projects.filter((project) => (!focusedProjectId || project.id === focusedProjectId) && projectDueForReview(project)).length },
-  }), [focusedProjectId, projects, tasks]);
+  const forecastCounts = useMemo(() => forecastCountsFor(tasks, focusedProjectId), [focusedProjectId, tasks]);
+  const perspectiveBadges = useMemo(() => perspectiveBadgesFor(tasks, projects, focusedProjectId), [focusedProjectId, projects, tasks]);
+
+  const changeAvailability = (availability: PerspectiveAvailability) => {
+    if (perspective.startsWith("custom:")) return;
+    setSettings((current) => ({
+      ...current,
+      standardAvailability: { ...current.standardAvailability, [perspective as PerspectiveId]: availability },
+      showCompleted: availability === "all" || availability === "completed",
+    }));
+  };
 
   return (
     <ContextMenuProvider>
@@ -1173,106 +814,62 @@ export default function App() {
             sidebarOpen={sidebarOpen}
             inspectorOpen={inspectorOpen}
             viewOptionsOpen={viewMenuOpen}
-            nativeMenu={hasNativeMenu}
+            nativeMenu={nativeMenu}
             onCommand={handleHotkeyAction}
           />
         )}
         {!isPhone ? (
-          <View style={styles.toolbar}>
-            <TrafficLights />
-            <View style={styles.toolbarLeading}>
-              <ToolbarButton icon="page-layout-sidebar-left" label="Sidebar" active={showSidebar} onPress={() => setSidebarOpen((value) => !value)} />
-              <ToolbarButton icon="chevron-left" label="Back" disabled={!canGoBack} onPress={goBack} />
-              <ToolbarButton icon="chevron-right" label="Forward" disabled={!canGoForward} onPress={goForward} />
-              <ToolbarButton icon="eye-outline" label="View" active={viewMenuOpen} onPress={() => setViewMenuOpen((value) => !value)} />
-            </View>
-            <View style={styles.toolbarCenter}>
-              <ToolbarButton icon="plus" label="New Action" onPress={() => insertAction()} />
-              <ToolbarButton icon="tray-arrow-down" label="Quick Entry" onPress={() => setQuickKind("task")} />
-              <ToolbarButton icon="file-find-outline" label="Quick Open" onPress={() => setQuickOpenOpen(true)} />
-              <ToolbarButton icon="bullseye-arrow" label="Focus" active={!!focusedProjectId} disabled={!focusedProjectId && !selectedTask?.projectId && !projectFilter} onPress={focusSelected} />
-            </View>
-            <View style={styles.toolbarTrailing}>
-              <ToolbarButton icon="cog-outline" label="Settings" active={settingsOpen} onPress={() => setSettingsOpen(true)} />
-              <ToolbarButton icon="magnify" label="Search" active={searchOpen} onPress={() => setSearchOpen((value) => !value)} />
-              <ToolbarButton icon="information-outline" label="Inspect" active={showInspector} onPress={() => setInspectorOpen((value) => !value)} />
-            </View>
-          </View>
+          <DesktopToolbar
+            showSidebar={showSidebar}
+            showInspector={showInspector}
+            canGoBack={canGoBack}
+            canGoForward={canGoForward}
+            viewMenuOpen={viewMenuOpen}
+            settingsOpen={settingsOpen}
+            searchOpen={searchOpen}
+            focused={!!focusedProjectId}
+            canFocus={!!focusedProjectId || !!selectedTask?.projectId || !!projectFilter}
+            onToggleSidebar={() => setSidebarOpen((value) => !value)}
+            onBack={goBack}
+            onForward={goForward}
+            onToggleView={() => setViewMenuOpen((value) => !value)}
+            onNewAction={() => insertAction()}
+            onQuickEntry={() => setQuickKind("task")}
+            onQuickOpen={() => setQuickOpenOpen(true)}
+            onFocus={focusSelected}
+            onSettings={() => setSettingsOpen(true)}
+            onToggleSearch={() => setSearchOpen((value) => !value)}
+            onToggleInspector={() => setInspectorOpen((value) => !value)}
+          />
         ) : (
-          <View style={styles.mobileHeader}>
-            <View><Text style={styles.mobileEyebrow}>OMNIFOCUS</Text><Text numberOfLines={1} style={styles.mobileTitle}>{perspectiveTitle}</Text></View>
-            <View style={styles.mobileHeaderActions}>
-              <Pressable accessibilityLabel="View Options" onPress={() => setViewMenuOpen(true)} style={styles.mobileCircleButton}><Icon name="eye-outline" size={18} color={palette.purpleDark} /></Pressable>
-              <Pressable accessibilityLabel="More and settings" onPress={() => setSettingsOpen(true)} style={styles.mobileCircleButton}><Icon name="dots-horizontal" size={20} color={palette.purpleDark} /></Pressable>
-              <Pressable onPress={() => setSearchOpen((value) => !value)} style={styles.mobileCircleButton}><Icon name="magnify" size={21} color={palette.purpleDark} /></Pressable>
-              <Pressable onPress={() => insertAction()} style={styles.mobileAddButton}><Icon name="plus" size={24} color="#fff" /></Pressable>
-            </View>
-          </View>
+          <MobileHeader
+            title={title}
+            onViewOptions={() => setViewMenuOpen(true)}
+            onSettings={() => setSettingsOpen(true)}
+            onToggleSearch={() => setSearchOpen((value) => !value)}
+            onNewAction={() => insertAction()}
+          />
         )}
 
-        {focusedProject && (
-          <View style={styles.focusBar}>
-            <Icon name="bullseye-arrow" size={16} color={palette.purpleDark} />
-            <Text numberOfLines={1} style={styles.focusBarText}>Focusing on {focusedProject.name}</Text>
-            <Pressable accessibilityLabel="Unfocus" onPress={unfocus} style={styles.unfocusButton}>
-              <Text style={styles.unfocusButtonText}>Unfocus</Text>
-            </Pressable>
-          </View>
-        )}
-
+        {focusedProject && <FocusBar name={focusedProject.name} onUnfocus={unfocus} />}
         {searchOpen && (
-          <View style={styles.searchBar}>
-            <Icon name="magnify" size={18} color="#77747b" />
-            <TextInput autoFocus value={query} onChangeText={setQuery} placeholder="Search Remaining" style={styles.searchInput} />
-            {!!query.trim() && <Text style={styles.searchCount}>{visibleTasks.length}</Text>}
-            <Pressable onPress={() => { setQuery(""); setSearchOpen(false); }}><Text style={styles.searchDone}>Done</Text></Pressable>
-          </View>
+          <SearchBar
+            query={query}
+            resultCount={visibleTasks.length}
+            onChangeQuery={setQuery}
+            onClose={() => { setQuery(""); setSearchOpen(false); }}
+          />
         )}
-
-        {viewMenuOpen && !isPhone && (
-          <>
-            <Pressable accessibilityLabel="Close view options" onPress={() => setViewMenuOpen(false)} style={styles.menuDismissLayer} />
-            <ViewOptionsPanel
-              compact={false}
-              perspective={perspective}
-              custom={activeCustomPerspective}
-              projects={projects}
-              tags={knownTags}
-              availability={settings.standardAvailability[perspective as PerspectiveId] ?? "remaining"}
-              onChangeAvailability={(availability) => {
-                if (perspective.startsWith("custom:")) return;
-                setSettings((current) => ({
-                  ...current,
-                  standardAvailability: { ...current.standardAvailability, [perspective]: availability },
-                  showCompleted: availability === "all" || availability === "completed",
-                }));
-              }}
-              showNotes={settings.showNotesInOutline}
-              onChangeShowNotes={(showNotesInOutline) => setSettings((current) => ({ ...current, showNotesInOutline }))}
-              onChangeCustom={(patch) => {
-                if (activeCustomPerspective) patchCustomPerspective(activeCustomPerspective.id, patch);
-              }}
-              onClose={() => setViewMenuOpen(false)}
-            />
-          </>
-        )}
-        {viewMenuOpen && isPhone && (
-          <ViewOptionsPanel
-            compact
+        {viewMenuOpen && (
+          <ViewOptionsHost
+            compact={isPhone}
+            dismissDesktop={!isPhone}
             perspective={perspective}
             custom={activeCustomPerspective}
             projects={projects}
             tags={knownTags}
-            availability={settings.standardAvailability[perspective as PerspectiveId] ?? "remaining"}
-            onChangeAvailability={(availability) => {
-              if (perspective.startsWith("custom:")) return;
-              setSettings((current) => ({
-                ...current,
-                standardAvailability: { ...current.standardAvailability, [perspective]: availability },
-                showCompleted: availability === "all" || availability === "completed",
-              }));
-            }}
-            showNotes={settings.showNotesInOutline}
+            settings={settings}
+            onChangeAvailability={changeAvailability}
             onChangeShowNotes={(showNotesInOutline) => setSettings((current) => ({ ...current, showNotesInOutline }))}
             onChangeCustom={(patch) => {
               if (activeCustomPerspective) patchCustomPerspective(activeCustomPerspective.id, patch);
@@ -1334,7 +931,7 @@ export default function App() {
           )}
           <View style={[styles.outlinePane, !isPhone && styles.desktopPane]}>
           <Outline
-            title={perspectiveTitle}
+            title={title}
             perspective={perspective}
             customPerspective={activeCustomPerspective}
             projects={sidebarProjects}
@@ -1397,67 +994,44 @@ export default function App() {
               }))}
             />
             <View style={[{ width: settings.inspectorWidth }, styles.desktopPane]}>
-          {selectedTaskIds.length > 1 && (
-            <MultiSelectInspector
-              count={selectedTaskIds.length}
-              allCompleted={selectedTasks.length > 0 && selectedTasks.every((task) => task.completed)}
-              allFlagged={selectedTasks.length > 0 && selectedTasks.every((task) => task.flagged)}
-              onToggle={() => toggleTasks(selectedTaskIds)}
-              onToggleFlag={() => toggleTaskFlags(selectedTaskIds)}
-              onDelete={() => deleteTasks(selectedTaskIds)}
-            />
-          )}
-          {selectedTaskIds.length === 1 && selectedTask && <Inspector task={selectedTask} projects={projects} onChange={(patch) => updateTask(selectedTask.id, patch)} onToggle={() => toggleTask(selectedTask.id)} onDelete={() => deleteTask(selectedTask.id)} />}
-          {!selectedTaskIds.length && inspectedProject && (
-            <ProjectInspector
-              project={inspectedProject}
-              remainingCount={tasks.filter((task) => task.projectId === inspectedProject.id && !task.completed && (task.status ?? "active") !== "dropped").length}
-              stalled={projectIsStalled(inspectedProject, tasks)}
-              onChange={(patch) => updateProject(inspectedProject.id, patch)}
-              onReview={() => updateProject(inspectedProject.id, { lastReviewedAt: new Date().toISOString() })}
-              onSkip={() => skipReview(inspectedProject.id)}
-              onDelete={() => deleteProject(inspectedProject.id)}
-              onFocus={() => focusProject(inspectedProject.id)}
-            />
-          )}
-          {!selectedTaskIds.length && !inspectedProject && tagFilter && (
-            <TagInspector
-              tag={tagFilter}
-              count={tasks.filter((task) => task.tags.includes(tagFilter) && !task.completed && (task.status ?? "active") !== "dropped").length}
-              onRename={renameSelectedTag}
-            />
-          )}
-          {!selectedTaskIds.length && !inspectedProject && !tagFilter && (
-            <EmptyInspector
-              title="No Selection"
-              detail="Select an action, project, or tag to inspect it."
-            />
-          )}
+              <InspectorPane
+                selectedTaskIds={selectedTaskIds}
+                selectedTask={selectedTask}
+                selectedTasks={selectedTasks}
+                inspectedProject={inspectedProject}
+                tagFilter={tagFilter}
+                tasks={tasks}
+                projects={projects}
+                onToggleSelected={() => toggleTasks(selectedTaskIds)}
+                onToggleFlagSelected={() => toggleTaskFlags(selectedTaskIds)}
+                onDeleteSelected={() => deleteTasks(selectedTaskIds)}
+                onChangeTask={(patch) => selectedTask && updateTask(selectedTask.id, patch)}
+                onToggleTask={() => selectedTask && toggleTask(selectedTask.id)}
+                onDeleteTask={() => selectedTask && deleteTask(selectedTask.id)}
+                onChangeProject={(patch) => inspectedProject && updateProject(inspectedProject.id, patch)}
+                onReviewProject={() => inspectedProject && updateProject(inspectedProject.id, { lastReviewedAt: new Date().toISOString() })}
+                onSkipProject={() => inspectedProject && skipReview(inspectedProject.id)}
+                onDeleteProject={() => inspectedProject && deleteProject(inspectedProject.id)}
+                onFocusProject={() => inspectedProject && focusProject(inspectedProject.id)}
+                onRenameTag={renameSelectedTag}
+              />
             </View>
             </>
           )}
         </View>
 
         {isPhone && (
-          <View style={styles.mobileNav}>
-            <ScrollView style={styles.mobileNavList} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mobileNavScroll}>
-              {barItems.map((item) => (
-                <MobileCustomPerspectiveItem
-                  key={item.id}
-                  item={item}
-                  selected={item.id === perspective}
-                  onSelect={() => selectPerspective(item.id)}
-                  onEdit={() => openViewOptions(item.id)}
-                  onUnfavorite={() => toggleFavorite(item.id)}
-                  onOpenList={() => setPerspectivesListOpen(true)}
-                  onDelete={item.custom ? () => deleteCustomPerspective(item.custom!.id) : undefined}
-                />
-              ))}
-              <Pressable onPress={() => setPerspectivesListOpen(true)} style={styles.mobileNavItem}><Icon name="view-list-outline" size={21} color={palette.purpleDark} /><Text style={styles.mobileNavLabel}>List</Text></Pressable>
-              <Pressable accessibilityLabel="Import from OmniFocus" onPress={() => void openOmniFocusImport()} style={styles.mobileNavItem}><Icon name="database-import-outline" size={21} color={palette.purpleDark} /><Text style={styles.mobileNavLabel}>Import</Text></Pressable>
-              <Pressable accessibilityLabel="Settings" onPress={() => setSettingsOpen(true)} style={styles.mobileNavItem}><Icon name="cog-outline" size={21} color={palette.purpleDark} /><Text style={styles.mobileNavLabel}>Settings</Text></Pressable>
-            </ScrollView>
-          </View>
+          <MobileNav
+            items={barItems}
+            currentId={perspective}
+            onSelect={selectPerspective}
+            onEdit={openViewOptions}
+            onUnfavorite={toggleFavorite}
+            onOpenList={() => setPerspectivesListOpen(true)}
+            onDelete={deleteCustomPerspective}
+            onImport={() => void openOmniFocusImport()}
+            onSettings={() => setSettingsOpen(true)}
+          />
         )}
       </View>
 
@@ -1503,8 +1077,8 @@ export default function App() {
 
       <ConfirmDeleteModal
         visible={pendingDeleteTaskIds.length > 0 || !!pendingDeleteProjectId}
-        title={pendingDeleteProject?.name ?? (pendingDeleteTaskIds.length > 1 ? `${pendingDeleteTaskIds.length} actions` : tasks.find((task) => task.id === pendingDeleteTaskIds[0])?.title) ?? (pendingDeleteProjectId ? "this project" : "this action")}
-        message={pendingDeleteMessage}
+        title={pendingDelete.title}
+        message={pendingDelete.message}
         onCancel={() => {
           setPendingDeleteTaskIds([]);
           setPendingDeleteDirection("menu");
@@ -1531,7 +1105,7 @@ export default function App() {
             <ProjectInspector
               modal
               project={inspectedProject}
-              remainingCount={tasks.filter((task) => task.projectId === inspectedProject.id && !task.completed && (task.status ?? "active") !== "dropped").length}
+              remainingCount={remainingCountForProject(tasks, inspectedProject.id)}
               stalled={projectIsStalled(inspectedProject, tasks)}
               onClose={() => setInspectorOpen(false)}
               onChange={(patch) => updateProject(inspectedProject.id, patch)}
