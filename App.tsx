@@ -2,7 +2,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import { File as ExpoFile } from "expo-file-system";
 import { StatusBar } from "expo-status-bar";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -37,6 +37,7 @@ import {
 import { loadDatabase, saveDatabase } from "./src/storage";
 import { loadSettings, saveSettings } from "./src/settings";
 import { applyOmniFocusImport, parseOmniFocusFile, type ImportMode, type OmniImportData } from "./src/importOmniFocus";
+import { matchOmniFocusHotkey, type HotkeyAction } from "./src/hotkeys";
 
 type IconName = React.ComponentProps<typeof MaterialCommunityIcons>["name"];
 
@@ -693,7 +694,7 @@ function ConfirmDeleteModal({ visible, title, onCancel, onConfirm }: {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
       <View style={styles.confirmBackdrop}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onCancel} />
+        <Pressable style={styles.confirmDismissLayer} onPress={onCancel} accessibilityLabel="Cancel delete" />
         <View style={styles.confirmCard}>
           <View style={styles.confirmIcon}><Icon name="trash-can-outline" size={23} color={palette.danger} /></View>
           <Text style={styles.confirmTitle}>Delete “{title}”?</Text>
@@ -868,6 +869,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [pendingDeleteTaskId, setPendingDeleteTaskId] = useState<string | null>(null);
+  const [pendingDeleteDirection, setPendingDeleteDirection] = useState<"menu" | "previous" | "next">("menu");
   const [quickKind, setQuickKind] = useState<"task" | "project" | null>(null);
   const [editingPerspective, setEditingPerspective] = useState<{ draft: CustomPerspective; isNew: boolean } | null>(null);
   const [importPreview, setImportPreview] = useState<OmniImportData | null>(null);
@@ -972,15 +974,33 @@ export default function App() {
     if (target) updateTask(id, { completed: !target.completed });
   };
 
-  const deleteTask = (id: string) => {
-    const performDelete = () => {
-      setTasks((current) => current.filter((task) => task.id !== id));
-      setSelectedTaskId((current) => current === id ? null : current);
-      setInspectorOpen(false);
-      setPendingDeleteTaskId(null);
-    };
-    if (settings.confirmBeforeDelete) setPendingDeleteTaskId(id);
-    else performDelete();
+  const finalizeDeleteTask = useCallback((id: string, direction: "menu" | "previous" | "next") => {
+    const currentIndex = visibleTasks.findIndex((task) => task.id === id);
+    setTasks((current) => current.filter((task) => task.id !== id));
+    setPendingDeleteTaskId(null);
+    setPendingDeleteDirection("menu");
+    setInspectorOpen(false);
+
+    if (direction === "next" && currentIndex >= 0) {
+      const nextTask = visibleTasks[currentIndex + 1] ?? visibleTasks[currentIndex - 1];
+      setSelectedTaskId(nextTask && nextTask.id !== id ? nextTask.id : null);
+      return;
+    }
+    if (direction === "previous" && currentIndex >= 0) {
+      const previousTask = visibleTasks[currentIndex - 1] ?? visibleTasks[currentIndex + 1];
+      setSelectedTaskId(previousTask && previousTask.id !== id ? previousTask.id : null);
+      return;
+    }
+    setSelectedTaskId((current) => current === id ? null : current);
+  }, [visibleTasks]);
+
+  const deleteTask = (id: string, direction: "menu" | "previous" | "next" = "menu") => {
+    if (settings.confirmBeforeDelete) {
+      setPendingDeleteTaskId(id);
+      setPendingDeleteDirection(direction);
+      return;
+    }
+    finalizeDeleteTask(id, direction);
   };
 
   const createItem = (title: string, projectId: string | null) => {
@@ -1011,6 +1031,16 @@ export default function App() {
     setSelectedTaskId(id);
     if (isPhone || settings.openInspectorOnSelection) setInspectorOpen(true);
   };
+
+  const selectAdjacentTask = useCallback((direction: "up" | "down") => {
+    if (!visibleTasks.length) return;
+    const currentIndex = selectedTaskId ? visibleTasks.findIndex((task) => task.id === selectedTaskId) : -1;
+    const nextIndex = direction === "down"
+      ? Math.min(currentIndex < 0 ? 0 : currentIndex + 1, visibleTasks.length - 1)
+      : Math.max(currentIndex < 0 ? visibleTasks.length - 1 : currentIndex - 1, 0);
+    const nextTask = visibleTasks[nextIndex];
+    if (nextTask) selectTask(nextTask.id);
+  }, [isPhone, selectedTaskId, settings.openInspectorOnSelection, visibleTasks]);
 
   const focusSelected = () => {
     if (!selectedTask?.projectId) return;
@@ -1085,6 +1115,113 @@ export default function App() {
   const defaultProjectId = projectFilter ?? selectedProject?.id ?? null;
   const showSidebar = !isPhone && canShowSidebar && sidebarOpen && !activeCustomPerspective;
   const showInspector = !isPhone && canShowInspector && inspectorOpen && !!selectedTask;
+  const modalOpen = quickKind !== null || settingsOpen || !!editingPerspective || !!importPreview || !!importError || !!importSummary;
+
+  const handleHotkeyAction = useCallback((action: HotkeyAction) => {
+    switch (action.type) {
+      case "perspective":
+        selectPerspective(action.id);
+        break;
+      case "toggleSidebar":
+        if (canShowSidebar && !activeCustomPerspective) setSidebarOpen((value) => !value);
+        break;
+      case "toggleInspector":
+        if (canShowInspector && selectedTask) setInspectorOpen((value) => !value);
+        break;
+      case "toggleSearch":
+        setSearchOpen((value) => !value);
+        break;
+      case "openSettings":
+        setSettingsOpen(true);
+        break;
+      case "toggleViewMenu":
+        setViewMenuOpen((value) => !value);
+        break;
+      case "newAction":
+        setQuickKind("task");
+        break;
+      case "newProject":
+        setQuickKind("project");
+        break;
+      case "quickEntry":
+        setQuickKind("task");
+        break;
+      case "toggleComplete":
+        if (selectedTaskId) toggleTask(selectedTaskId);
+        break;
+      case "toggleFlag":
+        if (selectedTask) updateTask(selectedTask.id, { flagged: !selectedTask.flagged });
+        break;
+      case "delete":
+        if (selectedTaskId) deleteTask(selectedTaskId, action.direction);
+        break;
+      case "focusProject":
+        focusSelected();
+        break;
+      case "markReviewed":
+        if (perspective === "review" && selectedTask?.projectId) {
+          setProjects((current) => current.map((project) => project.id === selectedTask.projectId ? { ...project, lastReviewedAt: new Date().toISOString() } : project));
+        }
+        break;
+      case "selectRow":
+        selectAdjacentTask(action.direction);
+        break;
+      case "confirmDelete":
+        if (pendingDeleteTaskId) finalizeDeleteTask(pendingDeleteTaskId, pendingDeleteDirection);
+        break;
+      case "cancel":
+        if (pendingDeleteTaskId) {
+          setPendingDeleteTaskId(null);
+          setPendingDeleteDirection("menu");
+          break;
+        }
+        if (quickKind) setQuickKind(null);
+        else if (settingsOpen) setSettingsOpen(false);
+        else if (editingPerspective) setEditingPerspective(null);
+        else if (importPreview || importError || importSummary) closeImport();
+        else if (viewMenuOpen) setViewMenuOpen(false);
+        else if (searchOpen) {
+          setQuery("");
+          setSearchOpen(false);
+        }
+        break;
+    }
+  }, [
+    activeCustomPerspective,
+    canShowInspector,
+    canShowSidebar,
+    closeImport,
+    deleteTask,
+    editingPerspective,
+    finalizeDeleteTask,
+    focusSelected,
+    importError,
+    importPreview,
+    importSummary,
+    pendingDeleteDirection,
+    pendingDeleteTaskId,
+    perspective,
+    quickKind,
+    searchOpen,
+    selectAdjacentTask,
+    selectedTask,
+    selectedTaskId,
+    settingsOpen,
+    viewMenuOpen,
+  ]);
+
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof window === "undefined") return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      const action = matchOmniFocusHotkey(event, { deleteDialogOpen: !!pendingDeleteTaskId });
+      if (!action) return;
+      if (modalOpen && action.type !== "cancel" && action.type !== "confirmDelete") return;
+      event.preventDefault();
+      handleHotkeyAction(action);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [handleHotkeyAction, modalOpen, pendingDeleteTaskId]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -1194,13 +1331,13 @@ export default function App() {
       <ConfirmDeleteModal
         visible={!!pendingDeleteTaskId}
         title={tasks.find((task) => task.id === pendingDeleteTaskId)?.title ?? "this action"}
-        onCancel={() => setPendingDeleteTaskId(null)}
+        onCancel={() => {
+          setPendingDeleteTaskId(null);
+          setPendingDeleteDirection("menu");
+        }}
         onConfirm={() => {
           if (!pendingDeleteTaskId) return;
-          setTasks((current) => current.filter((task) => task.id !== pendingDeleteTaskId));
-          setSelectedTaskId((current) => current === pendingDeleteTaskId ? null : current);
-          setInspectorOpen(false);
-          setPendingDeleteTaskId(null);
+          finalizeDeleteTask(pendingDeleteTaskId, pendingDeleteDirection);
         }}
       />
 
@@ -1446,7 +1583,8 @@ const styles = StyleSheet.create({
   resetSettingsButton: { minHeight: 34, alignSelf: "flex-start", paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: "#dfb5b5", borderRadius: 7, backgroundColor: "#fff9f9" },
   resetSettingsText: { fontSize: 10, fontWeight: "600", color: palette.danger },
   confirmBackdrop: { flex: 1, alignItems: "center", justifyContent: "center", padding: 18, backgroundColor: "rgba(27,24,30,.32)" },
-  confirmCard: { width: "100%", maxWidth: 390, padding: 20, alignItems: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: "#aaa7ad", borderRadius: 13, backgroundColor: "#fbfafc", shadowColor: "#000", shadowOffset: { width: 0, height: 16 }, shadowOpacity: .24, shadowRadius: 32, elevation: 18 },
+  confirmDismissLayer: { ...StyleSheet.absoluteFillObject, zIndex: 0 },
+  confirmCard: { width: "100%", maxWidth: 390, padding: 20, alignItems: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: "#aaa7ad", borderRadius: 13, backgroundColor: "#fbfafc", shadowColor: "#000", shadowOffset: { width: 0, height: 16 }, shadowOpacity: .24, shadowRadius: 32, elevation: 18, zIndex: 1 },
   confirmIcon: { width: 45, height: 45, marginBottom: 11, alignItems: "center", justifyContent: "center", borderRadius: 23, backgroundColor: "#f7e4e4" },
   confirmTitle: { maxWidth: "100%", fontSize: 15, fontWeight: "700", color: palette.text },
   confirmText: { marginTop: 5, fontSize: 10, lineHeight: 15, textAlign: "center", color: palette.muted },
