@@ -56,6 +56,7 @@ function buildMenu(win, customPerspectives = []) {
     { label: "Tags", accelerator: "CommandOrControl+3", click: () => send(win, { type: "perspective", id: "tags" }) },
     { label: "Forecast", accelerator: "CommandOrControl+4", click: () => send(win, { type: "perspective", id: "forecast" }) },
     { label: "Flagged", accelerator: "CommandOrControl+5", click: () => send(win, { type: "perspective", id: "flagged" }) },
+    { label: "Completed", accelerator: "CommandOrControl+6", click: () => send(win, { type: "perspective", id: "completed" }) },
     { label: "Review", accelerator: "CommandOrControl+7", click: () => send(win, { type: "perspective", id: "review" }) },
   ];
   if (customPerspectives.length) {
@@ -89,6 +90,7 @@ function buildMenu(win, customPerspectives = []) {
       submenu: [
         { label: "New Action", accelerator: "CommandOrControl+N", click: () => send(win, { type: "newAction" }) },
         { label: "New Project", accelerator: "Shift+CommandOrControl+N", click: () => send(win, { type: "newProject" }) },
+        { label: "New Folder", accelerator: "Alt+CommandOrControl+N", click: () => send(win, { type: "newFolder" }) },
         { label: "Quick Entry", click: () => send(win, { type: "quickEntry" }) },
         { type: "separator" },
         { label: "Quick Open…", accelerator: "CommandOrControl+O", click: () => send(win, { type: "quickOpen" }) },
@@ -139,6 +141,7 @@ function buildMenu(win, customPerspectives = []) {
         { type: "separator" },
         { label: "Indent", click: () => send(win, { type: "indent" }) },
         { label: "Outdent", click: () => send(win, { type: "outdent" }) },
+        { label: "Convert to Project", click: () => send(win, { type: "convertToProject" }) },
         { label: "Move Up", accelerator: "Alt+CommandOrControl+Up", click: () => send(win, { type: "moveRow", direction: "up" }) },
         { label: "Move Down", accelerator: "Alt+CommandOrControl+Down", click: () => send(win, { type: "moveRow", direction: "down" }) },
         { type: "separator" },

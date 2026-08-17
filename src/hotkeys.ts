@@ -14,6 +14,7 @@ export type HotkeyAction =
   | { type: "quickOpen" }
   | { type: "newAction" }
   | { type: "newProject" }
+  | { type: "newFolder" }
   | { type: "quickEntry" }
   | { type: "toggleComplete" }
   | { type: "toggleFlag" }
@@ -36,6 +37,7 @@ export type HotkeyAction =
   | { type: "undo" }
   | { type: "redo" }
   | { type: "copyTaskPaper" }
+  | { type: "convertToProject" }
   | { type: "confirmDelete" }
   | { type: "cancel" };
 
@@ -107,6 +109,7 @@ export function matchOmniFocusHotkey(event: KeyboardEvent, options: {
       "3": "tags",
       "4": "forecast",
       "5": "flagged",
+      "6": "completed",
       "7": "review",
     };
     if (perspectives[key]) return { type: "perspective", id: perspectives[key] };
@@ -126,6 +129,7 @@ export function matchOmniFocusHotkey(event: KeyboardEvent, options: {
   if (meta && ctrl && !alt && !shift && (key === "p" || key === "P")) return { type: "showPerspectivesList" };
 
   if (meta && alt && !ctrl && !shift) {
+    if (key === "n" || key === "N") return { type: "newFolder" };
     if (key === "s" || key === "S") return { type: "toggleSidebar" };
     if (key === "i" || key === "I") return { type: "toggleInspector" };
     if (key === "f" || key === "F") return { type: "toggleSearch" };

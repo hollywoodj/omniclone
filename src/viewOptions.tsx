@@ -86,6 +86,8 @@ export function ViewOptionsPanel({
   tags,
   availability,
   onChangeAvailability,
+  showNotes,
+  onChangeShowNotes,
   onChangeCustom,
   onClose,
 }: {
@@ -96,6 +98,8 @@ export function ViewOptionsPanel({
   tags: string[];
   availability: PerspectiveAvailability;
   onChangeAvailability: (value: PerspectiveAvailability) => void;
+  showNotes: boolean;
+  onChangeShowNotes: (value: boolean) => void;
   onChangeCustom: (patch: Partial<CustomPerspective>) => void;
   onClose: () => void;
 }) {
@@ -182,6 +186,7 @@ export function ViewOptionsPanel({
                           value={rule.availability ?? "remaining"}
                           onChange={(availability) => updateRule(rule.id, { availability: availability as PerspectiveAvailability })}
                           options={[
+                            { label: "Availability: First Available", value: "firstAvailable" },
                             { label: "Availability: Available", value: "available" },
                             { label: "Availability: Remaining", value: "remaining" },
                             { label: "Availability: Completed", value: "completed" },
@@ -328,20 +333,30 @@ export function ViewOptionsPanel({
             <Text style={styles.layoutText}>Keep Sidebar Hidden</Text>
             <Switch value={custom.keepSidebarHidden} onValueChange={(keepSidebarHidden) => onChangeCustom({ keepSidebarHidden })} trackColor={{ true: custom.color }} />
           </View>
+          <View style={styles.layoutRow}>
+            <Text style={styles.layoutText}>Show notes in outline</Text>
+            <Switch value={showNotes} onValueChange={onChangeShowNotes} trackColor={{ true: custom.color }} />
+          </View>
         </>
       ) : (
         <>
           <Text style={styles.standardTitle}>In {title}, show</Text>
-          <Segmented
+          <PopupSelect
             value={availability}
             onChange={onChangeAvailability}
             options={[
+              { label: "First Available", value: "firstAvailable" },
               { label: "Available", value: "available" },
               { label: "Remaining", value: "remaining" },
               { label: "Completed", value: "completed" },
               { label: "All", value: "all" },
             ]}
           />
+          <Text style={styles.sectionLabel}>LAYOUT</Text>
+          <View style={styles.layoutRow}>
+            <Text style={styles.layoutText}>Show notes in outline</Text>
+            <Switch value={showNotes} onValueChange={onChangeShowNotes} trackColor={{ true: palette.purple }} />
+          </View>
           <Text style={styles.hint}>Availability settings have global scope, matching OmniFocus View Options.</Text>
         </>
       )}

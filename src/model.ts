@@ -1,4 +1,4 @@
-export type PerspectiveId = "inbox" | "projects" | "tags" | "forecast" | "flagged" | "review";
+export type PerspectiveId = "inbox" | "projects" | "tags" | "forecast" | "flagged" | "completed" | "review";
 export type ActivePerspective = PerspectiveId | `custom:${string}`;
 
 export type AppSettings = {
@@ -12,6 +12,8 @@ export type AppSettings = {
   textSize: "small" | "medium" | "large";
   colorDueItems: boolean;
   strikeResolvedItems: boolean;
+  showNotesInOutline: boolean;
+  extraFolders: string[];
   perspectiveBarShowsTitles: boolean;
   perspectiveBarVisible: boolean;
   showSidebarCounts: boolean;
@@ -22,7 +24,7 @@ export type AppSettings = {
   standardAvailability: Record<PerspectiveId, PerspectiveAvailability>;
 };
 
-export type PerspectiveAvailability = "available" | "remaining" | "completed" | "all";
+export type PerspectiveAvailability = "firstAvailable" | "available" | "remaining" | "completed" | "all";
 export type PerspectiveCombinator = "all" | "any" | "none";
 export type PerspectiveStructure = "flexible" | "organized";
 export type PerspectiveOrganizeBy = "actions" | "projects";
@@ -78,6 +80,7 @@ export type Project = {
   id: string;
   importKey?: string;
   name: string;
+  folder?: string;
   color: string;
   note: string;
   reviewIntervalDays: number;
@@ -85,6 +88,8 @@ export type Project = {
   status?: "active" | "onHold" | "dropped";
   type?: "parallel" | "sequential" | "singleActions";
 };
+
+export type ActionStatus = "active" | "onHold" | "dropped";
 
 export type Task = {
   id: string;
@@ -103,6 +108,7 @@ export type Task = {
   createdAt: string;
   estimatedMinutes?: number;
   repeat?: "none" | "daily" | "weekly" | "monthly";
+  status?: ActionStatus;
 };
 
 export type PersistedState = {
@@ -136,10 +142,12 @@ export const defaultPerspectiveShortcuts: Record<string, string> = {
   tags: "meta+3",
   forecast: "meta+4",
   flagged: "meta+5",
+  completed: "meta+6",
   review: "meta+7",
 };
 
-export const defaultPerspectiveBarIds = ["inbox", "projects", "tags", "forecast", "flagged", "review"];
+export const defaultPerspectiveBarIds = ["inbox", "projects", "tags", "forecast", "flagged", "completed", "review"];
+export const legacyPerspectiveBarIds = ["inbox", "projects", "tags", "forecast", "flagged", "review"];
 
 export const defaultSettings: AppSettings = {
   version: 1,
@@ -152,6 +160,8 @@ export const defaultSettings: AppSettings = {
   textSize: "medium",
   colorDueItems: true,
   strikeResolvedItems: true,
+  showNotesInOutline: false,
+  extraFolders: [],
   perspectiveBarShowsTitles: true,
   perspectiveBarVisible: true,
   showSidebarCounts: true,
@@ -165,6 +175,7 @@ export const defaultSettings: AppSettings = {
     tags: "remaining",
     forecast: "remaining",
     flagged: "remaining",
+    completed: "completed",
     review: "remaining",
   },
 };
@@ -223,6 +234,7 @@ export const perspectives: Array<{ id: PerspectiveId; label: string; icon: strin
   { id: "tags", label: "Tags", icon: "tag-multiple-outline" },
   { id: "forecast", label: "Forecast", icon: "calendar-month-outline" },
   { id: "flagged", label: "Flagged", icon: "flag-outline" },
+  { id: "completed", label: "Completed", icon: "check-circle-outline" },
   { id: "review", label: "Review", icon: "check-decagram-outline" },
 ];
 

@@ -1,7 +1,13 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { defaultSettings, type AppSettings } from "./model";
+import { defaultPerspectiveBarIds, defaultSettings, legacyPerspectiveBarIds, type AppSettings } from "./model";
 
 const SETTINGS_STORAGE_KEY = "omniclone.settings.v1";
+
+function migratePerspectiveBarIds(ids: string[] | undefined) {
+  if (!ids?.length) return defaultPerspectiveBarIds;
+  if (ids.join() === legacyPerspectiveBarIds.join()) return defaultPerspectiveBarIds;
+  return ids;
+}
 
 export async function loadSettings(): Promise<AppSettings> {
   try {
@@ -13,9 +19,11 @@ export async function loadSettings(): Promise<AppSettings> {
       ...parsed,
       version: 1,
       cleanUpImmediately: parsed.cleanUpImmediately ?? defaultSettings.cleanUpImmediately,
+      showNotesInOutline: parsed.showNotesInOutline ?? defaultSettings.showNotesInOutline,
+      extraFolders: parsed.extraFolders ?? defaultSettings.extraFolders,
       sidebarWidth: parsed.sidebarWidth ?? defaultSettings.sidebarWidth,
       inspectorWidth: parsed.inspectorWidth ?? defaultSettings.inspectorWidth,
-      perspectiveBarIds: parsed.perspectiveBarIds?.length ? parsed.perspectiveBarIds : defaultSettings.perspectiveBarIds,
+      perspectiveBarIds: migratePerspectiveBarIds(parsed.perspectiveBarIds),
       perspectiveShortcuts: { ...defaultSettings.perspectiveShortcuts, ...parsed.perspectiveShortcuts },
       standardAvailability: { ...defaultSettings.standardAvailability, ...parsed.standardAvailability },
     };

@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS projects (
   review_interval_days INTEGER NOT NULL DEFAULT 7,
   last_reviewed_at TEXT,
   status TEXT NOT NULL DEFAULT 'active',
-  type TEXT NOT NULL DEFAULT 'parallel'
+  type TEXT NOT NULL DEFAULT 'parallel',
+  folder TEXT
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
@@ -30,6 +31,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   sort_order INTEGER,
   estimated_minutes INTEGER,
   repeat TEXT NOT NULL DEFAULT 'none',
+  status TEXT NOT NULL DEFAULT 'active',
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id);
@@ -92,6 +94,7 @@ async function migrateTasks(db: SQLite.SQLiteDatabase) {
     ["sort_order", "INTEGER"],
     ["estimated_minutes", "INTEGER"],
     ["repeat", "TEXT NOT NULL DEFAULT 'none'"],
+    ["status", "TEXT NOT NULL DEFAULT 'active'"],
   ];
   for (const [name, definition] of add) {
     if (!names.has(name)) await db.execAsync(`ALTER TABLE tasks ADD COLUMN ${name} ${definition}`);
@@ -103,6 +106,7 @@ async function migrateProjects(db: SQLite.SQLiteDatabase) {
   const names = new Set(columns.map((column) => column.name));
   if (!names.has("status")) await db.execAsync("ALTER TABLE projects ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
   if (!names.has("type")) await db.execAsync("ALTER TABLE projects ADD COLUMN type TEXT NOT NULL DEFAULT 'parallel'");
+  if (!names.has("folder")) await db.execAsync("ALTER TABLE projects ADD COLUMN folder TEXT");
 }
 
 async function migrateCustomPerspectives(db: SQLite.SQLiteDatabase) {
