@@ -13,6 +13,8 @@
 set -euo pipefail
 
 export GH_REPO="${GH_REPO:-${GITHUB_REPOSITORY:-}}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ASSETS_PY="${SCRIPT_DIR}/github_release_assets.py"
 
 retry() {
   local attempts="$1"
@@ -37,17 +39,8 @@ encode_name() {
   python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"
 }
 
-# Match GitHub's release-asset sanitize_file_name (see cli/cli#7024).
 sanitize_asset_name() {
-  python3 -c '
-import re, sys
-name = sys.argv[1]
-if name.startswith("."):
-    name = "default." + name
-name = re.sub(r"[^A-Za-z0-9\-_@+]+", ".", name)
-name = re.sub(r"\.{2,}", ".", name)
-print(name.strip("."))
-' "$1"
+  python3 "$ASSETS_PY" sanitize "$1"
 }
 
 find_release_id() {
@@ -97,36 +90,13 @@ list_assets_json() {
 log_assets() {
   local id="$1"
   echo "Current assets on release ${id}:" >&2
-  list_assets_json "$id" | python3 -c '
-import json, sys
-assets = json.load(sys.stdin)
-if not assets:
-    print("  (none)", file=sys.stderr)
-    raise SystemExit(0)
-for asset in assets:
-    print(f"  {asset[\"id\"]} {asset[\"name\"]} ({asset.get(\"size\", \"?\")} bytes)", file=sys.stderr)
-'
+  list_assets_json "$id" | python3 "$ASSETS_PY" log
 }
 
 colliding_asset_ids() {
   local id="$1"
   local name="$2"
-  list_assets_json "$id" | python3 -c '
-import json, re, sys
-
-def sanitize(name: str) -> str:
-    if name.startswith("."):
-        name = "default." + name
-    name = re.sub(r"[^A-Za-z0-9\-_@+]+", ".", name)
-    name = re.sub(r"\.{2,}", ".", name)
-    return name.strip(".")
-
-want = sanitize(sys.argv[1])
-for asset in json.load(sys.stdin):
-    stored = asset.get("name") or ""
-    if stored == sys.argv[1] or sanitize(stored) == want:
-        print(f"{asset[\"id\"]}\t{stored}")
-' "$name"
+  list_assets_json "$id" | python3 "$ASSETS_PY" collisions "$name"
 }
 
 delete_asset_id() {
@@ -248,14 +218,7 @@ stage_artifacts() {
 }
 
 self_test() {
-  local got
-  got="$(sanitize_asset_name "OmniClone Setup 1.0.9.exe")"
-  [[ "$got" == "OmniClone.Setup.1.0.9.exe" ]]
-  got="$(sanitize_asset_name "OmniClone.Setup.1.0.9.exe")"
-  [[ "$got" == "OmniClone.Setup.1.0.9.exe" ]]
-  got="$(sanitize_asset_name "OmniClone-1.0.9-arm64.dmg")"
-  [[ "$got" == "OmniClone-1.0.9-arm64.dmg" ]]
-  echo "self-test ok"
+  python3 "$ASSETS_PY" --self-test
 }
 
 main() {
@@ -269,6 +232,7 @@ main() {
   : "${SHA:?}"
   : "${DIST:?}"
   export GH_REPO="${GH_REPO:-$GITHUB_REPOSITORY}"
+  python3 "$ASSETS_PY" --self-test
   stage_artifacts
   local id
   id="$(ensure_release_id)"
