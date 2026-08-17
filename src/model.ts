@@ -15,6 +15,8 @@ export type AppSettings = {
   perspectiveBarShowsTitles: boolean;
   perspectiveBarVisible: boolean;
   showSidebarCounts: boolean;
+  sidebarWidth: number;
+  inspectorWidth: number;
   perspectiveBarIds: string[];
   perspectiveShortcuts: Record<string, string>;
   standardAvailability: Record<PerspectiveId, PerspectiveAvailability>;
@@ -80,6 +82,8 @@ export type Project = {
   note: string;
   reviewIntervalDays: number;
   lastReviewedAt?: string;
+  status?: "active" | "onHold" | "dropped";
+  type?: "parallel" | "sequential" | "singleActions";
 };
 
 export type Task = {
@@ -87,6 +91,8 @@ export type Task = {
   importKey?: string;
   title: string;
   projectId: string | null;
+  parentId?: string | null;
+  sortOrder?: number;
   tags: string[];
   due?: string;
   defer?: string;
@@ -95,6 +101,8 @@ export type Task = {
   completed: boolean;
   completedAt?: string;
   createdAt: string;
+  estimatedMinutes?: number;
+  repeat?: "none" | "daily" | "weekly" | "monthly";
 };
 
 export type PersistedState = {
@@ -147,6 +155,8 @@ export const defaultSettings: AppSettings = {
   perspectiveBarShowsTitles: true,
   perspectiveBarVisible: true,
   showSidebarCounts: true,
+  sidebarWidth: 236,
+  inspectorWidth: 316,
   perspectiveBarIds: defaultPerspectiveBarIds,
   perspectiveShortcuts: defaultPerspectiveShortcuts,
   standardAvailability: {

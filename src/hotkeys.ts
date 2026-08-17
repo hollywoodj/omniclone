@@ -30,6 +30,12 @@ export type HotkeyAction =
   | { type: "editTitle" }
   | { type: "expandAll" }
   | { type: "collapseAll" }
+  | { type: "indent" }
+  | { type: "outdent" }
+  | { type: "moveRow"; direction: "up" | "down" }
+  | { type: "undo" }
+  | { type: "redo" }
+  | { type: "copyTaskPaper" }
   | { type: "confirmDelete" }
   | { type: "cancel" };
 
@@ -114,6 +120,7 @@ export function matchOmniFocusHotkey(event: KeyboardEvent, options: {
     if (key === "]") return { type: "goForward" };
     if (key === "k" || key === "K") return { type: "cleanUp" };
     if (key === "d" || key === "D") return { type: "duplicate" };
+    if (key === "z" || key === "Z") return { type: "undo" };
   }
 
   if (meta && ctrl && !alt && !shift && (key === "p" || key === "P")) return { type: "showPerspectivesList" };
@@ -125,6 +132,8 @@ export function matchOmniFocusHotkey(event: KeyboardEvent, options: {
     if (key === "p" || key === "P") return { type: "togglePerspectivesBar" };
     if (key === "9") return { type: "expandAll" };
     if (key === "0") return { type: "collapseAll" };
+    if (key === "ArrowUp") return { type: "moveRow", direction: "up" };
+    if (key === "ArrowDown") return { type: "moveRow", direction: "down" };
   }
 
   if (meta && shift && !ctrl && !alt) {
@@ -133,6 +142,8 @@ export function matchOmniFocusHotkey(event: KeyboardEvent, options: {
     if (key === "r" || key === "R") return { type: "markReviewed" };
     if (key === "v" || key === "V") return { type: "toggleViewMenu" };
     if (key === "l" || key === "L") return { type: "toggleFlag" };
+    if (key === "c" || key === "C") return { type: "copyTaskPaper" };
+    if (key === "z" || key === "Z") return { type: "redo" };
   }
 
   if (ctrl && alt && !meta && shift && (key === "s" || key === "S")) return { type: "quickEntry" };
@@ -145,12 +156,20 @@ export function matchOmniFocusHotkey(event: KeyboardEvent, options: {
     }
     if (key === "Enter") return { type: "editTitle" };
     if (key === "f" || key === "F") return { type: "toggleFlag" };
+    if (key === "Tab") {
+      event.preventDefault();
+      return { type: "indent" };
+    }
     if (key === "ArrowUp") return { type: "selectRow", direction: "up" };
     if (key === "ArrowDown") return { type: "selectRow", direction: "down" };
     if (key === "Delete" || key === "Backspace") return { type: "delete", direction: "previous" };
   }
 
   if (!meta && !ctrl && !alt && shift) {
+    if (key === "Tab") {
+      event.preventDefault();
+      return { type: "outdent" };
+    }
     if (key === "ArrowUp") return { type: "extendRow", direction: "up" };
     if (key === "ArrowDown") return { type: "extendRow", direction: "down" };
   }

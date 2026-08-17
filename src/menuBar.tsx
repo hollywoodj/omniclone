@@ -74,7 +74,11 @@ export function buildAppMenus(options: {
       items: [
         { id: "select-all", label: "Select All", shortcut: "⌘A", command: { type: "selectAll" } },
         { id: "duplicate", label: "Duplicate", shortcut: "⌘D", command: { type: "duplicate" } },
+        { id: "undo", label: "Undo", shortcut: "⌘Z", command: { type: "undo" } },
+        { id: "redo", label: "Redo", shortcut: "⇧⌘Z", command: { type: "redo" } },
         { id: "sep-edit", separator: true },
+        { id: "copy-paper", label: "Copy as TaskPaper", shortcut: "⇧⌘C", command: { type: "copyTaskPaper" } },
+        { id: "sep-find", separator: true },
         { id: "find", label: "Find", shortcut: "⌘F", command: { type: "toggleSearch" } },
       ],
     },
@@ -102,6 +106,11 @@ export function buildAppMenus(options: {
       items: [
         { id: "clean-up", label: "Clean Up", shortcut: "⌘K", command: { type: "cleanUp" } },
         { id: "sep-org-1", separator: true },
+        { id: "indent", label: "Indent", shortcut: "⇥", command: { type: "indent" } },
+        { id: "outdent", label: "Outdent", shortcut: "⇧⇥", command: { type: "outdent" } },
+        { id: "move-up", label: "Move Up", shortcut: "⌥⌘↑", command: { type: "moveRow", direction: "up" } },
+        { id: "move-down", label: "Move Down", shortcut: "⌥⌘↓", command: { type: "moveRow", direction: "down" } },
+        { id: "sep-org-2", separator: true },
         { id: "expand-org", label: "Expand All", shortcut: "⌥⌘9", command: { type: "expandAll" } },
         { id: "collapse-org", label: "Collapse All", shortcut: "⌥⌘0", command: { type: "collapseAll" } },
       ],

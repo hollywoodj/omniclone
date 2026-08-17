@@ -44,6 +44,21 @@ import { compareTasks, duplicateCustomPerspective, effectiveGroupBy, normalizeCu
 import { formatShortcut, toElectronAccelerator } from "./src/shortcuts";
 import { useMarqueeSelection, useModifierKeys } from "./src/marquee";
 import {
+  applyRepeat,
+  childMap,
+  descendantsOf,
+  flattenTasks,
+  formatEstimate,
+  indentTasks,
+  insertTaskAfter,
+  moveSiblings,
+  outdentTasks,
+  projectIsStalled,
+  taskDepth,
+  taskMatchesView,
+  toTaskPaper,
+} from "./src/outline";
+import {
   duePresetLabel,
   dueUrgency,
   formatAvailableLabel,
@@ -51,7 +66,6 @@ import {
   forecastWeek,
   inspectorTimestamp,
   isDueOnDay,
-  matchesAvailability,
   projectDueForReview,
   reviewStatusText,
   sameLocation,
@@ -108,6 +122,39 @@ const projectColors = ["#8f57c8", "#2f8de4", "#58a65c", "#dc7f43", "#d05475", "#
 
 function Icon({ name, size = 20, color = palette.text }: { name: IconName; size?: number; color?: string }) {
   return <MaterialCommunityIcons name={name} size={size} color={color} />;
+}
+
+function clampPane(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function PaneResizeHandle({ onDrag }: { onDrag: (delta: number) => void }) {
+  const lastX = useRef<number | null>(null);
+  if (Platform.OS !== "web") return <View style={styles.paneHandle} />;
+  return (
+    <View
+      accessibilityLabel="Resize pane"
+      style={[styles.paneHandle, { cursor: "col-resize" } as object]}
+      {...({
+        onMouseDown: (event: { clientX: number; preventDefault?: () => void }) => {
+          event.preventDefault?.();
+          lastX.current = event.clientX;
+          const move = (next: MouseEvent) => {
+            if (lastX.current == null) return;
+            onDrag(next.clientX - lastX.current);
+            lastX.current = next.clientX;
+          };
+          const up = () => {
+            lastX.current = null;
+            window.removeEventListener("mousemove", move);
+            window.removeEventListener("mouseup", up);
+          };
+          window.addEventListener("mousemove", move);
+          window.addEventListener("mouseup", up);
+        },
+      } as object)}
+    />
+  );
 }
 
 function ToolbarButton({ icon, label, active, onPress, disabled }: {
@@ -327,8 +374,11 @@ function ProjectSidebar({
                 onPress={() => onSelectProject(project.id)}
                 style={[styles.sidebarRow, selectedProjectId === project.id && styles.sidebarRowSelected]}
               >
-                <View style={[styles.projectDot, { borderColor: project.color }]} />
-                <Text numberOfLines={1} style={styles.sidebarRowText}>{project.name}</Text>
+                <View style={[styles.projectDot, { borderColor: project.color }, project.status === "dropped" && styles.projectDotDropped, project.status === "onHold" && styles.projectDotHold]} />
+                <Text numberOfLines={1} style={[styles.sidebarRowText, project.status === "dropped" && styles.taskTitleCompleted, project.status === "onHold" && styles.sidebarHoldText]}>{project.name}</Text>
+                {project.status === "onHold" && <Text style={styles.sidebarStatusTag}>On Hold</Text>}
+                {project.status === "dropped" && <Text style={styles.sidebarStatusTag}>Dropped</Text>}
+                {project.type === "sequential" && <Icon name="arrow-down-bold" size={12} color="#8b888f" />}
                 {showCounts && <Text style={styles.sidebarCount}>{tasks.filter((task) => task.projectId === project.id && !task.completed).length}</Text>}
               </ContextMenuPressable>
             ))}
@@ -394,7 +444,7 @@ function ProjectSidebar({
   );
 }
 
-function TaskRow({ task, project, projects, selected, editing, bulkCount, settings, registerRow, onSelect, onToggle, onInspect, onToggleSelected, onToggleFlag, onDelete, onCopy, onCopyLink, onDuplicate, onMove, onStartEdit, onCommitTitle }: {
+function TaskRow({ task, project, projects, selected, editing, bulkCount, settings, depth = 0, hasChildren = false, collapsed = false, registerRow, onSelect, onToggle, onInspect, onToggleSelected, onToggleFlag, onDelete, onCopy, onCopyLink, onCopyTaskPaper, onDuplicate, onMove, onIndent, onOutdent, onMoveRow, onToggleCollapse, onStartEdit, onCommitTitle }: {
   task: Task;
   project?: Project;
   projects: Project[];
@@ -402,6 +452,9 @@ function TaskRow({ task, project, projects, selected, editing, bulkCount, settin
   editing: boolean;
   bulkCount: number;
   settings: AppSettings;
+  depth?: number;
+  hasChildren?: boolean;
+  collapsed?: boolean;
   registerRow: (id: string, node: View | null) => void;
   onSelect: () => void;
   onToggle: () => void;
@@ -411,8 +464,13 @@ function TaskRow({ task, project, projects, selected, editing, bulkCount, settin
   onDelete: () => void;
   onCopy: () => void;
   onCopyLink: () => void;
+  onCopyTaskPaper: () => void;
   onDuplicate: () => void;
   onMove: (projectId: string | null) => void;
+  onIndent: () => void;
+  onOutdent: () => void;
+  onMoveRow: (direction: -1 | 1) => void;
+  onToggleCollapse: () => void;
   onStartEdit: () => void;
   onCommitTitle: (title: string) => void;
 }) {
@@ -430,6 +488,10 @@ function TaskRow({ task, project, projects, selected, editing, bulkCount, settin
     { id: "flag", label: `${task.flagged ? "Remove Flag" : "Flag"}${bulk ? ` (${bulkCount})` : ""}`, icon: task.flagged ? "flag-off-outline" : "flag-outline", shortcut: "⇧⌘L", onPress: onToggleFlag },
     { id: "sep-org", label: "", separator: true },
     { id: "duplicate", label: bulk ? `Duplicate (${bulkCount})` : "Duplicate", icon: "content-duplicate", shortcut: "⌘D", onPress: onDuplicate },
+    { id: "indent", label: "Indent", icon: "format-indent-increase", shortcut: "⇥", onPress: onIndent },
+    { id: "outdent", label: "Outdent", icon: "format-indent-decrease", shortcut: "⇧⇥", onPress: onOutdent },
+    { id: "up", label: "Move Up", icon: "arrow-up", shortcut: "⌥⌘↑", onPress: () => onMoveRow(-1) },
+    { id: "down", label: "Move Down", icon: "arrow-down", shortcut: "⌥⌘↓", onPress: () => onMoveRow(1) },
     { id: "inbox", label: "Move to Inbox", icon: "inbox-arrow-down-outline", onPress: () => onMove(null) },
     ...projects.slice(0, 8).map((item) => ({
       id: `move-${item.id}`,
@@ -439,6 +501,7 @@ function TaskRow({ task, project, projects, selected, editing, bulkCount, settin
     })),
     { id: "sep-copy", label: "", separator: true },
     { id: "copy", label: bulk ? `Copy Titles (${bulkCount})` : "Copy Title", icon: "content-copy", onPress: onCopy },
+    { id: "paper", label: "Copy as TaskPaper", icon: "code-tags", shortcut: "⇧⌘C", onPress: onCopyTaskPaper },
     { id: "link", label: bulk ? `Copy Links (${bulkCount})` : "Copy Link", icon: "link-variant", onPress: onCopyLink },
     { id: "delete", label: bulk ? `Delete (${bulkCount})` : "Delete", icon: "trash-can-outline", destructive: true, onPress: onDelete },
   ];
@@ -457,8 +520,16 @@ function TaskRow({ task, project, projects, selected, editing, bulkCount, settin
         onHoverIn={() => setHovered(true)}
         onHoverOut={() => setHovered(false)}
         {...({ onDoubleClick: onStartEdit } as object)}
-        style={({ pressed }) => [styles.taskRow, settings.rowDensity === "compact" && styles.taskRowCompact, selected && styles.taskRowSelected, hovered && !selected && styles.taskRowHover, pressed && styles.taskRowPressed]}
+        style={({ pressed }) => [styles.taskRow, settings.rowDensity === "compact" && styles.taskRowCompact, selected && styles.taskRowSelected, hovered && !selected && styles.taskRowHover, pressed && styles.taskRowPressed, { paddingLeft: 8 + depth * 18 }]}
       >
+        <Pressable
+          accessibilityLabel={collapsed ? "Expand action group" : "Collapse action group"}
+          onPress={hasChildren ? onToggleCollapse : undefined}
+          style={styles.collapseButton}
+          {...({ dataSet: { noMarquee: "true" } } as object)}
+        >
+          {hasChildren ? <Icon name={collapsed ? "chevron-right" : "chevron-down"} size={16} color="#6e6c72" /> : <View style={{ width: 16 }} />}
+        </Pressable>
         <StatusRing completed={task.completed} flagged={task.flagged} urgency={urgency} color={project?.color} onPress={onToggle} />
         <View style={styles.taskBody}>
           <View style={styles.taskTitleLine}>
@@ -501,6 +572,7 @@ function TaskRow({ task, project, projects, selected, editing, bulkCount, settin
           </View>
         </View>
         <View style={styles.taskTail}>
+          {!!task.estimatedMinutes && <Text style={styles.estimateText}>{formatEstimate(task.estimatedMinutes)}</Text>}
           {!!task.due && <Text style={[styles.dueText, settings.colorDueItems && urgency === "overdue" && styles.dueOverdue, settings.colorDueItems && urgency === "dueSoon" && styles.dueSoon]}>{task.due}</Text>}
           {!task.due && !!availableLabel && <Text style={styles.deferText}>{availableLabel}</Text>}
           <Pressable accessibilityLabel={task.flagged ? "Remove flag" : "Flag"} onPress={onToggleFlag} hitSlop={8} {...({ dataSet: { noMarquee: "true" } } as object)}>
@@ -592,6 +664,10 @@ function Outline({
   onCleanUp,
   onExpandAll,
   onCollapseAll,
+  onIndent,
+  onOutdent,
+  onMoveRow,
+  onCopyTaskPaper,
 }: {
   title: string;
   perspective: ActivePerspective;
@@ -635,6 +711,10 @@ function Outline({
   onCleanUp: () => void;
   onExpandAll: () => void;
   onCollapseAll: () => void;
+  onIndent: (id: string) => void;
+  onOutdent: (id: string) => void;
+  onMoveRow: (id: string, direction: -1 | 1) => void;
+  onCopyTaskPaper: (id: string) => void;
 }) {
   const { openMenu } = useContextMenuTrigger();
   const containerRef = useRef<View>(null);
@@ -650,6 +730,8 @@ function Outline({
   });
   const selectedSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
+  const byId = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
+  const children = useMemo(() => childMap(tasks), [tasks]);
   const outlineMenuItems: ContextMenuItem[] = [
     { id: "select-all", label: "Select All", icon: "select-all", shortcut: "⌘A", onPress: onSelectAll },
     { id: "clean-up", label: "Clean Up", icon: "broom", shortcut: "⌘K", onPress: onCleanUp },
@@ -709,6 +791,9 @@ function Outline({
         editing={editingTaskId === task.id}
         bulkCount={bulkCount}
         settings={settings}
+        depth={taskDepth(task, byId)}
+        hasChildren={!!children.get(task.id)?.length}
+        collapsed={collapsed.has(task.id)}
         registerRow={registerRow}
         onSelect={() => {
           if (suppressClickRef.current) return;
@@ -722,8 +807,13 @@ function Outline({
         onDelete={() => onDeleteTask(task.id)}
         onCopy={() => onCopyTasks(task.id)}
         onCopyLink={() => onCopyLink(task.id)}
+        onCopyTaskPaper={() => onCopyTaskPaper(task.id)}
         onDuplicate={() => onDuplicateTasks(task.id)}
         onMove={(projectId) => onMoveTasks(task.id, projectId)}
+        onIndent={() => onIndent(task.id)}
+        onOutdent={() => onOutdent(task.id)}
+        onMoveRow={(direction) => onMoveRow(task.id, direction)}
+        onToggleCollapse={() => toggleCollapsed(task.id)}
         onStartEdit={() => onStartEdit(task.id)}
         onCommitTitle={(title) => onCommitTitle(task.id, title)}
       />
@@ -733,14 +823,14 @@ function Outline({
   const tags = [...new Set(tasks.flatMap((task) => task.tags))].sort();
   const groupBy = customPerspective ? effectiveGroupBy(customPerspective) : null;
   const visibleProjects = projects.filter((project) => !projectFilter || project.id === projectFilter);
-  const reviewProjects = projects.filter((project) => projectDueForReview(project));
+  const reviewProjects = projects.filter((project) => projectDueForReview(project) || projectIsStalled(project, tasks));
   const remainingCount = tasks.filter((task) => !task.completed).length;
   const outlineSubtitle = perspective === "forecast"
     ? forecastSubtitle(forecastDay)
     : perspective === "review"
-      ? (reviewProjects.length ? `${reviewProjects.length} project${reviewProjects.length === 1 ? "" : "s"} due for review` : "All caught up")
+      ? (reviewProjects.length ? `${reviewProjects.length} project${reviewProjects.length === 1 ? "" : "s"} to review` : "All caught up")
       : `${remainingCount} action${remainingCount === 1 ? "" : "s"}${selectedTaskIds.length > 1 ? ` • ${selectedTaskIds.length} selected` : ""}${perspective === "projects" && !projectFilter ? ` • ${projects.length} projects` : ""}${tagFilter ? ` • ${tagFilter}` : ""}`;
-  const renderGroupTasks = (id: string, groupTasks: Task[]) => collapsed.has(id) ? null : groupTasks.map(taskRow);
+  const renderGroupTasks = (id: string, groupTasks: Task[]) => collapsed.has(id) ? null : flattenTasks(groupTasks, collapsed).map(taskRow);
 
   return (
     <View style={styles.outline}>
@@ -826,13 +916,19 @@ function Outline({
             </View>
           );
         })}
-        {groupBy === "none" && tasks.map(taskRow)}
+        {groupBy === "none" && flattenTasks(tasks, collapsed).map(taskRow)}
         {!customPerspective && perspective === "projects" && visibleProjects.map((project) => {
           const projectTasks = tasks.filter((task) => task.projectId === project.id);
           return (
             <View key={project.id} style={styles.projectGroup}>
               {projectHeading(project, projectTasks.filter((task) => !task.completed).length)}
               {renderGroupTasks(project.id, projectTasks)}
+              {!collapsed.has(project.id) && (
+                <Pressable onPress={() => onNewActionInProject(project.id)} style={styles.inlineNewAction} {...({ dataSet: { noMarquee: "true" } } as object)}>
+                  <Icon name="plus" size={16} color={palette.purpleDark} />
+                  <Text style={styles.inlineNewActionText}>New Action</Text>
+                </Pressable>
+              )}
             </View>
           );
         })}
@@ -849,7 +945,7 @@ function Outline({
             </View>
           );
         })}
-        {!customPerspective && perspective === "tags" && !!tagFilter && tasks.map(taskRow)}
+        {!customPerspective && perspective === "tags" && !!tagFilter && flattenTasks(tasks, collapsed).map(taskRow)}
         {!customPerspective && perspective === "review" && reviewProjects.map((project) => {
           const remaining = tasks.filter((task) => task.projectId === project.id && !task.completed);
           const reviewId = `review:${project.id}`;
@@ -860,14 +956,14 @@ function Outline({
                   <Icon name={collapsed.has(reviewId) ? "chevron-right" : "chevron-down"} size={18} color="#6e6c72" />
                 </Pressable>
                 <View style={[styles.projectHeadingRing, { borderColor: project.color }]} />
-                <View style={styles.reviewCopy}><Text style={styles.projectHeadingTitle}>{project.name}</Text><Text style={styles.projectHeadingNote}>{reviewStatusText(project)}{remaining.length ? ` · ${remaining.length} remaining` : ""}</Text></View>
+                <View style={styles.reviewCopy}><Text style={styles.projectHeadingTitle}>{project.name}</Text><Text style={styles.projectHeadingNote}>{projectIsStalled(project, tasks) ? "Stalled · no remaining actions" : reviewStatusText(project)}{remaining.length ? ` · ${remaining.length} remaining` : ""}</Text></View>
                 <Pressable onPress={() => onReviewProject(project.id)} style={styles.reviewButton} {...({ dataSet: { noMarquee: "true" } } as object)}><Icon name="check" size={15} color="#fff" /><Text style={styles.reviewButtonText}>Reviewed</Text></Pressable>
               </ContextMenuPressable>
               {!collapsed.has(reviewId) && remaining.map(taskRow)}
             </View>
           );
         })}
-        {!customPerspective && perspective !== "projects" && perspective !== "tags" && perspective !== "review" && tasks.map(taskRow)}
+        {!customPerspective && perspective !== "projects" && perspective !== "tags" && perspective !== "review" && flattenTasks(tasks, collapsed).map(taskRow)}
         {databaseEmpty ? (
           <View style={styles.migrateState}>
             <View style={styles.migrateIcon}><Icon name="database-import-outline" size={28} color={palette.purpleDark} /></View>
@@ -1013,6 +1109,22 @@ function Inspector({ task, projects, onChange, onToggle, onDelete, onClose, moda
           <FieldLabel>Due</FieldLabel>
           <DatePresets value={task.due} onChange={(due) => onChange({ due })} />
           <TextInput value={task.due ?? ""} onChangeText={(due) => onChange({ due })} placeholder="None" style={styles.fieldInput} />
+          <FieldLabel>Repeat</FieldLabel>
+          <View style={styles.datePresets}>
+            {(["none", "daily", "weekly", "monthly"] as const).map((repeat) => (
+              <Pressable key={repeat} onPress={() => onChange({ repeat })} style={[styles.datePreset, (task.repeat ?? "none") === repeat && styles.datePresetSelected]}>
+                <Text style={[styles.datePresetText, (task.repeat ?? "none") === repeat && styles.datePresetTextSelected]}>{repeat === "none" ? "None" : repeat === "daily" ? "Daily" : repeat === "weekly" ? "Weekly" : "Monthly"}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <FieldLabel>Estimated Duration</FieldLabel>
+          <View style={styles.datePresets}>
+            {[{ label: "None", minutes: undefined }, { label: "5m", minutes: 5 }, { label: "15m", minutes: 15 }, { label: "30m", minutes: 30 }, { label: "1h", minutes: 60 }].map((item) => (
+              <Pressable key={item.label} onPress={() => onChange({ estimatedMinutes: item.minutes })} style={[styles.datePreset, (task.estimatedMinutes ?? undefined) === item.minutes && styles.datePresetSelected]}>
+                <Text style={[styles.datePresetText, (task.estimatedMinutes ?? undefined) === item.minutes && styles.datePresetTextSelected]}>{item.label}</Text>
+              </Pressable>
+            ))}
+          </View>
         </View>
 
         {!!task.note && (
@@ -1070,6 +1182,25 @@ function ProjectInspector({ project, remainingCount, onChange, onReview, onDelet
           <View style={styles.colorChoiceRow}>
             {projectColors.map((color) => (
               <Pressable key={color} onPress={() => onChange({ color })} style={[styles.inspectorColor, { backgroundColor: color }, project.color === color && styles.inspectorColorSelected]} />
+            ))}
+          </View>
+        </View>
+        <View style={styles.inspectorSection}>
+          <Text style={styles.inspectorSectionTitle}>STATUS</Text>
+          <FieldLabel>Type</FieldLabel>
+          <View style={styles.datePresets}>
+            {([{ id: "parallel", label: "Parallel" }, { id: "sequential", label: "Sequential" }, { id: "singleActions", label: "Single Actions" }] as const).map((item) => (
+              <Pressable key={item.id} onPress={() => onChange({ type: item.id })} style={[styles.datePreset, (project.type ?? "parallel") === item.id && styles.datePresetSelected]}>
+                <Text style={[styles.datePresetText, (project.type ?? "parallel") === item.id && styles.datePresetTextSelected]}>{item.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <FieldLabel>Status</FieldLabel>
+          <View style={styles.datePresets}>
+            {([{ id: "active", label: "Active" }, { id: "onHold", label: "On Hold" }, { id: "dropped", label: "Dropped" }] as const).map((item) => (
+              <Pressable key={item.id} onPress={() => onChange({ status: item.id })} style={[styles.datePreset, (project.status ?? "active") === item.id && styles.datePresetSelected]}>
+                <Text style={[styles.datePresetText, (project.status ?? "active") === item.id && styles.datePresetTextSelected]}>{item.label}</Text>
+              </Pressable>
             ))}
           </View>
         </View>
@@ -1536,6 +1667,12 @@ export default function App() {
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [collapseNonce, setCollapseNonce] = useState<{ action: "expand" | "collapse"; n: number } | null>(null);
   const [pendingCleanupIds, setPendingCleanupIds] = useState<string[]>([]);
+  const undoStack = useRef<Array<{ projects: Project[]; tasks: Task[] }>>([]);
+  const redoStack = useRef<Array<{ projects: Project[]; tasks: Task[] }>>([]);
+  const pushUndo = useCallback(() => {
+    undoStack.current = [...undoStack.current.slice(-19), { projects, tasks }];
+    redoStack.current = [];
+  }, [projects, tasks]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -1607,6 +1744,7 @@ export default function App() {
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
   const selectedTasks = tasks.filter((task) => selectedTaskIds.includes(task.id));
   const selectedProject = selectedTask?.projectId ? projects.find((project) => project.id === selectedTask.projectId) : undefined;
+  const defaultProjectId = projectFilter ?? selectedProject?.id ?? null;
   const inspectedProject = inspectedProjectId ? projects.find((project) => project.id === inspectedProjectId) : undefined;
   const marqueeBaseRef = useRef<SelectionState>(emptySelection);
   const activeCustomPerspective = perspective.startsWith("custom:") ? customPerspectives.find((item) => item.id === perspective.slice(7)) ?? null : null;
@@ -1664,7 +1802,7 @@ export default function App() {
     const lingering = new Set(pendingCleanupIds);
     if (activeCustomPerspective) {
       const custom = activeCustomPerspective;
-      result = result.filter((task) => taskMatchesCustomPerspective(task, custom) || lingering.has(task.id));
+      result = result.filter((task) => taskMatchesCustomPerspective(task, custom, { tasks, projects }) || lingering.has(task.id));
       if (projectFilter) result = result.filter((task) => task.projectId === projectFilter);
       if (tagFilter) result = result.filter((task) => task.tags.includes(tagFilter));
       result.sort((a, b) => compareTasks(a, b, custom.sortBy));
@@ -1676,7 +1814,7 @@ export default function App() {
       if (projectFilter && perspective === "projects") result = result.filter((task) => task.projectId === projectFilter);
       if (tagFilter) result = result.filter((task) => task.tags.includes(tagFilter));
       const availability = settings.standardAvailability[perspective as PerspectiveId] ?? (settings.showCompleted ? "all" : "remaining");
-      result = result.filter((task) => matchesAvailability(task, availability) || lingering.has(task.id));
+      result = result.filter((task) => taskMatchesView(task, availability, { tasks, projects }) || lingering.has(task.id));
     }
     if (focusedProjectId) result = result.filter((task) => task.projectId === focusedProjectId);
     if (query.trim()) {
@@ -1684,7 +1822,7 @@ export default function App() {
       result = result.filter((task) => `${task.title} ${task.note ?? ""} ${task.tags.join(" ")}`.toLowerCase().includes(needle));
     }
     return result;
-  }, [tasks, perspective, projectFilter, tagFilter, forecastDay, focusedProjectId, settings.showCompleted, settings.standardAvailability, query, activeCustomPerspective, pendingCleanupIds]);
+  }, [tasks, projects, perspective, projectFilter, tagFilter, forecastDay, focusedProjectId, settings.showCompleted, settings.standardAvailability, query, activeCustomPerspective, pendingCleanupIds]);
 
   const orderedTaskIds = useMemo(() => outlineTaskIds({
     tasks: visibleTasks,
@@ -1786,7 +1924,31 @@ export default function App() {
     if (!targets.length) return;
     const nextCompleted = !targets.every((task) => task.completed);
     const completedAt = nextCompleted ? new Date().toISOString() : undefined;
-    setTasks((current) => current.map((task) => ids.includes(task.id) ? { ...task, completed: nextCompleted, completedAt } : task));
+    pushUndo();
+    setTasks((current) => {
+      const next = current.map((task) => ({ ...task }));
+      const byId = new Map(next.map((task) => [task.id, task]));
+      const affected = new Set(ids);
+      if (nextCompleted) {
+        for (const id of ids) {
+          for (const child of descendantsOf(id, next)) affected.add(child.id);
+        }
+      }
+      for (const id of affected) {
+        const task = byId.get(id);
+        if (!task) continue;
+        if (nextCompleted && ids.includes(id)) {
+          const repeat = applyRepeat(task);
+          if (repeat) {
+            Object.assign(task, repeat);
+            continue;
+          }
+        }
+        task.completed = nextCompleted;
+        task.completedAt = completedAt;
+      }
+      return next;
+    });
     if (!settings.cleanUpImmediately) {
       setPendingCleanupIds((current) => nextCompleted
         ? [...new Set([...current, ...ids])]
@@ -1803,17 +1965,20 @@ export default function App() {
   };
 
   const finalizeDeleteTasks = useCallback((ids: string[], direction: "menu" | "previous" | "next") => {
-    const nextId = neighborAfterDelete(orderedTaskIds, ids, direction);
-    setTasks((current) => current.filter((task) => !ids.includes(task.id)));
+    const extra = ids.flatMap((id) => descendantsOf(id, tasks).map((task) => task.id));
+    const unique = [...new Set([...ids, ...extra])];
+    const nextId = neighborAfterDelete(orderedTaskIds, unique, direction);
+    setTasks((current) => current.filter((task) => !unique.includes(task.id)));
     setPendingDeleteTaskIds([]);
     setPendingDeleteDirection("menu");
     setSelection(singleSelection(nextId));
     if (!nextId) setInspectorOpen(false);
-  }, [orderedTaskIds]);
+  }, [orderedTaskIds, tasks]);
 
   const deleteTasks = (ids: string[], direction: "menu" | "previous" | "next" = "menu") => {
     const unique = [...new Set(ids.filter(Boolean))];
     if (!unique.length) return;
+    pushUndo();
     if (settings.confirmBeforeDelete) {
       setPendingDeleteTaskIds(unique);
       setPendingDeleteDirection(direction);
@@ -1858,6 +2023,7 @@ export default function App() {
   };
 
   const createItem = (payload: { title: string; projectId: string | null; flagged?: boolean; due?: string; tags?: string[] }) => {
+    pushUndo();
     if (quickKind === "project") {
       const project: Project = { id: makeId("project"), name: payload.title, note: "", color: projectColors[projects.length % projectColors.length] ?? palette.purple, reviewIntervalDays: 7 };
       setProjects((current) => [...current, project]);
@@ -1944,9 +2110,61 @@ export default function App() {
     navigate({ perspective: "forecast", forecastDay: day, projectFilter: null, tagFilter: null });
   };
 
+  const insertAction = (projectId?: string | null, afterId?: string | null) => {
+    pushUndo();
+    const after = afterId ?? selectedTaskId;
+    const created: Task = {
+      id: makeId("task"),
+      title: "",
+      projectId: projectId ?? defaultProjectId,
+      tags: [],
+      flagged: false,
+      completed: false,
+      createdAt: new Date().toISOString(),
+    };
+    const result = insertTaskAfter(tasks, after, created, projectId ?? defaultProjectId);
+    setTasks(result.tasks);
+    setInspectedProjectId(null);
+    setSelection(singleSelection(result.created.id));
+    setEditingTaskId(result.created.id);
+    if ((projectId ?? result.created.projectId) === null) selectPerspective("inbox");
+  };
+
   const newActionInProject = (projectId: string) => {
     navigate({ perspective: "projects", projectFilter: projectId, tagFilter: null });
-    setQuickKind("task");
+    const last = [...flattenTasks(tasks.filter((task) => task.projectId === projectId))].pop();
+    insertAction(projectId, last?.id ?? null);
+  };
+
+  const indentSelected = (id: string) => {
+    pushUndo();
+    setTasks(indentTasks(tasks, idsForRow(id)));
+  };
+  const outdentSelected = (id: string) => {
+    pushUndo();
+    setTasks(outdentTasks(tasks, idsForRow(id)));
+  };
+  const moveSelected = (id: string, direction: -1 | 1) => {
+    pushUndo();
+    setTasks(moveSiblings(tasks, idsForRow(id), direction));
+  };
+  const copySelectedTaskPaper = (id: string) => {
+    const ids = new Set(idsForRow(id));
+    copyToClipboard(toTaskPaper(tasks.filter((task) => ids.has(task.id)), tasks, projects));
+  };
+  const undo = () => {
+    const previous = undoStack.current.pop();
+    if (!previous) return;
+    redoStack.current.push({ projects, tasks });
+    setProjects(previous.projects);
+    setTasks(previous.tasks);
+  };
+  const redo = () => {
+    const next = redoStack.current.pop();
+    if (!next) return;
+    undoStack.current.push({ projects, tasks });
+    setProjects(next.projects);
+    setTasks(next.tasks);
   };
 
   const toggleTaskFlag = (id: string) => {
@@ -1961,6 +2179,7 @@ export default function App() {
   const duplicateTasks = (id: string) => {
     const ids = idsForRow(id);
     const copies: Task[] = [];
+    pushUndo();
     setTasks((current) => {
       const next = [...current];
       for (const taskId of ids) {
@@ -1987,6 +2206,7 @@ export default function App() {
   const moveTasks = (id: string, projectId: string | null) => {
     const ids = idsForRow(id);
     const fromInbox = tasks.filter((task) => ids.includes(task.id) && task.projectId === null);
+    pushUndo();
     setTasks((current) => current.map((task) => ids.includes(task.id) ? { ...task, projectId } : task));
     if (!settings.cleanUpImmediately && projectId && fromInbox.length && perspective === "inbox") {
       setPendingCleanupIds((current) => [...new Set([...current, ...fromInbox.map((task) => task.id)])]);
@@ -2102,7 +2322,6 @@ export default function App() {
     setImportSummary(`${mode === "replace" ? "Loaded" : "Added"} ${result.addedTasks} action${result.addedTasks === 1 ? "" : "s"} and ${result.addedProjects} project${result.addedProjects === 1 ? "" : "s"}.${duplicateNote}`);
   };
 
-  const defaultProjectId = projectFilter ?? selectedProject?.id ?? null;
   const pendingDeleteProject = pendingDeleteProjectId ? projects.find((project) => project.id === pendingDeleteProjectId) : undefined;
   const pendingDeleteProjectActionCount = pendingDeleteProjectId ? tasks.filter((task) => task.projectId === pendingDeleteProjectId).length : 0;
   const pendingDeleteMessage = pendingDeleteProjectId
@@ -2118,7 +2337,7 @@ export default function App() {
   const showSidebar = !isPhone && canShowSidebar && sidebarOpen && perspective !== "inbox" && !activeCustomPerspective?.keepSidebarHidden;
   const showInspector = !isPhone && canShowInspector && inspectorOpen && (selectedTaskIds.length > 0 || !!inspectedProjectId);
   const modalOpen = quickKind !== null || settingsOpen || perspectivesListOpen || quickOpenOpen || importGuideOpen || !!importPreview || !!importError || !!importSummary;
-  const nativeMenuTypes = new Set(["perspective", "toggleSidebar", "toggleInspector", "toggleSearch", "openSettings", "toggleViewMenu", "addPerspective", "showPerspectivesList", "togglePerspectivesBar", "quickOpen", "newAction", "newProject", "selectAll", "goBack", "goForward", "cleanUp", "duplicate", "expandAll", "collapseAll"]);
+  const nativeMenuTypes = new Set(["perspective", "toggleSidebar", "toggleInspector", "toggleSearch", "openSettings", "toggleViewMenu", "addPerspective", "showPerspectivesList", "togglePerspectivesBar", "quickOpen", "newAction", "newProject", "selectAll", "goBack", "goForward", "cleanUp", "duplicate", "expandAll", "collapseAll", "moveRow", "undo", "redo", "copyTaskPaper"]);
 
   const handleHotkeyAction = useCallback((action: HotkeyAction | MenuCommand) => {
     switch (action.type) {
@@ -2159,7 +2378,7 @@ export default function App() {
         setSettings((current) => ({ ...current, perspectiveBarShowsTitles: !current.perspectiveBarShowsTitles }));
         break;
       case "newAction":
-        setQuickKind("task");
+        insertAction();
         break;
       case "newProject":
         setQuickKind("project");
@@ -2220,6 +2439,32 @@ export default function App() {
         break;
       case "collapseAll":
         collapseAll();
+        break;
+      case "indent":
+        if (selectedTaskId) indentSelected(selectedTaskId);
+        break;
+      case "outdent":
+        if (selectedTaskId) outdentSelected(selectedTaskId);
+        break;
+      case "moveRow":
+        if (selectedTaskId) moveSelected(selectedTaskId, action.direction === "up" ? -1 : 1);
+        break;
+      case "undo":
+        if (typeof document !== "undefined" && isTextInputTarget(document.activeElement)) {
+          document.execCommand("undo");
+          break;
+        }
+        undo();
+        break;
+      case "redo":
+        if (typeof document !== "undefined" && isTextInputTarget(document.activeElement)) {
+          document.execCommand("redo");
+          break;
+        }
+        redo();
+        break;
+      case "copyTaskPaper":
+        if (selectedTaskId) copySelectedTaskPaper(selectedTaskId);
         break;
       case "confirmDelete":
         if (pendingDeleteProjectId) finalizeDeleteProject(pendingDeleteProjectId);
@@ -2292,6 +2537,14 @@ export default function App() {
     collapseAll,
     editingTaskId,
     inspectedProjectId,
+    selectedTaskId,
+    indentSelected,
+    outdentSelected,
+    moveSelected,
+    undo,
+    redo,
+    copySelectedTaskPaper,
+    insertAction,
   ]);
 
   useEffect(() => {
@@ -2375,7 +2628,7 @@ export default function App() {
               <ToolbarButton icon="eye-outline" label="View" active={viewMenuOpen} onPress={() => setViewMenuOpen((value) => !value)} />
             </View>
             <View style={styles.toolbarCenter}>
-              <ToolbarButton icon="plus" label="New Action" onPress={() => setQuickKind("task")} />
+              <ToolbarButton icon="plus" label="New Action" onPress={() => insertAction()} />
               <ToolbarButton icon="tray-arrow-down" label="Quick Entry" onPress={() => setQuickKind("task")} />
               <ToolbarButton icon="file-find-outline" label="Quick Open" onPress={() => setQuickOpenOpen(true)} />
               <ToolbarButton icon="bullseye-arrow" label="Focus" active={!!focusedProjectId} disabled={!focusedProjectId && !selectedTask?.projectId && !projectFilter} onPress={focusSelected} />
@@ -2393,7 +2646,7 @@ export default function App() {
               <Pressable accessibilityLabel="View Options" onPress={() => setViewMenuOpen(true)} style={styles.mobileCircleButton}><Icon name="eye-outline" size={18} color={palette.purpleDark} /></Pressable>
               <Pressable accessibilityLabel="More and settings" onPress={() => setSettingsOpen(true)} style={styles.mobileCircleButton}><Icon name="dots-horizontal" size={20} color={palette.purpleDark} /></Pressable>
               <Pressable onPress={() => setSearchOpen((value) => !value)} style={styles.mobileCircleButton}><Icon name="magnify" size={21} color={palette.purpleDark} /></Pressable>
-              <Pressable onPress={() => setQuickKind("task")} style={styles.mobileAddButton}><Icon name="plus" size={24} color="#fff" /></Pressable>
+              <Pressable onPress={() => insertAction()} style={styles.mobileAddButton}><Icon name="plus" size={24} color="#fff" /></Pressable>
             </View>
           </View>
         )}
@@ -2481,6 +2734,8 @@ export default function App() {
             />
           )}
           {showSidebar && (
+            <>
+            <View style={{ width: settings.sidebarWidth }}>
             <ProjectSidebar
               perspective={sidebarPerspective}
               projects={sidebarProjects}
@@ -2498,6 +2753,14 @@ export default function App() {
               onNewActionInProject={newActionInProject}
               onDeleteProject={deleteProject}
             />
+            </View>
+            <PaneResizeHandle
+              onDrag={(delta) => setSettings((current) => ({
+                ...current,
+                sidebarWidth: clampPane(current.sidebarWidth + delta, 180, 420),
+              }))}
+            />
+            </>
           )}
           <Outline
             title={perspectiveTitle}
@@ -2526,9 +2789,13 @@ export default function App() {
             onCopyLink={copyTaskLinks}
             onDuplicateTasks={duplicateTasks}
             onMoveTasks={moveTasks}
+            onIndent={indentSelected}
+            onOutdent={outdentSelected}
+            onMoveRow={moveSelected}
+            onCopyTaskPaper={copySelectedTaskPaper}
             onStartEdit={startEditTitle}
             onCommitTitle={commitTaskTitle}
-            onNewTask={() => setQuickKind("task")}
+            onNewTask={() => insertAction()}
             onReviewProject={(id) => setProjects((current) => current.map((project) => project.id === id ? { ...project, lastReviewedAt: new Date().toISOString() } : project))}
             onOpenViewMenu={() => setViewMenuOpen(true)}
             onFocusProject={focusProject}
@@ -2546,7 +2813,16 @@ export default function App() {
             onCollapseAll={collapseAll}
             databaseEmpty={hydrated && projects.length === 0 && tasks.length === 0}
           />
-          {showInspector && selectedTaskIds.length > 1 && (
+          {showInspector && (
+            <>
+            <PaneResizeHandle
+              onDrag={(delta) => setSettings((current) => ({
+                ...current,
+                inspectorWidth: clampPane(current.inspectorWidth - delta, 260, 480),
+              }))}
+            />
+            <View style={{ width: settings.inspectorWidth }}>
+          {selectedTaskIds.length > 1 && (
             <MultiSelectInspector
               count={selectedTaskIds.length}
               allCompleted={selectedTasks.length > 0 && selectedTasks.every((task) => task.completed)}
@@ -2556,8 +2832,8 @@ export default function App() {
               onDelete={() => deleteTasks(selectedTaskIds)}
             />
           )}
-          {showInspector && selectedTaskIds.length === 1 && selectedTask && <Inspector task={selectedTask} projects={projects} onChange={(patch) => updateTask(selectedTask.id, patch)} onToggle={() => toggleTask(selectedTask.id)} onDelete={() => deleteTask(selectedTask.id)} />}
-          {showInspector && !selectedTaskIds.length && inspectedProject && (
+          {selectedTaskIds.length === 1 && selectedTask && <Inspector task={selectedTask} projects={projects} onChange={(patch) => updateTask(selectedTask.id, patch)} onToggle={() => toggleTask(selectedTask.id)} onDelete={() => deleteTask(selectedTask.id)} />}
+          {!selectedTaskIds.length && inspectedProject && (
             <ProjectInspector
               project={inspectedProject}
               remainingCount={tasks.filter((task) => task.projectId === inspectedProject.id && !task.completed).length}
@@ -2566,6 +2842,9 @@ export default function App() {
               onDelete={() => deleteProject(inspectedProject.id)}
               onFocus={() => focusProject(inspectedProject.id)}
             />
+          )}
+            </View>
+            </>
           )}
         </View>
 
@@ -2721,7 +3000,7 @@ const styles = StyleSheet.create({
   badge: { position: "absolute", right: -11, top: -4, minWidth: 15, height: 15, borderRadius: 8, paddingHorizontal: 3, alignItems: "center", justifyContent: "center", backgroundColor: "#8d8a91" },
   badgeSelected: { backgroundColor: palette.purpleDark },
   badgeText: { color: "#fff", fontSize: 8, fontWeight: "700" },
-  sidebar: { width: 236, backgroundColor: palette.sidebar, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: palette.line },
+  sidebar: { flex: 1, backgroundColor: palette.sidebar, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: palette.line },
   sidebarHeader: { height: 69, paddingHorizontal: 15, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   sidebarTitle: { fontSize: 19, fontWeight: "700", letterSpacing: -.25 },
   sidebarScroll: { paddingHorizontal: 8, paddingBottom: 50 },
@@ -2729,8 +3008,12 @@ const styles = StyleSheet.create({
   sidebarRowSelected: { backgroundColor: "#d9d8dc" },
   sidebarRowText: { flex: 1, fontSize: 12.5, fontWeight: "500", color: "#3a373d" },
   sidebarCount: { fontSize: 10, color: palette.muted },
+  sidebarHoldText: { color: "#8a6a1a" },
+  sidebarStatusTag: { fontSize: 9, fontWeight: "700", color: "#8a9098" },
   sidebarSectionLabel: { marginTop: 16, marginBottom: 5, marginLeft: 8, fontSize: 8.5, letterSpacing: .7, fontWeight: "700", color: "#817e85" },
   projectDot: { width: 14, height: 14, borderWidth: 2, borderRadius: 7, backgroundColor: palette.sidebar },
+  projectDotHold: { backgroundColor: "#c9a227" },
+  projectDotDropped: { backgroundColor: "#9aa0a6" },
   sidebarFooter: { position: "absolute", left: 0, right: 0, bottom: 0, height: 39, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 5, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.line, backgroundColor: palette.sidebar },
   sidebarFooterText: { fontSize: 11, color: "#625f66" },
   sidebarEmpty: { paddingHorizontal: 24, paddingTop: 30, alignItems: "center", gap: 8 },
@@ -2802,6 +3085,10 @@ const styles = StyleSheet.create({
   emptyCheck: { width: 48, height: 48, borderRadius: 24, borderWidth: 2, borderColor: "#b7b3ba", alignItems: "center", justifyContent: "center" },
   emptyTitle: { marginTop: 13, marginBottom: 4, fontSize: 17, fontWeight: "700", color: "#67636a" },
   emptyText: { fontSize: 11, color: "#8f8b93" },
+  inlineNewAction: { minHeight: 34, paddingHorizontal: 18, paddingLeft: 48, flexDirection: "row", alignItems: "center", gap: 6 },
+  inlineNewActionText: { fontSize: 12, fontWeight: "600", color: palette.purpleDark },
+  estimateText: { fontSize: 10, color: "#8a9098", fontVariant: ["tabular-nums"] },
+  paneHandle: { width: 5, backgroundColor: "#d9d7dc" },
   migrateState: { paddingVertical: 72, paddingHorizontal: 28, alignItems: "center" },
   migrateIcon: { width: 56, height: 56, marginBottom: 14, alignItems: "center", justifyContent: "center", borderRadius: 16, backgroundColor: palette.purpleSoft },
   migrateTitle: { marginBottom: 8, fontSize: 18, fontWeight: "700", textAlign: "center", color: palette.text },
@@ -2814,7 +3101,7 @@ const styles = StyleSheet.create({
   reviewCopy: { flex: 1 },
   reviewButton: { height: 29, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: palette.purple, borderRadius: 7 },
   reviewButtonText: { color: "#fff", fontSize: 10, fontWeight: "600" },
-  inspector: { width: 316, backgroundColor: palette.inspector, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: palette.line },
+  inspector: { flex: 1, backgroundColor: palette.inspector, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: palette.line },
   inspectorModal: { flex: 1, width: "100%", borderLeftWidth: 0 },
   inspectorTabs: { height: 43, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", justifyContent: "space-around", gap: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
   inspectorTabSelected: { paddingHorizontal: 12, height: 27, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: "#dedce1" },
