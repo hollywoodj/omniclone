@@ -1,5 +1,5 @@
 import type { ActivePerspective, PerspectiveGroupBy, Project, Task } from "./model";
-import { flattenTasks } from "./outline";
+import { flattenTasks } from "./outline.ts";
 
 export type SelectionModifiers = {
   shift?: boolean;

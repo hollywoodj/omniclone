@@ -1,5 +1,5 @@
-import { dueDayKey, todayKey } from "./dates";
-import { taskMatchesView } from "./outline";
+import { dueDayKey, todayKey } from "./dates.ts";
+import { taskMatchesView } from "./outline.ts";
 import {
   createCustomPerspective,
   makeId,

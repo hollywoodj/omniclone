@@ -1,4 +1,4 @@
-import { addDays, formatDateLabel, isActionAvailable, parseDueLabel } from "./dates";
+import { addDays, formatDateLabel, isActionAvailable, parseDueLabel } from "./dates.ts";
 import type { PerspectiveAvailability, Project, Task } from "./model";
 
 export type RepeatRule = "none" | "daily" | "weekly" | "monthly";
