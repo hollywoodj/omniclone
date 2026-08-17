@@ -253,7 +253,7 @@ function ProjectSidebar({
             </Pressable>
             <Text style={styles.sidebarSectionLabel}>PROJECTS</Text>
             {!projects.length && (
-              <Text style={styles.sidebarEmptyText}>No projects yet. Use New Project to add one.</Text>
+              <Text style={styles.sidebarEmptyText}>No projects yet. Import from OmniFocus or use New Project.</Text>
             )}
             {projects.map((project) => (
               <ContextMenuPressable
@@ -403,6 +403,7 @@ function Outline({
   selectedTaskId,
   projectFilter,
   settings,
+  databaseEmpty,
   onSelectTask,
   onToggleTask,
   onInspectTask,
@@ -414,6 +415,7 @@ function Outline({
   onFocusProject,
   onNewActionInProject,
   onDeleteProject,
+  onImport,
 }: {
   title: string;
   perspective: ActivePerspective;
@@ -423,6 +425,7 @@ function Outline({
   selectedTaskId: string | null;
   projectFilter: string | null;
   settings: AppSettings;
+  databaseEmpty?: boolean;
   onSelectTask: (id: string) => void;
   onToggleTask: (id: string) => void;
   onInspectTask: (id: string) => void;
@@ -434,6 +437,7 @@ function Outline({
   onFocusProject: (id: string) => void;
   onNewActionInProject: (id: string) => void;
   onDeleteProject: (id: string) => void;
+  onImport: () => void;
 }) {
   const { openMenu } = useContextMenuTrigger();
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
@@ -560,13 +564,24 @@ function Outline({
           </ContextMenuPressable>
         ))}
         {!customPerspective && perspective !== "projects" && perspective !== "tags" && perspective !== "review" && tasks.map(taskRow)}
-        {!tasks.length && (perspective !== "projects" || !visibleProjects.length) && (
+        {databaseEmpty ? (
+          <View style={styles.migrateState}>
+            <View style={styles.migrateIcon}><Icon name="database-import-outline" size={28} color={palette.purpleDark} /></View>
+            <Text style={styles.migrateTitle}>Bring in your OmniFocus database</Text>
+            <Text style={styles.migrateText}>CSV is the portable OmniFocus 4 export. It keeps projects, inbox items, dates, flags, tags, and notes. Native .ofocus backups cannot be read here.</Text>
+            <Pressable accessibilityLabel="Import from OmniFocus" onPress={onImport} style={styles.migrateButton}>
+              <Icon name="database-import-outline" size={16} color="#fff" />
+              <Text style={styles.migrateButtonText}>Import from OmniFocus</Text>
+            </Pressable>
+            <Text style={styles.migrateHint}>Or create a project with ⇧⌘N and start empty.</Text>
+          </View>
+        ) : !tasks.length && (perspective !== "projects" || !visibleProjects.length) ? (
           <View style={styles.emptyState}>
             <View style={styles.emptyCheck}><Icon name="check" size={26} color="#aaa7ad" /></View>
             <Text style={styles.emptyTitle}>All clear</Text>
             <Text style={styles.emptyText}>There are no remaining actions in this view.</Text>
           </View>
-        )}
+        ) : null}
       </ScrollView>
       <Pressable onPress={onNewTask} style={styles.newActionBar}><Icon name="plus" size={20} color={palette.purpleDark} /><Text style={styles.newActionText}>New Action</Text></Pressable>
     </View>
@@ -856,7 +871,7 @@ function SettingsModal({
                     <View style={styles.databaseStatus}><View style={styles.databaseStatusDot} /><Text style={styles.databaseStatusText}>Saved</Text></View>
                   </View>
                   <View style={styles.settingsGroup}>
-                    <SettingsRow title="Import from OmniFocus" detail="Merge a CSV or TaskPaper export into this database.">
+                    <SettingsRow title="Import from OmniFocus" detail="Recommended: CSV from Database Settings. TaskPaper also works. Duplicate-safe merge or replace.">
                       <Pressable onPress={onImport} style={styles.settingsActionButton}><Icon name="database-import-outline" size={16} color={palette.purpleDark} /><Text style={styles.settingsActionText}>Import…</Text></Pressable>
                     </SettingsRow>
                   </View>
@@ -896,17 +911,20 @@ function ConfirmDeleteModal({ visible, title, message, onCancel, onConfirm }: {
   );
 }
 
-function OmniImportModal({ data, error, summary, onClose, onApply }: {
+function OmniImportModal({ data, error, summary, guide, onClose, onApply, onChooseFile }: {
   data: OmniImportData | null;
   error: string | null;
   summary: string | null;
+  guide: boolean;
   onClose: () => void;
   onApply: (mode: ImportMode) => void;
+  onChooseFile: () => void;
 }) {
   const [replaceArmed, setReplaceArmed] = useState(false);
   useEffect(() => setReplaceArmed(false), [data]);
-  const visible = !!data || !!error || !!summary;
+  const visible = guide || !!data || !!error || !!summary;
   const completed = data?.tasks.filter((task) => task.completed).length ?? 0;
+  const inboxCount = data?.tasks.filter((task) => !task.projectId).length ?? 0;
   const tagCount = data ? new Set(data.tasks.flatMap((task) => task.tags)).size : 0;
 
   return (
@@ -914,7 +932,7 @@ function OmniImportModal({ data, error, summary, onClose, onApply }: {
       <View style={styles.importBackdrop}>
         <View style={styles.importCard}>
           <View style={styles.importHeader}>
-            <View style={styles.importHeaderTitle}><Icon name="database-import-outline" size={20} color={palette.purpleDark} /><Text style={styles.importTitle}>Import OmniFocus Records</Text></View>
+            <View style={styles.importHeaderTitle}><Icon name="database-import-outline" size={20} color={palette.purpleDark} /><Text style={styles.importTitle}>{guide ? "Migrate OmniFocus Data" : "Import OmniFocus Records"}</Text></View>
             <Pressable accessibilityLabel="Close import" onPress={onClose} style={styles.iconButton}><Icon name="close" size={20} color={palette.muted} /></Pressable>
           </View>
 
@@ -925,6 +943,7 @@ function OmniImportModal({ data, error, summary, onClose, onApply }: {
               <View style={styles.importStats}>
                 <View style={styles.importStat}><Text style={styles.importStatValue}>{data.projects.length}</Text><Text style={styles.importStatLabel}>Projects</Text></View>
                 <View style={styles.importStat}><Text style={styles.importStatValue}>{data.tasks.length}</Text><Text style={styles.importStatLabel}>Actions</Text></View>
+                <View style={styles.importStat}><Text style={styles.importStatValue}>{inboxCount}</Text><Text style={styles.importStatLabel}>Inbox</Text></View>
                 <View style={styles.importStat}><Text style={styles.importStatValue}>{completed}</Text><Text style={styles.importStatLabel}>Completed</Text></View>
                 <View style={styles.importStat}><Text style={styles.importStatValue}>{tagCount}</Text><Text style={styles.importStatLabel}>Tags</Text></View>
               </View>
@@ -933,18 +952,37 @@ function OmniImportModal({ data, error, summary, onClose, onApply }: {
               <Text style={styles.importHelp}>Merge adds new records and ignores duplicates. Replace removes the current projects and actions, but keeps your custom perspectives.</Text>
               {replaceArmed && <View style={styles.replaceConfirm}><Text style={styles.replaceConfirmTitle}>Replace the current database?</Text><Text style={styles.replaceConfirmText}>Your current {data.tasks.length ? "projects and actions" : "records"} will be replaced by this import.</Text><View style={styles.replaceConfirmActions}><Pressable onPress={() => setReplaceArmed(false)} style={styles.cancelButton}><Text style={styles.cancelButtonText}>Cancel</Text></Pressable><Pressable onPress={() => onApply("replace")} style={styles.replaceButton}><Text style={styles.replaceButtonText}>Confirm Replace</Text></Pressable></View></View>}
             </ScrollView>
+          ) : guide ? (
+            <ScrollView contentContainerStyle={styles.importContent}>
+              <Text style={styles.importLead}>OmniFocus does not offer a third-party API. CSV is the official portable export on iPhone, iPad, and Mac, and is the most complete way to move a live database here.</Text>
+              <View style={styles.exportInstructions}>
+                <Text style={styles.exportInstructionsTitle}>iPhone, iPad, or Vision Pro</Text>
+                <Text style={styles.exportInstruction}>1. Open OmniFocus Settings</Text>
+                <Text style={styles.exportInstruction}>2. Database → Export to CSV</Text>
+                <Text style={styles.exportInstruction}>3. Share or save the file, then choose it below</Text>
+              </View>
+              <View style={styles.exportInstructions}>
+                <Text style={styles.exportInstructionsTitle}>Mac</Text>
+                <Text style={styles.exportInstruction}>1. File → Export…</Text>
+                <Text style={styles.exportInstruction}>2. Choose CSV (or CSV UTF-16 if you use non-English characters)</Text>
+                <Text style={styles.exportInstruction}>3. TaskPaper / Plain Text also works if you already have one</Text>
+              </View>
+              <View style={styles.importWarning}><Icon name="information-outline" size={18} color="#9b6c24" /><Text style={styles.importWarningText}>Skip .ofocus and .ofocus-backup files. Those packages are OmniFocus’s private transaction log, not a portable export.</Text></View>
+            </ScrollView>
           ) : (
             <View style={styles.importMessageContent}>
               <View style={[styles.importMessageIcon, summary ? styles.importMessageIconSuccess : styles.importMessageIconError]}><Icon name={summary ? "check" : "file-alert-outline"} size={31} color={summary ? "#4f8b54" : palette.danger} /></View>
               <Text style={styles.importMessageTitle}>{summary ? "Import Complete" : "This file can’t be imported"}</Text>
               <Text style={styles.importMessageText}>{summary ?? error}</Text>
-              {!summary && <View style={styles.exportInstructions}><Text style={styles.exportInstructionsTitle}>From OmniFocus</Text><Text style={styles.exportInstruction}>• iPhone or iPad: Database Settings → Export to CSV</Text><Text style={styles.exportInstruction}>• Mac: File → Export → CSV or Plain Text (TaskPaper)</Text></View>}
+              {!summary && <View style={styles.exportInstructions}><Text style={styles.exportInstructionsTitle}>From OmniFocus</Text><Text style={styles.exportInstruction}>• iPhone or iPad: Settings → Database → Export to CSV</Text><Text style={styles.exportInstruction}>• Mac: File → Export → CSV or Plain Text (TaskPaper)</Text></View>}
             </View>
           )}
 
           <View style={styles.importFooter}>
-            <Pressable onPress={onClose} style={styles.cancelButton}><Text style={styles.cancelButtonText}>{data ? "Cancel" : "Done"}</Text></Pressable>
+            <Pressable onPress={onClose} style={styles.cancelButton}><Text style={styles.cancelButtonText}>{data || guide ? "Cancel" : "Done"}</Text></Pressable>
+            {guide && !data && <Pressable onPress={onChooseFile} style={styles.importMergeButton}><Icon name="file-document-outline" size={16} color="#fff" /><Text style={styles.importMergeText}>Choose CSV or TaskPaper</Text></Pressable>}
             {data && !replaceArmed && <><Pressable onPress={() => setReplaceArmed(true)} style={styles.importReplaceButton}><Text style={styles.importReplaceText}>Replace</Text></Pressable><Pressable onPress={() => onApply("merge")} style={styles.importMergeButton}><Icon name="call-merge" size={16} color="#fff" /><Text style={styles.importMergeText}>Merge Records</Text></Pressable></>}
+            {!data && !guide && error && <Pressable onPress={onChooseFile} style={styles.importMergeButton}><Text style={styles.importMergeText}>Choose Another File</Text></Pressable>}
           </View>
         </View>
       </View>
@@ -981,6 +1019,7 @@ export default function App() {
   const [importPreview, setImportPreview] = useState<OmniImportData | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importSummary, setImportSummary] = useState<string | null>(null);
+  const [importGuideOpen, setImportGuideOpen] = useState(false);
   const hasNativeMenu = typeof window !== "undefined" && !!window.omniclone;
 
   useEffect(() => {
@@ -1258,15 +1297,27 @@ export default function App() {
     setImportPreview(null);
     setImportError(null);
     setImportSummary(null);
+    setImportGuideOpen(false);
   };
 
-  const openOmniFocusImport = async () => {
+  const openOmniFocusImport = () => {
     setViewMenuOpen(false);
+    setImportError(null);
+    setImportSummary(null);
+    setImportPreview(null);
+    setImportGuideOpen(true);
+  };
+
+  const chooseOmniFocusFile = async () => {
+    setImportGuideOpen(false);
     setImportError(null);
     setImportSummary(null);
     try {
       const result = await DocumentPicker.getDocumentAsync({ type: "*/*", multiple: false, copyToCacheDirectory: true, base64: false });
-      if (result.canceled) return;
+      if (result.canceled) {
+        setImportGuideOpen(true);
+        return;
+      }
       const asset = result.assets[0];
       if (!asset) return;
       if ((asset.size ?? 0) > 50 * 1024 * 1024) throw new Error("Choose an export smaller than 50 MB. For a very large archive, export separate folders or projects from OmniFocus.");
@@ -1314,7 +1365,7 @@ export default function App() {
     : perspective.startsWith("custom:") ? "projects" : perspective as PerspectiveId;
   const showSidebar = !isPhone && canShowSidebar && sidebarOpen && perspective !== "inbox" && !activeCustomPerspective?.keepSidebarHidden;
   const showInspector = !isPhone && canShowInspector && inspectorOpen && !!selectedTask;
-  const modalOpen = quickKind !== null || settingsOpen || perspectivesListOpen || quickOpenOpen || !!importPreview || !!importError || !!importSummary;
+  const modalOpen = quickKind !== null || settingsOpen || perspectivesListOpen || quickOpenOpen || importGuideOpen || !!importPreview || !!importError || !!importSummary;
   const nativeMenuTypes = new Set(["perspective", "toggleSidebar", "toggleInspector", "toggleSearch", "openSettings", "toggleViewMenu", "addPerspective", "showPerspectivesList", "togglePerspectivesBar", "quickOpen", "newAction", "newProject"]);
 
   const handleHotkeyAction = useCallback((action: HotkeyAction | MenuCommand) => {
@@ -1350,7 +1401,7 @@ export default function App() {
         setQuickOpenOpen(true);
         break;
       case "importOmniFocus":
-        void openOmniFocusImport();
+        openOmniFocusImport();
         break;
       case "toggleTitles":
         setSettings((current) => ({ ...current, perspectiveBarShowsTitles: !current.perspectiveBarShowsTitles }));
@@ -1406,7 +1457,7 @@ export default function App() {
           setPerspectivesListOpen(false);
         }
         else if (quickOpenOpen) setQuickOpenOpen(false);
-        else if (importPreview || importError || importSummary) closeImport();
+        else if (importPreview || importError || importSummary || importGuideOpen) closeImport();
         else if (viewMenuOpen) setViewMenuOpen(false);
         else if (searchOpen) {
           setQuery("");
@@ -1424,6 +1475,7 @@ export default function App() {
     finalizeDeleteTask,
     focusSelected,
     importError,
+    importGuideOpen,
     importPreview,
     importSummary,
     pendingDeleteDirection,
@@ -1616,6 +1668,8 @@ export default function App() {
             onFocusProject={focusProject}
             onNewActionInProject={newActionInProject}
             onDeleteProject={deleteProject}
+            onImport={openOmniFocusImport}
+            databaseEmpty={hydrated && projects.length === 0 && tasks.length === 0}
           />
           {showInspector && selectedTask && <Inspector task={selectedTask} projects={projects} onChange={(patch) => updateTask(selectedTask.id, patch)} onToggle={() => toggleTask(selectedTask.id)} onDelete={() => deleteTask(selectedTask.id)} />}
         </View>
@@ -1677,7 +1731,7 @@ export default function App() {
         onSelectProject={(id) => { setPerspective("projects"); setProjectFilter(id); }}
       />
 
-      <OmniImportModal data={importPreview} error={importError} summary={importSummary} onClose={closeImport} onApply={applyImport} />
+      <OmniImportModal data={importPreview} error={importError} summary={importSummary} guide={importGuideOpen} onClose={closeImport} onApply={applyImport} onChooseFile={() => void chooseOmniFocusFile()} />
 
       <ConfirmDeleteModal
         visible={!!pendingDeleteTaskId || !!pendingDeleteProjectId}
@@ -1815,6 +1869,14 @@ const styles = StyleSheet.create({
   emptyCheck: { width: 48, height: 48, borderRadius: 24, borderWidth: 2, borderColor: "#b7b3ba", alignItems: "center", justifyContent: "center" },
   emptyTitle: { marginTop: 13, marginBottom: 4, fontSize: 17, fontWeight: "700", color: "#67636a" },
   emptyText: { fontSize: 11, color: "#8f8b93" },
+  migrateState: { paddingVertical: 72, paddingHorizontal: 28, alignItems: "center" },
+  migrateIcon: { width: 56, height: 56, marginBottom: 14, alignItems: "center", justifyContent: "center", borderRadius: 16, backgroundColor: palette.purpleSoft },
+  migrateTitle: { marginBottom: 8, fontSize: 18, fontWeight: "700", textAlign: "center", color: palette.text },
+  migrateText: { maxWidth: 420, marginBottom: 16, fontSize: 11, lineHeight: 16, textAlign: "center", color: palette.muted },
+  migrateButton: { minHeight: 34, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 8, backgroundColor: palette.purple },
+  migrateButtonText: { fontSize: 12, fontWeight: "700", color: "#fff" },
+  migrateHint: { marginTop: 12, fontSize: 10, color: "#8f8b93" },
+  importLead: { fontSize: 11, lineHeight: 16, color: "#5f5b63" },
   reviewRow: { minHeight: 66, paddingHorizontal: 17, flexDirection: "row", alignItems: "center", gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
   reviewCopy: { flex: 1 },
   reviewButton: { height: 29, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: palette.purple, borderRadius: 7 },
@@ -1961,8 +2023,8 @@ const styles = StyleSheet.create({
   importFileName: { fontSize: 12.5, fontWeight: "700", color: palette.text },
   importFormat: { marginTop: 2, fontSize: 9.5, color: palette.muted },
   importSectionTitle: { marginTop: 3, fontSize: 8.5, letterSpacing: .8, fontWeight: "700", color: "#77737b" },
-  importStats: { flexDirection: "row", gap: 7 },
-  importStat: { flex: 1, minHeight: 62, padding: 8, alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: "#d6d3d8", borderRadius: 9, backgroundColor: "#fff" },
+  importStats: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
+  importStat: { flexGrow: 1, flexBasis: 72, minHeight: 62, padding: 8, alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: "#d6d3d8", borderRadius: 9, backgroundColor: "#fff" },
   importStatValue: { fontSize: 20, lineHeight: 23, fontWeight: "700", color: palette.purpleDark },
   importStatLabel: { marginTop: 2, fontSize: 8.5, color: palette.muted },
   importProjectList: { overflow: "hidden", borderWidth: StyleSheet.hairlineWidth, borderColor: "#d6d3d8", borderRadius: 9, backgroundColor: "#fff" },
