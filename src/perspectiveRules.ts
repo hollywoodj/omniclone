@@ -1,3 +1,4 @@
+import { dueDayKey, isActionAvailable, todayKey } from "./dates";
 import {
   createCustomPerspective,
   makeId,
@@ -68,6 +69,7 @@ function matchRule(task: Task, rule: PerspectiveRule): boolean {
       const availability = rule.availability ?? "remaining";
       if (availability === "all") return true;
       if (availability === "completed") return task.completed;
+      if (availability === "available") return isActionAvailable(task);
       return !task.completed;
     }
     case "flagged":
@@ -75,7 +77,7 @@ function matchRule(task: Task, rule: PerspectiveRule): boolean {
     case "hasDueDate":
       return !!task.due;
     case "dueToday":
-      return !!task.due?.startsWith("Today");
+      return dueDayKey(task.due) === todayKey();
     case "noDueDate":
       return !task.due;
     case "hasDeferDate":

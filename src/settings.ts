@@ -12,6 +12,7 @@ export async function loadSettings(): Promise<AppSettings> {
       ...defaultSettings,
       ...parsed,
       version: 1,
+      cleanUpImmediately: parsed.cleanUpImmediately ?? defaultSettings.cleanUpImmediately,
       perspectiveBarIds: parsed.perspectiveBarIds?.length ? parsed.perspectiveBarIds : defaultSettings.perspectiveBarIds,
       perspectiveShortcuts: { ...defaultSettings.perspectiveShortcuts, ...parsed.perspectiveShortcuts },
       standardAvailability: { ...defaultSettings.standardAvailability, ...parsed.standardAvailability },

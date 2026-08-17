@@ -25,6 +25,7 @@ type TaskRow = {
   note: string | null;
   flagged: number;
   completed: number;
+  completed_at: string | null;
   created_at: string;
 };
 
@@ -122,6 +123,7 @@ export async function loadDatabase(): Promise<PersistedState | null> {
     note: row.note ?? undefined,
     flagged: !!row.flagged,
     completed: !!row.completed,
+    completedAt: row.completed_at ?? undefined,
     createdAt: row.created_at,
   }));
 
@@ -183,7 +185,7 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
 
     for (const task of state.tasks) {
       await db.runAsync(
-        "INSERT INTO tasks (id, import_key, title, project_id, due, defer, note, flagged, completed, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO tasks (id, import_key, title, project_id, due, defer, note, flagged, completed, completed_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         task.id,
         task.importKey ?? null,
         task.title,
@@ -193,6 +195,7 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
         task.note ?? null,
         task.flagged ? 1 : 0,
         task.completed ? 1 : 0,
+        task.completedAt ?? null,
         task.createdAt
       );
       for (const tagName of task.tags) {

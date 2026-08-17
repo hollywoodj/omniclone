@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   note TEXT,
   flagged INTEGER NOT NULL DEFAULT 0,
   completed INTEGER NOT NULL DEFAULT 0,
+  completed_at TEXT,
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id);
@@ -68,10 +69,19 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
     dbPromise = SQLite.openDatabaseAsync("omniclone.db").then(async (db) => {
       await db.execAsync(SCHEMA);
       await migrateCustomPerspectives(db);
+      await migrateTasks(db);
       return db;
     });
   }
   return dbPromise;
+}
+
+async function migrateTasks(db: SQLite.SQLiteDatabase) {
+  const columns = await db.getAllAsync<{ name: string }>("PRAGMA table_info(tasks)");
+  const names = new Set(columns.map((column) => column.name));
+  if (!names.has("completed_at")) {
+    await db.execAsync("ALTER TABLE tasks ADD COLUMN completed_at TEXT");
+  }
 }
 
 async function migrateCustomPerspectives(db: SQLite.SQLiteDatabase) {

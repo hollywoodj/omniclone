@@ -46,9 +46,12 @@ import { useMarqueeSelection, useModifierKeys } from "./src/marquee";
 import {
   duePresetLabel,
   dueUrgency,
+  formatAvailableLabel,
   forecastSubtitle,
   forecastWeek,
+  inspectorTimestamp,
   isDueOnDay,
+  matchesAvailability,
   projectDueForReview,
   reviewStatusText,
   sameLocation,
@@ -174,8 +177,12 @@ function projectContextItems(project: Project, handlers: {
   onFocusProject: (id: string) => void;
   onNewActionInProject: (id: string) => void;
   onDeleteProject: (id: string) => void;
+  onInspectProject?: (id: string) => void;
+  onOpenProject?: (id: string) => void;
 }): ContextMenuItem[] {
   return [
+    ...(handlers.onInspectProject ? [{ id: "inspect", label: "Inspect", icon: "information-outline" as IconName, onPress: () => handlers.onInspectProject?.(project.id) }] : []),
+    ...(handlers.onOpenProject ? [{ id: "open", label: "Show in Projects", icon: "folder-outline" as IconName, onPress: () => handlers.onOpenProject?.(project.id) }] : []),
     { id: "focus", label: "Focus Project", icon: "bullseye-arrow", onPress: () => handlers.onFocusProject(project.id) },
     { id: "new-action", label: "New Action in Project", icon: "plus", onPress: () => handlers.onNewActionInProject(project.id) },
     { id: "sep-delete", label: "", separator: true },
@@ -354,15 +361,22 @@ function ProjectSidebar({
             <View style={styles.forecastDays}>
               {week.map((day) => {
                 const selected = forecastDay === day.key;
+                const isToday = day.key === todayKey();
                 return (
                   <Pressable key={day.key} onPress={() => onSelectForecastDay(day.key)} style={[styles.forecastDay, selected && styles.forecastDaySelected]}>
                     <Text style={[styles.forecastDayWeek, selected && styles.forecastDayTextSelected]}>{day.weekday}</Text>
-                    <Text style={[styles.forecastDayNum, selected && styles.forecastDayTextSelected]}>{day.date}</Text>
+                    <View style={[styles.forecastDayNumWrap, isToday && !selected && styles.forecastDayToday]}>
+                      <Text style={[styles.forecastDayNum, selected && styles.forecastDayTextSelected, isToday && !selected && styles.forecastDayNumToday]}>{day.date}</Text>
+                    </View>
                     {!!forecastCounts[day.key] && <Text style={[styles.forecastDayCount, selected && styles.forecastDayCountSelected]}>{forecastCounts[day.key]}</Text>}
                   </Pressable>
                 );
               })}
             </View>
+            <Pressable onPress={() => onSelectForecastDay("upcoming")} style={[styles.forecastUpcoming, forecastDay === "upcoming" && styles.sidebarRowSelected]}>
+              <Text style={styles.sidebarRowText}>Upcoming</Text>
+              <Text style={styles.sidebarCount}>{forecastCounts.upcoming ?? 0}</Text>
+            </Pressable>
           </View>
         )}
         {!["projects", "tags", "forecast"].includes(perspective) && (
@@ -380,10 +394,12 @@ function ProjectSidebar({
   );
 }
 
-function TaskRow({ task, project, selected, bulkCount, settings, registerRow, onSelect, onToggle, onInspect, onToggleSelected, onToggleFlag, onDelete, onCopy }: {
+function TaskRow({ task, project, projects, selected, editing, bulkCount, settings, registerRow, onSelect, onToggle, onInspect, onToggleSelected, onToggleFlag, onDelete, onCopy, onCopyLink, onDuplicate, onMove, onStartEdit, onCommitTitle }: {
   task: Task;
   project?: Project;
+  projects: Project[];
   selected: boolean;
+  editing: boolean;
   bulkCount: number;
   settings: AppSettings;
   registerRow: (id: string, node: View | null) => void;
@@ -394,14 +410,36 @@ function TaskRow({ task, project, selected, bulkCount, settings, registerRow, on
   onToggleFlag: () => void;
   onDelete: () => void;
   onCopy: () => void;
+  onCopyLink: () => void;
+  onDuplicate: () => void;
+  onMove: (projectId: string | null) => void;
+  onStartEdit: () => void;
+  onCommitTitle: (title: string) => void;
 }) {
   const urgency = dueUrgency(task.due);
   const bulk = bulkCount > 1;
+  const availableLabel = formatAvailableLabel(task.defer);
+  const [hovered, setHovered] = useState(false);
+  const [draft, setDraft] = useState(task.title);
+  useEffect(() => setDraft(task.title), [task.id, task.title, editing]);
+  const commit = () => onCommitTitle(draft.trim() || task.title);
   const menuItems: ContextMenuItem[] = [
     { id: "inspect", label: "Inspect", icon: "information-outline", onPress: onInspect },
+    { id: "edit", label: "Edit", icon: "pencil-outline", shortcut: "↩", onPress: onStartEdit },
     { id: "toggle", label: `${task.completed ? "Mark Incomplete" : "Mark Complete"}${bulk ? ` (${bulkCount})` : ""}`, icon: task.completed ? "circle-outline" : "check-circle-outline", onPress: onToggleSelected },
-    { id: "flag", label: `${task.flagged ? "Remove Flag" : "Flag"}${bulk ? ` (${bulkCount})` : ""}`, icon: task.flagged ? "flag-off-outline" : "flag-outline", onPress: onToggleFlag },
+    { id: "flag", label: `${task.flagged ? "Remove Flag" : "Flag"}${bulk ? ` (${bulkCount})` : ""}`, icon: task.flagged ? "flag-off-outline" : "flag-outline", shortcut: "⇧⌘L", onPress: onToggleFlag },
+    { id: "sep-org", label: "", separator: true },
+    { id: "duplicate", label: bulk ? `Duplicate (${bulkCount})` : "Duplicate", icon: "content-duplicate", shortcut: "⌘D", onPress: onDuplicate },
+    { id: "inbox", label: "Move to Inbox", icon: "inbox-arrow-down-outline", onPress: () => onMove(null) },
+    ...projects.slice(0, 8).map((item) => ({
+      id: `move-${item.id}`,
+      label: `Move to ${item.name}`,
+      icon: "folder-outline" as IconName,
+      onPress: () => onMove(item.id),
+    })),
+    { id: "sep-copy", label: "", separator: true },
     { id: "copy", label: bulk ? `Copy Titles (${bulkCount})` : "Copy Title", icon: "content-copy", onPress: onCopy },
+    { id: "link", label: bulk ? `Copy Links (${bulkCount})` : "Copy Link", icon: "link-variant", onPress: onCopyLink },
     { id: "delete", label: bulk ? `Delete (${bulkCount})` : "Delete", icon: "trash-can-outline", destructive: true, onPress: onDelete },
   ];
 
@@ -416,33 +454,58 @@ function TaskRow({ task, project, selected, bulkCount, settings, registerRow, on
         accessibilityState={{ selected }}
         items={menuItems}
         onPress={onSelect}
-        style={({ pressed }) => [styles.taskRow, settings.rowDensity === "compact" && styles.taskRowCompact, selected && styles.taskRowSelected, pressed && styles.taskRowPressed]}
+        onHoverIn={() => setHovered(true)}
+        onHoverOut={() => setHovered(false)}
+        {...({ onDoubleClick: onStartEdit } as object)}
+        style={({ pressed }) => [styles.taskRow, settings.rowDensity === "compact" && styles.taskRowCompact, selected && styles.taskRowSelected, hovered && !selected && styles.taskRowHover, pressed && styles.taskRowPressed]}
       >
         <StatusRing completed={task.completed} flagged={task.flagged} urgency={urgency} color={project?.color} onPress={onToggle} />
         <View style={styles.taskBody}>
           <View style={styles.taskTitleLine}>
-            <Text
-              numberOfLines={1}
-              style={[
-                styles.taskTitle,
-                settings.textSize === "small" && styles.taskTitleSmall,
-                settings.textSize === "large" && styles.taskTitleLarge,
-                task.completed && styles.taskTitleResolved,
-                task.completed && settings.strikeResolvedItems && styles.taskTitleCompleted,
-              ]}
-            >
-              {task.title}
-            </Text>
+            {editing ? (
+              <TextInput
+                autoFocus
+                value={draft}
+                onChangeText={setDraft}
+                onBlur={commit}
+                onSubmitEditing={commit}
+                style={[
+                  styles.taskTitle,
+                  styles.taskTitleInput,
+                  settings.textSize === "small" && styles.taskTitleSmall,
+                  settings.textSize === "large" && styles.taskTitleLarge,
+                ]}
+                accessibilityLabel="Action title"
+                {...({ dataSet: { noMarquee: "true" } } as object)}
+              />
+            ) : (
+              <Text
+                numberOfLines={1}
+                style={[
+                  styles.taskTitle,
+                  settings.textSize === "small" && styles.taskTitleSmall,
+                  settings.textSize === "large" && styles.taskTitleLarge,
+                  task.completed && styles.taskTitleResolved,
+                  task.completed && settings.strikeResolvedItems && styles.taskTitleCompleted,
+                ]}
+              >
+                {task.title}
+              </Text>
+            )}
             {!!task.note && <Icon name="note-outline" size={13} color="#99969c" />}
           </View>
           <View style={styles.taskMeta}>
             {!!project && <Text numberOfLines={1} style={styles.taskMetaText}>{project.name}</Text>}
             {task.tags.map((tag) => <View key={tag} style={styles.tagChip}><Text style={styles.tagChipText}>{tag}</Text></View>)}
+            {!!availableLabel && !!task.due && <Text style={styles.deferText}>{availableLabel}</Text>}
           </View>
         </View>
         <View style={styles.taskTail}>
           {!!task.due && <Text style={[styles.dueText, settings.colorDueItems && urgency === "overdue" && styles.dueOverdue, settings.colorDueItems && urgency === "dueSoon" && styles.dueSoon]}>{task.due}</Text>}
-          {task.flagged && <Icon name="flag" size={16} color={palette.flag} />}
+          {!task.due && !!availableLabel && <Text style={styles.deferText}>{availableLabel}</Text>}
+          <Pressable accessibilityLabel={task.flagged ? "Remove flag" : "Flag"} onPress={onToggleFlag} hitSlop={8} {...({ dataSet: { noMarquee: "true" } } as object)}>
+            <Icon name={task.flagged ? "flag" : hovered || selected ? "flag-outline" : "flag-outline"} size={16} color={task.flagged ? palette.flag : hovered || selected ? "#c5c1c8" : "transparent"} />
+          </Pressable>
           <Pressable onPress={onInspect} hitSlop={8} style={styles.rowInfoButton} {...({ dataSet: { noMarquee: "true" } } as object)}><Icon name="information-outline" size={17} color="#8e8a91" /></Pressable>
         </View>
       </ContextMenuPressable>
@@ -493,6 +556,9 @@ function Outline({
   projects,
   tasks,
   selectedTaskIds,
+  inspectedProjectId,
+  editingTaskId,
+  collapseNonce,
   projectFilter,
   tagFilter,
   forecastDay,
@@ -505,11 +571,17 @@ function Outline({
   onToggleFlagTask,
   onDeleteTask,
   onCopyTasks,
+  onCopyLink,
+  onDuplicateTasks,
+  onMoveTasks,
+  onStartEdit,
+  onCommitTitle,
   onNewTask,
   onReviewProject,
   onOpenViewMenu,
   onFocusProject,
   onSelectProject,
+  onInspectProject,
   onNewActionInProject,
   onDeleteProject,
   onImport,
@@ -517,6 +589,9 @@ function Outline({
   onMarqueeSelect,
   onClearSelection,
   onSelectAll,
+  onCleanUp,
+  onExpandAll,
+  onCollapseAll,
 }: {
   title: string;
   perspective: ActivePerspective;
@@ -524,6 +599,9 @@ function Outline({
   projects: Project[];
   tasks: Task[];
   selectedTaskIds: string[];
+  inspectedProjectId: string | null;
+  editingTaskId: string | null;
+  collapseNonce: { action: "expand" | "collapse"; n: number } | null;
   projectFilter: string | null;
   tagFilter: string | null;
   forecastDay: ForecastDayKey;
@@ -536,11 +614,17 @@ function Outline({
   onToggleFlagTask: (id: string) => void;
   onDeleteTask: (id: string) => void;
   onCopyTasks: (id: string) => void;
+  onCopyLink: (id: string) => void;
+  onDuplicateTasks: (id: string) => void;
+  onMoveTasks: (id: string, projectId: string | null) => void;
+  onStartEdit: (id: string) => void;
+  onCommitTitle: (id: string, title: string) => void;
   onNewTask: () => void;
   onReviewProject: (id: string) => void;
   onOpenViewMenu: () => void;
   onFocusProject: (id: string) => void;
   onSelectProject: (id: string) => void;
+  onInspectProject: (id: string) => void;
   onNewActionInProject: (id: string) => void;
   onDeleteProject: (id: string) => void;
   onImport: () => void;
@@ -548,6 +632,9 @@ function Outline({
   onMarqueeSelect: (ids: string[], additive: boolean) => void;
   onClearSelection: () => void;
   onSelectAll: () => void;
+  onCleanUp: () => void;
+  onExpandAll: () => void;
+  onCollapseAll: () => void;
 }) {
   const { openMenu } = useContextMenuTrigger();
   const containerRef = useRef<View>(null);
@@ -565,20 +652,41 @@ function Outline({
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
   const outlineMenuItems: ContextMenuItem[] = [
     { id: "select-all", label: "Select All", icon: "select-all", shortcut: "⌘A", onPress: onSelectAll },
-    { id: "view-options", label: "View Options", icon: "tune-variant", onPress: onOpenViewMenu },
-    { id: "new-action", label: "New Action", icon: "plus", onPress: onNewTask },
+    { id: "clean-up", label: "Clean Up", icon: "broom", shortcut: "⌘K", onPress: onCleanUp },
+    { id: "sep-outline", label: "", separator: true },
+    { id: "expand", label: "Expand All", icon: "arrow-expand-vertical", shortcut: "⌥⌘9", onPress: onExpandAll },
+    { id: "collapse", label: "Collapse All", icon: "arrow-collapse-vertical", shortcut: "⌥⌘0", onPress: onCollapseAll },
+    { id: "view-options", label: "View Options", icon: "tune-variant", shortcut: "⇧⌘V", onPress: onOpenViewMenu },
+    { id: "new-action", label: "New Action", icon: "plus", shortcut: "⌘N", onPress: onNewTask },
   ];
-  const projectHandlers = { onFocusProject, onNewActionInProject, onDeleteProject };
+  const projectHandlers = { onFocusProject, onNewActionInProject, onDeleteProject, onInspectProject, onOpenProject: onSelectProject };
   const collapsed = useMemo(() => new Set(collapsedIds), [collapsedIds]);
   const toggleCollapsed = (id: string) => {
     setCollapsedIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   };
+  const groupIds = useMemo(() => {
+    const ids: string[] = [];
+    const tags = [...new Set(tasks.flatMap((task) => task.tags))].sort();
+    const groupBy = customPerspective ? effectiveGroupBy(customPerspective) : null;
+    if (groupBy === "project" || (!customPerspective && perspective === "projects")) {
+      ids.push("inbox", ...projects.map((project) => project.id));
+    }
+    if (groupBy === "tag" || (!customPerspective && perspective === "tags")) ids.push(...tags.map((tag) => `tag:${tag}`));
+    if (groupBy === "flagged") ids.push("flagged", "unflagged");
+    if (groupBy === "due") ids.push(...[...new Set(tasks.map((task) => `due:${task.due ?? "No Due Date"}`))]);
+    if (!customPerspective && perspective === "review") ids.push(...projects.map((project) => `review:${project.id}`));
+    return ids;
+  }, [customPerspective, perspective, projects, tasks]);
+  useEffect(() => {
+    if (!collapseNonce) return;
+    setCollapsedIds(collapseNonce.action === "expand" ? [] : groupIds);
+  }, [collapseNonce]);
   const projectHeading = (project: Project, count: number) => (
-    <View style={styles.projectHeading}>
+    <View style={[styles.projectHeading, inspectedProjectId === project.id && styles.projectHeadingSelected]}>
       <Pressable accessibilityLabel={collapsed.has(project.id) ? "Expand project" : "Collapse project"} onPress={() => toggleCollapsed(project.id)} hitSlop={8} style={styles.collapseButton} {...({ dataSet: { noMarquee: "true" } } as object)}>
         <Icon name={collapsed.has(project.id) ? "chevron-right" : "chevron-down"} size={18} color="#6e6c72" />
       </Pressable>
-      <ContextMenuPressable items={projectContextItems(project, projectHandlers)} onPress={() => onSelectProject(project.id)} style={styles.projectHeadingMain}>
+      <ContextMenuPressable items={projectContextItems(project, projectHandlers)} onPress={() => onInspectProject(project.id)} style={styles.projectHeadingMain}>
         <View style={[styles.projectHeadingRing, { borderColor: project.color }]} />
         <View style={styles.projectHeadingCopy}>
           <Text style={styles.projectHeadingTitle}>{project.name}</Text>
@@ -596,12 +704,15 @@ function Outline({
         key={task.id}
         task={task}
         project={task.projectId ? projectById.get(task.projectId) : undefined}
+        projects={projects}
         selected={selected}
+        editing={editingTaskId === task.id}
         bulkCount={bulkCount}
         settings={settings}
         registerRow={registerRow}
         onSelect={() => {
           if (suppressClickRef.current) return;
+          if (editingTaskId === task.id) return;
           onSelectTask(task.id, modifiersRef.current);
         }}
         onToggle={() => onToggleTask(task.id)}
@@ -610,6 +721,11 @@ function Outline({
         onToggleFlag={() => onToggleFlagTask(task.id)}
         onDelete={() => onDeleteTask(task.id)}
         onCopy={() => onCopyTasks(task.id)}
+        onCopyLink={() => onCopyLink(task.id)}
+        onDuplicate={() => onDuplicateTasks(task.id)}
+        onMove={(projectId) => onMoveTasks(task.id, projectId)}
+        onStartEdit={() => onStartEdit(task.id)}
+        onCommitTitle={(title) => onCommitTitle(task.id, title)}
       />
     );
   };
@@ -734,13 +850,23 @@ function Outline({
           );
         })}
         {!customPerspective && perspective === "tags" && !!tagFilter && tasks.map(taskRow)}
-        {!customPerspective && perspective === "review" && reviewProjects.map((project) => (
-          <ContextMenuPressable key={project.id} items={projectContextItems(project, projectHandlers)} onPress={() => onSelectProject(project.id)} style={styles.reviewRow}>
-            <View style={[styles.projectHeadingRing, { borderColor: project.color }]} />
-            <View style={styles.reviewCopy}><Text style={styles.projectHeadingTitle}>{project.name}</Text><Text style={styles.projectHeadingNote}>{reviewStatusText(project)}</Text></View>
-            <Pressable onPress={() => onReviewProject(project.id)} style={styles.reviewButton}><Icon name="check" size={15} color="#fff" /><Text style={styles.reviewButtonText}>Reviewed</Text></Pressable>
-          </ContextMenuPressable>
-        ))}
+        {!customPerspective && perspective === "review" && reviewProjects.map((project) => {
+          const remaining = tasks.filter((task) => task.projectId === project.id && !task.completed);
+          const reviewId = `review:${project.id}`;
+          return (
+            <View key={project.id} style={styles.projectGroup}>
+              <ContextMenuPressable items={projectContextItems(project, projectHandlers)} onPress={() => onInspectProject(project.id)} style={[styles.reviewRow, inspectedProjectId === project.id && styles.projectHeadingSelected]}>
+                <Pressable accessibilityLabel={collapsed.has(reviewId) ? "Expand project" : "Collapse project"} onPress={() => toggleCollapsed(reviewId)} hitSlop={8} style={styles.collapseButton} {...({ dataSet: { noMarquee: "true" } } as object)}>
+                  <Icon name={collapsed.has(reviewId) ? "chevron-right" : "chevron-down"} size={18} color="#6e6c72" />
+                </Pressable>
+                <View style={[styles.projectHeadingRing, { borderColor: project.color }]} />
+                <View style={styles.reviewCopy}><Text style={styles.projectHeadingTitle}>{project.name}</Text><Text style={styles.projectHeadingNote}>{reviewStatusText(project)}{remaining.length ? ` · ${remaining.length} remaining` : ""}</Text></View>
+                <Pressable onPress={() => onReviewProject(project.id)} style={styles.reviewButton} {...({ dataSet: { noMarquee: "true" } } as object)}><Icon name="check" size={15} color="#fff" /><Text style={styles.reviewButtonText}>Reviewed</Text></Pressable>
+              </ContextMenuPressable>
+              {!collapsed.has(reviewId) && remaining.map(taskRow)}
+            </View>
+          );
+        })}
         {!customPerspective && perspective !== "projects" && perspective !== "tags" && perspective !== "review" && tasks.map(taskRow)}
         {databaseEmpty ? (
           <View style={styles.migrateState}>
@@ -897,11 +1023,88 @@ function Inspector({ task, projects, onChange, onToggle, onDelete, onClose, moda
         )}
 
         <View style={styles.inspectorSection}>
+          <Text style={styles.inspectorSectionTitle}>INFO</Text>
+          <View style={styles.infoRow}><Text style={styles.infoLabel}>Added</Text><Text style={styles.infoValue}>{inspectorTimestamp(task.createdAt) ?? "—"}</Text></View>
+          <View style={styles.infoRow}><Text style={styles.infoLabel}>Completed</Text><Text style={styles.infoValue}>{task.completed ? inspectorTimestamp(task.completedAt) ?? "Now" : "—"}</Text></View>
+        </View>
+
+        <View style={styles.inspectorSection}>
           <View style={styles.savedRow}><Icon name="cloud-check-outline" size={16} color="#6f9d70" /><Text style={styles.savedText}>Saved on this device</Text></View>
           <Pressable onPress={onDelete} style={styles.deleteButton}><Icon name="trash-can-outline" size={17} color={palette.danger} /><Text style={styles.deleteButtonText}>Delete Action</Text></Pressable>
         </View>
       </ScrollView>
       )}
+    </View>
+  );
+}
+
+function ProjectInspector({ project, remainingCount, onChange, onReview, onDelete, onFocus, onClose, modal = false }: {
+  project: Project;
+  remainingCount: number;
+  onChange: (patch: Partial<Project>) => void;
+  onReview: () => void;
+  onDelete: () => void;
+  onFocus: () => void;
+  onClose?: () => void;
+  modal?: boolean;
+}) {
+  const intervals = [
+    { label: "Daily", days: 1 },
+    { label: "Weekly", days: 7 },
+    { label: "Two Weeks", days: 14 },
+    { label: "Monthly", days: 30 },
+  ];
+  return (
+    <View style={[styles.inspector, modal && styles.inspectorModal]}>
+      <View style={styles.inspectorTabs}>
+        {modal && <Pressable onPress={onClose} style={styles.modalClose}><Icon name="chevron-left" size={24} color={palette.purpleDark} /></Pressable>}
+        <View style={styles.inspectorTabSelected}><Text style={styles.inspectorTabTextSelected}>Project</Text></View>
+      </View>
+      <ScrollView style={styles.inspectorScroll} keyboardShouldPersistTaps="handled">
+        <View style={styles.inspectorTitleRow}>
+          <View style={[styles.projectHeadingRing, { borderColor: project.color, marginTop: 4 }]} />
+          <TextInput value={project.name} onChangeText={(name) => onChange({ name })} multiline style={styles.inspectorTitleInput} accessibilityLabel="Project name" />
+        </View>
+        <View style={styles.inspectorSection}>
+          <Text style={styles.inspectorSectionTitle}>COLOR</Text>
+          <View style={styles.colorChoiceRow}>
+            {projectColors.map((color) => (
+              <Pressable key={color} onPress={() => onChange({ color })} style={[styles.inspectorColor, { backgroundColor: color }, project.color === color && styles.inspectorColorSelected]} />
+            ))}
+          </View>
+        </View>
+        <View style={styles.inspectorSection}>
+          <Text style={styles.inspectorSectionTitle}>NOTE</Text>
+          <TextInput value={project.note} onChangeText={(note) => onChange({ note })} placeholder="Add a project note…" multiline textAlignVertical="top" style={[styles.fieldInput, styles.noteInput]} />
+        </View>
+        <View style={styles.inspectorSection}>
+          <Text style={styles.inspectorSectionTitle}>REVIEW</Text>
+          <FieldLabel>Repeat</FieldLabel>
+          <View style={styles.datePresets}>
+            {intervals.map((item) => (
+              <Pressable key={item.days} onPress={() => onChange({ reviewIntervalDays: item.days })} style={[styles.datePreset, project.reviewIntervalDays === item.days && styles.datePresetSelected]}>
+                <Text style={[styles.datePresetText, project.reviewIntervalDays === item.days && styles.datePresetTextSelected]}>{item.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text style={styles.projectHeadingNote}>{reviewStatusText(project)}</Text>
+          <Text style={[styles.projectHeadingNote, { marginTop: 4 }]}>{remainingCount} remaining action{remainingCount === 1 ? "" : "s"}</Text>
+          <Pressable onPress={onReview} style={[styles.reviewButton, { alignSelf: "flex-start", marginTop: 10 }]}>
+            <Icon name="check" size={15} color="#fff" />
+            <Text style={styles.reviewButtonText}>Mark Reviewed</Text>
+          </Pressable>
+        </View>
+        <View style={styles.inspectorSection}>
+          <Pressable onPress={onFocus} style={styles.multiSelectButton}>
+            <Icon name="bullseye-arrow" size={17} color={palette.purpleDark} />
+            <Text style={styles.multiSelectButtonText}>Focus Project</Text>
+          </Pressable>
+          <Pressable onPress={onDelete} style={styles.deleteButton}>
+            <Icon name="trash-can-outline" size={17} color={palette.danger} />
+            <Text style={styles.deleteButtonText}>Delete Project</Text>
+          </Pressable>
+        </View>
+      </ScrollView>
     </View>
   );
 }
@@ -953,25 +1156,37 @@ function QuickEntryModal({ visible, kind, projects, defaultProjectId, onClose, o
   projects: Project[];
   defaultProjectId: string | null;
   onClose: () => void;
-  onSave: (title: string, projectId: string | null, flagged?: boolean) => void;
+  onSave: (payload: { title: string; projectId: string | null; flagged?: boolean; due?: string; tags?: string[] }) => void;
 }) {
   const [title, setTitle] = useState("");
   const [projectId, setProjectId] = useState<string | null>(defaultProjectId);
   const [flagged, setFlagged] = useState(false);
+  const [due, setDue] = useState<string | undefined>();
+  const [tagDraft, setTagDraft] = useState("");
 
   useEffect(() => {
     if (visible) {
       setTitle("");
       setProjectId(defaultProjectId);
       setFlagged(false);
+      setDue(undefined);
+      setTagDraft("");
     }
   }, [visible, defaultProjectId]);
 
   const save = () => {
     if (!title.trim()) return;
-    onSave(title.trim(), projectId, flagged);
+    onSave({
+      title: title.trim(),
+      projectId,
+      flagged,
+      due,
+      tags: tagDraft.split(",").map((tag) => tag.trim()).filter(Boolean),
+    });
     setTitle("");
     setFlagged(false);
+    setDue(undefined);
+    setTagDraft("");
   };
 
   return (
@@ -990,10 +1205,18 @@ function QuickEntryModal({ visible, kind, projects, defaultProjectId, onClose, o
             )}
           </View>
           {kind === "task" && (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickProjectRow}>
-              <Pressable onPress={() => setProjectId(null)} style={[styles.quickProjectChip, projectId === null && styles.quickProjectChipSelected]}><Icon name="inbox-arrow-down-outline" size={14} color={projectId === null ? palette.purpleDark : "#6c6970"} /><Text style={styles.quickProjectText}>Inbox</Text></Pressable>
-              {projects.map((project) => <Pressable key={project.id} onPress={() => setProjectId(project.id)} style={[styles.quickProjectChip, projectId === project.id && styles.quickProjectChipSelected]}><View style={[styles.miniDot, { backgroundColor: project.color }]} /><Text numberOfLines={1} style={styles.quickProjectText}>{project.name}</Text></Pressable>)}
-            </ScrollView>
+            <>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickProjectRow}>
+                <Pressable onPress={() => setProjectId(null)} style={[styles.quickProjectChip, projectId === null && styles.quickProjectChipSelected]}><Icon name="inbox-arrow-down-outline" size={14} color={projectId === null ? palette.purpleDark : "#6c6970"} /><Text style={styles.quickProjectText}>Inbox</Text></Pressable>
+                {projects.map((project) => <Pressable key={project.id} onPress={() => setProjectId(project.id)} style={[styles.quickProjectChip, projectId === project.id && styles.quickProjectChipSelected]}><View style={[styles.miniDot, { backgroundColor: project.color }]} /><Text numberOfLines={1} style={styles.quickProjectText}>{project.name}</Text></Pressable>)}
+              </ScrollView>
+              <View style={styles.quickMeta}>
+                <FieldLabel>Due</FieldLabel>
+                <DatePresets value={due} onChange={setDue} />
+                <FieldLabel>Tags</FieldLabel>
+                <TextInput value={tagDraft} onChangeText={setTagDraft} placeholder="errands, phone" style={styles.fieldInput} />
+              </View>
+            </>
           )}
           <View style={styles.quickFooter}><Text style={styles.quickHint}>Saved locally and available offline</Text><Pressable onPress={onClose} style={styles.cancelButton}><Text style={styles.cancelButtonText}>Cancel</Text></Pressable><Pressable disabled={!title.trim()} onPress={save} style={[styles.saveButton, !title.trim() && styles.disabled]}><Text style={styles.saveButtonText}>Save</Text></Pressable></View>
         </View>
@@ -1114,6 +1337,9 @@ function SettingsModal({
                     </SettingsRow>
                     <SettingsRow title="Confirm before deleting" detail="Ask before removing actions from the database.">
                       <Switch value={settings.confirmBeforeDelete} onValueChange={(confirmBeforeDelete) => onChange({ confirmBeforeDelete })} trackColor={{ true: palette.purple }} />
+                    </SettingsRow>
+                    <SettingsRow title="Clean up immediately" detail="Hide completed and filed inbox items as soon as they change. Turn off to keep them until ⌘K.">
+                      <Switch value={settings.cleanUpImmediately} onValueChange={(cleanUpImmediately) => onChange({ cleanUpImmediately })} trackColor={{ true: palette.purple }} />
                     </SettingsRow>
                   </View>
                 </>
@@ -1306,6 +1532,10 @@ export default function App() {
   const locationRef = useRef<LocationState>({ perspective: "projects", projectFilter: null, tagFilter: null, forecastDay: todayKey(), focusedProjectId: null });
   const historyRef = useRef<{ stack: LocationState[]; index: number }>({ stack: [], index: -1 });
   const [selection, setSelection] = useState<SelectionState>(emptySelection);
+  const [inspectedProjectId, setInspectedProjectId] = useState<string | null>(null);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [collapseNonce, setCollapseNonce] = useState<{ action: "expand" | "collapse"; n: number } | null>(null);
+  const [pendingCleanupIds, setPendingCleanupIds] = useState<string[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -1377,6 +1607,7 @@ export default function App() {
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
   const selectedTasks = tasks.filter((task) => selectedTaskIds.includes(task.id));
   const selectedProject = selectedTask?.projectId ? projects.find((project) => project.id === selectedTask.projectId) : undefined;
+  const inspectedProject = inspectedProjectId ? projects.find((project) => project.id === inspectedProjectId) : undefined;
   const marqueeBaseRef = useRef<SelectionState>(emptySelection);
   const activeCustomPerspective = perspective.startsWith("custom:") ? customPerspectives.find((item) => item.id === perspective.slice(7)) ?? null : null;
   const barItems = useMemo(() => favoritePerspectives(settings, customPerspectives), [customPerspectives, settings]);
@@ -1430,22 +1661,22 @@ export default function App() {
 
   const visibleTasks = useMemo(() => {
     let result = [...tasks];
+    const lingering = new Set(pendingCleanupIds);
     if (activeCustomPerspective) {
       const custom = activeCustomPerspective;
-      result = result.filter((task) => taskMatchesCustomPerspective(task, custom));
+      result = result.filter((task) => taskMatchesCustomPerspective(task, custom) || lingering.has(task.id));
       if (projectFilter) result = result.filter((task) => task.projectId === projectFilter);
       if (tagFilter) result = result.filter((task) => task.tags.includes(tagFilter));
       result.sort((a, b) => compareTasks(a, b, custom.sortBy));
     } else {
-      if (perspective === "inbox") result = result.filter((task) => task.projectId === null);
+      if (perspective === "inbox") result = result.filter((task) => task.projectId === null || lingering.has(task.id));
       if (perspective === "projects") result = result.filter((task) => task.projectId !== null);
       if (perspective === "forecast") result = result.filter((task) => !!task.due && isDueOnDay(task.due, forecastDay));
       if (perspective === "flagged") result = result.filter((task) => task.flagged);
       if (projectFilter && perspective === "projects") result = result.filter((task) => task.projectId === projectFilter);
       if (tagFilter) result = result.filter((task) => task.tags.includes(tagFilter));
       const availability = settings.standardAvailability[perspective as PerspectiveId] ?? (settings.showCompleted ? "all" : "remaining");
-      if (availability === "completed") result = result.filter((task) => task.completed);
-      else if (availability !== "all") result = result.filter((task) => !task.completed);
+      result = result.filter((task) => matchesAvailability(task, availability) || lingering.has(task.id));
     }
     if (focusedProjectId) result = result.filter((task) => task.projectId === focusedProjectId);
     if (query.trim()) {
@@ -1453,7 +1684,7 @@ export default function App() {
       result = result.filter((task) => `${task.title} ${task.note ?? ""} ${task.tags.join(" ")}`.toLowerCase().includes(needle));
     }
     return result;
-  }, [tasks, perspective, projectFilter, tagFilter, forecastDay, focusedProjectId, settings.showCompleted, settings.standardAvailability, query, activeCustomPerspective]);
+  }, [tasks, perspective, projectFilter, tagFilter, forecastDay, focusedProjectId, settings.showCompleted, settings.standardAvailability, query, activeCustomPerspective, pendingCleanupIds]);
 
   const orderedTaskIds = useMemo(() => outlineTaskIds({
     tasks: visibleTasks,
@@ -1527,7 +1758,19 @@ export default function App() {
   };
 
   const updateTask = (id: string, patch: Partial<Task>) => {
-    setTasks((current) => current.map((task) => task.id === id ? { ...task, ...patch } : task));
+    setTasks((current) => current.map((task) => {
+      if (task.id !== id) return task;
+      const next = { ...task, ...patch };
+      if (patch.completed === true) next.completedAt = patch.completedAt ?? new Date().toISOString();
+      if (patch.completed === false) next.completedAt = undefined;
+      return next;
+    }));
+    if (!settings.cleanUpImmediately) {
+      const current = tasks.find((task) => task.id === id);
+      if (patch.completed === true) setPendingCleanupIds((ids) => ids.includes(id) ? ids : [...ids, id]);
+      if (patch.completed === false) setPendingCleanupIds((ids) => ids.filter((item) => item !== id));
+      if (current && current.projectId === null && patch.projectId) setPendingCleanupIds((ids) => ids.includes(id) ? ids : [...ids, id]);
+    }
   };
 
   const toggleTask = (id: string) => {
@@ -1542,7 +1785,13 @@ export default function App() {
     const targets = tasks.filter((task) => ids.includes(task.id));
     if (!targets.length) return;
     const nextCompleted = !targets.every((task) => task.completed);
-    setTasks((current) => current.map((task) => ids.includes(task.id) ? { ...task, completed: nextCompleted } : task));
+    const completedAt = nextCompleted ? new Date().toISOString() : undefined;
+    setTasks((current) => current.map((task) => ids.includes(task.id) ? { ...task, completed: nextCompleted, completedAt } : task));
+    if (!settings.cleanUpImmediately) {
+      setPendingCleanupIds((current) => nextCompleted
+        ? [...new Set([...current, ...ids])]
+        : current.filter((id) => !ids.includes(id)));
+    }
   };
 
   const toggleTaskFlags = (ids: string[]) => {
@@ -1587,6 +1836,7 @@ export default function App() {
         : rule),
     })));
     setProjectFilter((current) => current === id ? null : current);
+    setInspectedProjectId((current) => current === id ? null : current);
     setSelection((current) => {
       const remaining = current.ids.filter((taskId) => tasks.find((task) => task.id === taskId)?.projectId !== id);
       if (!remaining.length) return emptySelection;
@@ -1607,27 +1857,47 @@ export default function App() {
     finalizeDeleteProject(id);
   };
 
-  const createItem = (title: string, projectId: string | null, flagged?: boolean) => {
+  const createItem = (payload: { title: string; projectId: string | null; flagged?: boolean; due?: string; tags?: string[] }) => {
     if (quickKind === "project") {
-      const project: Project = { id: makeId("project"), name: title, note: "", color: projectColors[projects.length % projectColors.length] ?? palette.purple, reviewIntervalDays: 7 };
+      const project: Project = { id: makeId("project"), name: payload.title, note: "", color: projectColors[projects.length % projectColors.length] ?? palette.purple, reviewIntervalDays: 7 };
       setProjects((current) => [...current, project]);
       navigate({ perspective: "projects", projectFilter: project.id, tagFilter: null });
     } else {
-      const task: Task = { id: makeId("task"), title, projectId, tags: [], flagged: flagged ?? false, completed: false, createdAt: new Date().toISOString() };
+      const task: Task = {
+        id: makeId("task"),
+        title: payload.title,
+        projectId: payload.projectId,
+        tags: payload.tags ?? [],
+        due: payload.due,
+        flagged: payload.flagged ?? false,
+        completed: false,
+        createdAt: new Date().toISOString(),
+      };
       setTasks((current) => [...current, task]);
       setSelection(singleSelection(task.id));
-      if (projectId === null) selectPerspective("inbox");
-      else navigate({ perspective: "projects", projectFilter: projectId, tagFilter: null });
+      setInspectedProjectId(null);
+      if (payload.projectId === null) selectPerspective("inbox");
+      else navigate({ perspective: "projects", projectFilter: payload.projectId, tagFilter: null });
     }
     setQuickKind(null);
   };
 
   const openInspector = (id: string) => {
+    setInspectedProjectId(null);
     setSelection(singleSelection(id));
     setInspectorOpen(true);
   };
 
+  const inspectProject = (id: string) => {
+    setEditingTaskId(null);
+    setSelection(emptySelection);
+    setInspectedProjectId(id);
+    setInspectorOpen(true);
+  };
+
   const selectTask = (id: string, modifiers: SelectionModifiers = {}) => {
+    setInspectedProjectId(null);
+    setEditingTaskId((current) => current === id ? current : null);
     setSelection((current) => applyClick(current, orderedTaskIds, id, modifiers));
     if (!modifiers.shift && !modifiers.toggle && (isPhone || settings.openInspectorOnSelection)) setInspectorOpen(true);
   };
@@ -1681,6 +1951,71 @@ export default function App() {
 
   const toggleTaskFlag = (id: string) => {
     toggleTaskFlags(idsForRow(id));
+  };
+
+  const copyTaskLinks = (id: string) => {
+    const ids = idsForRow(id);
+    copyToClipboard(ids.map((item) => `omniclone://task/${item}`).join("\n"));
+  };
+
+  const duplicateTasks = (id: string) => {
+    const ids = idsForRow(id);
+    const copies: Task[] = [];
+    setTasks((current) => {
+      const next = [...current];
+      for (const taskId of ids) {
+        const task = current.find((item) => item.id === taskId);
+        if (!task) continue;
+        const copy: Task = {
+          ...task,
+          id: makeId("task"),
+          importKey: undefined,
+          createdAt: new Date().toISOString(),
+          completed: false,
+          completedAt: undefined,
+        };
+        copies.push(copy);
+        const index = next.findIndex((item) => item.id === taskId);
+        next.splice(index >= 0 ? index + 1 : next.length, 0, copy);
+      }
+      return next;
+    });
+    if (copies.length === 1) setSelection(singleSelection(copies[0]?.id ?? null));
+    else if (copies.length) setSelection({ ids: copies.map((item) => item.id), anchorId: copies[0]?.id ?? null, headId: copies[copies.length - 1]?.id ?? null });
+  };
+
+  const moveTasks = (id: string, projectId: string | null) => {
+    const ids = idsForRow(id);
+    const fromInbox = tasks.filter((task) => ids.includes(task.id) && task.projectId === null);
+    setTasks((current) => current.map((task) => ids.includes(task.id) ? { ...task, projectId } : task));
+    if (!settings.cleanUpImmediately && projectId && fromInbox.length && perspective === "inbox") {
+      setPendingCleanupIds((current) => [...new Set([...current, ...fromInbox.map((task) => task.id)])]);
+    }
+  };
+
+  const commitTaskTitle = (id: string, title: string) => {
+    updateTask(id, { title });
+    setEditingTaskId((current) => current === id ? null : current);
+  };
+
+  const startEditTitle = (id?: string) => {
+    const target = id ?? selectedTaskId;
+    if (!target) return;
+    setInspectedProjectId(null);
+    setSelection(singleSelection(target));
+    setEditingTaskId(target);
+  };
+
+  const cleanUp = () => {
+    setPendingCleanupIds([]);
+    setEditingTaskId(null);
+  };
+
+  const expandAll = () => setCollapseNonce((current) => ({ action: "expand", n: (current?.n ?? 0) + 1 }));
+  const collapseAll = () => setCollapseNonce((current) => ({ action: "collapse", n: (current?.n ?? 0) + 1 }));
+
+  const updateProject = (id: string, patch: Partial<Project>) => {
+    setProjects((current) => current.map((project) => project.id === id ? { ...project, ...patch } : project));
   };
 
   const deleteCustomPerspective = (id: string) => {
@@ -1781,9 +2116,9 @@ export default function App() {
     ? (activeCustomPerspective.organizeBy === "projects" || effectiveGroupBy(activeCustomPerspective) === "project" ? "projects" : effectiveGroupBy(activeCustomPerspective) === "tag" ? "tags" : "projects")
     : perspective.startsWith("custom:") ? "projects" : perspective as PerspectiveId;
   const showSidebar = !isPhone && canShowSidebar && sidebarOpen && perspective !== "inbox" && !activeCustomPerspective?.keepSidebarHidden;
-  const showInspector = !isPhone && canShowInspector && inspectorOpen && selectedTaskIds.length > 0;
+  const showInspector = !isPhone && canShowInspector && inspectorOpen && (selectedTaskIds.length > 0 || !!inspectedProjectId);
   const modalOpen = quickKind !== null || settingsOpen || perspectivesListOpen || quickOpenOpen || importGuideOpen || !!importPreview || !!importError || !!importSummary;
-  const nativeMenuTypes = new Set(["perspective", "toggleSidebar", "toggleInspector", "toggleSearch", "openSettings", "toggleViewMenu", "addPerspective", "showPerspectivesList", "togglePerspectivesBar", "quickOpen", "newAction", "newProject", "selectAll", "goBack", "goForward"]);
+  const nativeMenuTypes = new Set(["perspective", "toggleSidebar", "toggleInspector", "toggleSearch", "openSettings", "toggleViewMenu", "addPerspective", "showPerspectivesList", "togglePerspectivesBar", "quickOpen", "newAction", "newProject", "selectAll", "goBack", "goForward", "cleanUp", "duplicate", "expandAll", "collapseAll"]);
 
   const handleHotkeyAction = useCallback((action: HotkeyAction | MenuCommand) => {
     switch (action.type) {
@@ -1794,7 +2129,7 @@ export default function App() {
         if (canShowSidebar) setSidebarOpen((value) => !value);
         break;
       case "toggleInspector":
-        if (canShowInspector && selectedTaskIds.length) setInspectorOpen((value) => !value);
+        if (canShowInspector && (selectedTaskIds.length || inspectedProjectId)) setInspectorOpen((value) => !value);
         break;
       case "toggleSearch":
         setSearchOpen((value) => !value);
@@ -1871,6 +2206,21 @@ export default function App() {
         }
         selectAllVisible();
         break;
+      case "cleanUp":
+        cleanUp();
+        break;
+      case "duplicate":
+        if (selectedTaskIds.length) duplicateTasks(selectedTaskIds[0] ?? "");
+        break;
+      case "editTitle":
+        startEditTitle();
+        break;
+      case "expandAll":
+        expandAll();
+        break;
+      case "collapseAll":
+        collapseAll();
+        break;
       case "confirmDelete":
         if (pendingDeleteProjectId) finalizeDeleteProject(pendingDeleteProjectId);
         else if (pendingDeleteTaskIds.length) finalizeDeleteTasks(pendingDeleteTaskIds, pendingDeleteDirection);
@@ -1898,7 +2248,11 @@ export default function App() {
           setQuery("");
           setSearchOpen(false);
         }
-        else if (selectedTaskIds.length) setSelection(emptySelection);
+        else if (editingTaskId) setEditingTaskId(null);
+        else if (selectedTaskIds.length || inspectedProjectId) {
+          setSelection(emptySelection);
+          setInspectedProjectId(null);
+        }
         break;
     }
   }, [
@@ -1931,6 +2285,13 @@ export default function App() {
     settingsOpen,
     viewMenuOpen,
     projectFilter,
+    cleanUp,
+    duplicateTasks,
+    startEditTitle,
+    expandAll,
+    collapseAll,
+    editingTaskId,
+    inspectedProjectId,
   ]);
 
   useEffect(() => {
@@ -1967,12 +2328,13 @@ export default function App() {
 
   const sidebarProjects = focusedProjectId ? projects.filter((project) => project.id === focusedProjectId) : projects;
   const forecastCounts = useMemo(() => {
-    const counts: Record<string, number> = { past: 0 };
+    const counts: Record<string, number> = { past: 0, upcoming: 0 };
     const weekKeys = forecastWeek().map((day) => day.key);
     for (const task of tasks) {
       if (task.completed || !task.due) continue;
       if (focusedProjectId && task.projectId !== focusedProjectId) continue;
       if (dueUrgency(task.due) === "overdue") counts.past = (counts.past ?? 0) + 1;
+      if (isDueOnDay(task.due, "upcoming")) counts.upcoming = (counts.upcoming ?? 0) + 1;
       for (const key of weekKeys) {
         if (isDueOnDay(task.due, key)) counts[key] = (counts[key] ?? 0) + 1;
       }
@@ -2144,6 +2506,9 @@ export default function App() {
             projects={sidebarProjects}
             tasks={visibleTasks}
             selectedTaskIds={selectedTaskIds}
+            inspectedProjectId={inspectedProjectId}
+            editingTaskId={editingTaskId}
+            collapseNonce={collapseNonce}
             projectFilter={projectFilter}
             tagFilter={tagFilter}
             forecastDay={forecastDay}
@@ -2158,18 +2523,27 @@ export default function App() {
               const ids = idsForRow(id);
               copyToClipboard(tasks.filter((task) => ids.includes(task.id)).map((task) => task.title).join("\n"));
             }}
+            onCopyLink={copyTaskLinks}
+            onDuplicateTasks={duplicateTasks}
+            onMoveTasks={moveTasks}
+            onStartEdit={startEditTitle}
+            onCommitTitle={commitTaskTitle}
             onNewTask={() => setQuickKind("task")}
             onReviewProject={(id) => setProjects((current) => current.map((project) => project.id === id ? { ...project, lastReviewedAt: new Date().toISOString() } : project))}
             onOpenViewMenu={() => setViewMenuOpen(true)}
             onFocusProject={focusProject}
             onSelectProject={(id) => navigate({ perspective: "projects", projectFilter: id, tagFilter: null })}
+            onInspectProject={inspectProject}
             onNewActionInProject={newActionInProject}
             onDeleteProject={deleteProject}
             onImport={openOmniFocusImport}
             onMarqueeStart={() => { marqueeBaseRef.current = selection; }}
             onMarqueeSelect={(ids, additive) => setSelection(applyMarquee(additive ? marqueeBaseRef.current : emptySelection, ids, additive))}
-            onClearSelection={() => setSelection(emptySelection)}
+            onClearSelection={() => { setSelection(emptySelection); setInspectedProjectId(null); }}
             onSelectAll={selectAllVisible}
+            onCleanUp={cleanUp}
+            onExpandAll={expandAll}
+            onCollapseAll={collapseAll}
             databaseEmpty={hydrated && projects.length === 0 && tasks.length === 0}
           />
           {showInspector && selectedTaskIds.length > 1 && (
@@ -2183,6 +2557,16 @@ export default function App() {
             />
           )}
           {showInspector && selectedTaskIds.length === 1 && selectedTask && <Inspector task={selectedTask} projects={projects} onChange={(patch) => updateTask(selectedTask.id, patch)} onToggle={() => toggleTask(selectedTask.id)} onDelete={() => deleteTask(selectedTask.id)} />}
+          {showInspector && !selectedTaskIds.length && inspectedProject && (
+            <ProjectInspector
+              project={inspectedProject}
+              remainingCount={tasks.filter((task) => task.projectId === inspectedProject.id && !task.completed).length}
+              onChange={(patch) => updateProject(inspectedProject.id, patch)}
+              onReview={() => updateProject(inspectedProject.id, { lastReviewedAt: new Date().toISOString() })}
+              onDelete={() => deleteProject(inspectedProject.id)}
+              onFocus={() => focusProject(inspectedProject.id)}
+            />
+          )}
         </View>
 
         {isPhone && (
@@ -2210,7 +2594,10 @@ export default function App() {
 
       <QuickEntryModal visible={quickKind !== null} kind={quickKind ?? "task"} projects={projects} defaultProjectId={defaultProjectId} onClose={() => setQuickKind(null)} onSave={createItem} />
 
-      {settingsOpen && <SettingsModal settings={settings} projectCount={projects.length} taskCount={tasks.length} compact={isPhone} onChange={(patch) => setSettings((current) => ({ ...current, ...patch }))} onClose={() => setSettingsOpen(false)} onImport={() => { setSettingsOpen(false); void openOmniFocusImport(); }} onReset={() => setSettings(defaultSettings)} />}
+      {settingsOpen && <SettingsModal settings={settings} projectCount={projects.length} taskCount={tasks.length} compact={isPhone} onChange={(patch) => {
+        setSettings((current) => ({ ...current, ...patch }));
+        if (patch.cleanUpImmediately) setPendingCleanupIds([]);
+      }} onClose={() => setSettingsOpen(false)} onImport={() => { setSettingsOpen(false); void openOmniFocusImport(); }} onReset={() => setSettings(defaultSettings)} />}
 
       <PerspectivesListModal
         visible={perspectivesListOpen}
@@ -2265,8 +2652,24 @@ export default function App() {
       />
 
       {isPhone && selectedTask && (
-        <Modal visible={inspectorOpen} animationType="slide" onRequestClose={() => setInspectorOpen(false)}>
+        <Modal visible={inspectorOpen && !inspectedProjectId} animationType="slide" onRequestClose={() => setInspectorOpen(false)}>
           <SafeAreaView style={styles.safeArea}><Inspector modal task={selectedTask} projects={projects} onClose={() => setInspectorOpen(false)} onChange={(patch) => updateTask(selectedTask.id, patch)} onToggle={() => toggleTask(selectedTask.id)} onDelete={() => deleteTask(selectedTask.id)} /></SafeAreaView>
+        </Modal>
+      )}
+      {isPhone && inspectedProject && (
+        <Modal visible={inspectorOpen} animationType="slide" onRequestClose={() => setInspectorOpen(false)}>
+          <SafeAreaView style={styles.safeArea}>
+            <ProjectInspector
+              modal
+              project={inspectedProject}
+              remainingCount={tasks.filter((task) => task.projectId === inspectedProject.id && !task.completed).length}
+              onClose={() => setInspectorOpen(false)}
+              onChange={(patch) => updateProject(inspectedProject.id, patch)}
+              onReview={() => updateProject(inspectedProject.id, { lastReviewedAt: new Date().toISOString() })}
+              onDelete={() => deleteProject(inspectedProject.id)}
+              onFocus={() => { setInspectorOpen(false); focusProject(inspectedProject.id); }}
+            />
+          </SafeAreaView>
         </Modal>
       )}
     </SafeAreaView>
@@ -2343,6 +2746,10 @@ const styles = StyleSheet.create({
   forecastDayCount: { fontSize: 8, color: palette.purpleDark, fontWeight: "700" },
   forecastDayCountSelected: { color: "#fff" },
   forecastDayTextSelected: { color: "#fff" },
+  forecastDayNumWrap: { width: 22, height: 22, borderRadius: 11, alignItems: "center", justifyContent: "center" },
+  forecastDayToday: { borderWidth: 1.5, borderColor: palette.purple },
+  forecastDayNumToday: { color: palette.purpleDark },
+  forecastUpcoming: { height: 35, marginTop: 8, paddingHorizontal: 7, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.line, borderRadius: 7 },
   outline: { flex: 1, minWidth: 320, backgroundColor: palette.canvas },
   outlineHeader: { height: 69, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
   outlineHeaderCopy: { flex: 1 },
@@ -2354,6 +2761,7 @@ const styles = StyleSheet.create({
   outlineContent: { paddingBottom: 48 },
   projectGroup: { borderBottomWidth: 7, borderBottomColor: "#f5f4f6" },
   projectHeading: { minHeight: 63, paddingHorizontal: 12, paddingVertical: 10, flexDirection: "row", alignItems: "flex-start", gap: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
+  projectHeadingSelected: { backgroundColor: palette.purpleSelection },
   projectHeadingMain: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "flex-start", gap: 7 },
   projectHeadingRing: { width: 18, height: 18, marginTop: 1, borderWidth: 3, borderRadius: 9, backgroundColor: "#fff" },
   projectHeadingCopy: { flex: 1 },
@@ -2364,13 +2772,15 @@ const styles = StyleSheet.create({
   taskRow: { minHeight: 55, paddingHorizontal: 17, paddingVertical: 7, flexDirection: "row", alignItems: "flex-start", gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#e7e5e9" },
   taskRowCompact: { minHeight: 45, paddingVertical: 4 },
   taskRowSelected: { backgroundColor: palette.purpleSelection },
+  taskRowHover: { backgroundColor: "#f4f2f6" },
   taskRowPressed: { opacity: .72 },
   statusRing: { marginTop: 1, borderWidth: 1.8, alignItems: "center", justifyContent: "center", backgroundColor: "transparent", overflow: "visible" },
   statusFlag: { position: "absolute", right: -6, bottom: -7 },
   collapseButton: { width: 22, height: 22, alignItems: "center", justifyContent: "center" },
   taskBody: { flex: 1, minWidth: 0 },
   taskTitleLine: { minHeight: 19, flexDirection: "row", alignItems: "center", gap: 4 },
-  taskTitle: { flexShrink: 1, fontSize: 13, lineHeight: 18, color: "#29262b" },
+  taskTitle: { flexShrink: 1, flex: 1, fontSize: 13, lineHeight: 18, color: "#29262b" },
+  taskTitleInput: { minHeight: 20, padding: 0, margin: 0 },
   taskTitleSmall: { fontSize: 12, lineHeight: 17 },
   taskTitleLarge: { fontSize: 15, lineHeight: 20 },
   taskTitleResolved: { color: "#969299" },
@@ -2384,6 +2794,7 @@ const styles = StyleSheet.create({
   dueToday: { color: palette.danger, fontWeight: "600" },
   dueOverdue: { color: palette.overdue, fontWeight: "700" },
   dueSoon: { color: palette.dueSoon, fontWeight: "600" },
+  deferText: { fontSize: 9.5, color: "#9a969e", fontStyle: "italic" },
   rowInfoButton: { marginLeft: 2 },
   newActionBar: { position: "absolute", left: 0, right: 0, bottom: 0, height: 40, paddingHorizontal: 17, flexDirection: "row", alignItems: "center", gap: 5, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.line, backgroundColor: "rgba(255,255,255,.97)" },
   newActionText: { fontSize: 11, color: "#625f66" },
@@ -2440,6 +2851,11 @@ const styles = StyleSheet.create({
   inspectorSectionTitle: { marginBottom: 8, fontSize: 8.5, letterSpacing: .45, fontWeight: "700", color: "#77737b" },
   fieldLabel: { marginTop: 5, marginBottom: 3, fontSize: 9.5, color: "#706c74" },
   fieldInput: { minHeight: 28, paddingHorizontal: 8, paddingVertical: 4, borderWidth: StyleSheet.hairlineWidth, borderColor: "#cfccd2", borderRadius: 6, backgroundColor: "rgba(255,255,255,.74)", fontSize: 10.5, color: "#353238" },
+  infoRow: { minHeight: 22, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  infoLabel: { fontSize: 10, color: "#706c74" },
+  infoValue: { fontSize: 10, color: "#3a373d" },
+  inspectorColor: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: "transparent" },
+  inspectorColorSelected: { borderColor: "#fff", shadowColor: "#000", shadowOpacity: 0.25, shadowRadius: 3, elevation: 3 },
   noteInput: { minHeight: 96, paddingTop: 7 },
   choiceRow: { gap: 5, paddingBottom: 4 },
   choiceChip: { maxWidth: 170, height: 27, paddingHorizontal: 9, alignItems: "center", justifyContent: "center", borderRadius: 7, borderWidth: StyleSheet.hairlineWidth, borderColor: "#ccc9cf", backgroundColor: "rgba(255,255,255,.7)" },
@@ -2461,6 +2877,7 @@ const styles = StyleSheet.create({
   quickProjectChip: { maxWidth: 175, height: 29, paddingHorizontal: 9, flexDirection: "row", alignItems: "center", gap: 5, borderRadius: 7, borderWidth: StyleSheet.hairlineWidth, borderColor: "#d2cfd5", backgroundColor: "#f5f4f6" },
   quickProjectChipSelected: { borderColor: palette.purple, backgroundColor: palette.purpleSoft },
   quickProjectText: { flexShrink: 1, fontSize: 9.5, color: "#5f5c63" },
+  quickMeta: { paddingHorizontal: 16, paddingBottom: 12, gap: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "#eceaed", backgroundColor: "#fff" },
   miniDot: { width: 7, height: 7, borderRadius: 4 },
   quickFooter: { minHeight: 50, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.line },
   quickHint: { flex: 1, fontSize: 8.5, color: "#98949c" },
