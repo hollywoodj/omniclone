@@ -116,6 +116,8 @@ export const palette = {
   canvas: "#ffffff",
   danger: "#d94b4b",
   flag: "#e2a13b",
+  dueSoon: "#d4a017",
+  overdue: "#d94b4b",
 };
 
 export const defaultPerspectiveShortcuts: Record<string, string> = {
