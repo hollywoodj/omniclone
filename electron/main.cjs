@@ -95,7 +95,22 @@ function buildMenu(win, customPerspectives = []) {
         { label: "Import from OmniFocus…", click: () => send(win, { type: "importOmniFocus" }) },
       ],
     },
-    { role: "editMenu" },
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        { role: "delete" },
+        { type: "separator" },
+        { label: "Select All", accelerator: "CommandOrControl+A", click: () => send(win, { type: "selectAll" }) },
+        { type: "separator" },
+        { label: "Find", accelerator: "CommandOrControl+F", click: () => send(win, { type: "toggleSearch" }) },
+      ],
+    },
     {
       label: "View",
       submenu: [

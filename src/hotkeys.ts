@@ -21,6 +21,8 @@ export type HotkeyAction =
   | { type: "focusProject" }
   | { type: "markReviewed" }
   | { type: "selectRow"; direction: "up" | "down" }
+  | { type: "extendRow"; direction: "up" | "down" }
+  | { type: "selectAll" }
   | { type: "confirmDelete" }
   | { type: "cancel" };
 
@@ -47,10 +49,10 @@ function isBareKey(event: KeyboardEvent): boolean {
 }
 
 export function isTextInputTarget(target: EventTarget | null): boolean {
-  if (!target || typeof HTMLElement === "undefined") return false;
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-  const tag = target.tagName;
+  if (!target || typeof target !== "object") return false;
+  const element = target as { tagName?: string; isContentEditable?: boolean };
+  if (element.isContentEditable) return true;
+  const tag = element.tagName;
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
 
@@ -96,6 +98,7 @@ export function matchOmniFocusHotkey(event: KeyboardEvent, options: {
     };
     if (perspectives[key]) return { type: "perspective", id: perspectives[key] };
     if (key === "n" || key === "N") return { type: "newAction" };
+    if (key === "a" || key === "A") return { type: "selectAll" };
     if (key === "f" || key === "F") return { type: "toggleSearch" };
     if (key === "o" || key === "O") return { type: "quickOpen" };
     if (key === ",") return { type: "openSettings" };
@@ -131,6 +134,11 @@ export function matchOmniFocusHotkey(event: KeyboardEvent, options: {
     if (key === "ArrowUp") return { type: "selectRow", direction: "up" };
     if (key === "ArrowDown") return { type: "selectRow", direction: "down" };
     if (key === "Delete" || key === "Backspace") return { type: "delete", direction: "previous" };
+  }
+
+  if (!meta && !ctrl && !alt && shift) {
+    if (key === "ArrowUp") return { type: "extendRow", direction: "up" };
+    if (key === "ArrowDown") return { type: "extendRow", direction: "down" };
   }
 
   if (event.code === "Delete" && !meta && !ctrl && !alt && !shift) {

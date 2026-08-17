@@ -72,6 +72,8 @@ export function buildAppMenus(options: {
       id: "edit",
       label: "Edit",
       items: [
+        { id: "select-all", label: "Select All", shortcut: "⌘A", command: { type: "selectAll" } },
+        { id: "sep-edit", separator: true },
         { id: "find", label: "Find", shortcut: "⌘F", command: { type: "toggleSearch" } },
       ],
     },
