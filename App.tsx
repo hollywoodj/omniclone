@@ -2,7 +2,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import { File as ExpoFile } from "expo-file-system";
 import { StatusBar } from "expo-status-bar";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -34,7 +34,7 @@ import {
 import { loadDatabase, saveDatabase } from "./src/storage";
 import { loadSettings, saveSettings } from "./src/settings";
 import { applyOmniFocusImport, parseOmniFocusFile, type ImportMode, type OmniImportData } from "./src/importOmniFocus";
-import { matchOmniFocusHotkey, type HotkeyAction } from "./src/hotkeys";
+import { isTextInputTarget, matchOmniFocusHotkey, type HotkeyAction } from "./src/hotkeys";
 import { ContextMenuPressable, ContextMenuProvider, useContextMenuTrigger, type ContextMenuItem } from "./src/contextMenu";
 import { MenuBar, type MenuCommand } from "./src/menuBar";
 import { ViewOptionsPanel } from "./src/viewOptions";
@@ -42,6 +42,20 @@ import { PerspectivesListModal } from "./src/perspectivesList";
 import { QuickOpenModal } from "./src/quickOpen";
 import { compareTasks, duplicateCustomPerspective, effectiveGroupBy, normalizeCustomPerspective, taskMatchesCustomPerspective } from "./src/perspectiveRules";
 import { formatShortcut, toElectronAccelerator } from "./src/shortcuts";
+import { useMarqueeSelection, useModifierKeys } from "./src/marquee";
+import {
+  applyClick,
+  applyMarquee,
+  applyMove,
+  applySelectAll,
+  emptySelection,
+  neighborAfterDelete,
+  outlineTaskIds,
+  pruneSelection,
+  singleSelection,
+  type SelectionModifiers,
+  type SelectionState,
+} from "./src/selection";
 
 declare global {
   interface Window {
@@ -112,6 +126,7 @@ function StatusRing({ completed, color = palette.purple, onPress, size = 19 }: {
       accessibilityState={{ checked: completed }}
       onPress={onPress}
       hitSlop={8}
+      {...({ dataSet: { noMarquee: "true" } } as object)}
       style={[styles.statusRing, { width: size, height: size, borderRadius: size / 2, borderColor: color }, completed && { backgroundColor: color }]}
     >
       {completed && <Icon name="check" size={Math.max(10, size - 7)} color="#fff" />}
@@ -301,60 +316,72 @@ function ProjectSidebar({
   );
 }
 
-function TaskRow({ task, project, selected, settings, onSelect, onToggle, onInspect, onToggleFlag, onDelete }: {
+function TaskRow({ task, project, selected, bulkCount, settings, registerRow, onSelect, onToggle, onInspect, onToggleSelected, onToggleFlag, onDelete, onCopy }: {
   task: Task;
   project?: Project;
   selected: boolean;
+  bulkCount: number;
   settings: AppSettings;
+  registerRow: (id: string, node: View | null) => void;
   onSelect: () => void;
   onToggle: () => void;
   onInspect: () => void;
+  onToggleSelected: () => void;
   onToggleFlag: () => void;
   onDelete: () => void;
+  onCopy: () => void;
 }) {
+  const bulk = bulkCount > 1;
   const menuItems: ContextMenuItem[] = [
     { id: "inspect", label: "Inspect", icon: "information-outline", onPress: onInspect },
-    { id: "toggle", label: task.completed ? "Mark Incomplete" : "Mark Complete", icon: task.completed ? "circle-outline" : "check-circle-outline", onPress: onToggle },
-    { id: "flag", label: task.flagged ? "Remove Flag" : "Flag", icon: task.flagged ? "flag-off-outline" : "flag-outline", onPress: onToggleFlag },
-    { id: "copy", label: "Copy Title", icon: "content-copy", onPress: () => copyToClipboard(task.title) },
-    { id: "delete", label: "Delete", icon: "trash-can-outline", destructive: true, onPress: onDelete },
+    { id: "toggle", label: `${task.completed ? "Mark Incomplete" : "Mark Complete"}${bulk ? ` (${bulkCount})` : ""}`, icon: task.completed ? "circle-outline" : "check-circle-outline", onPress: onToggleSelected },
+    { id: "flag", label: `${task.flagged ? "Remove Flag" : "Flag"}${bulk ? ` (${bulkCount})` : ""}`, icon: task.flagged ? "flag-off-outline" : "flag-outline", onPress: onToggleFlag },
+    { id: "copy", label: bulk ? `Copy Titles (${bulkCount})` : "Copy Title", icon: "content-copy", onPress: onCopy },
+    { id: "delete", label: bulk ? `Delete (${bulkCount})` : "Delete", icon: "trash-can-outline", destructive: true, onPress: onDelete },
   ];
 
   return (
-    <ContextMenuPressable
-      accessibilityRole="button"
-      items={menuItems}
-      onPress={onSelect}
-      style={({ pressed }) => [styles.taskRow, settings.rowDensity === "compact" && styles.taskRowCompact, selected && styles.taskRowSelected, pressed && styles.taskRowPressed]}
+    <View
+      ref={(node) => registerRow(task.id, node)}
+      collapsable={false}
+      {...({ dataSet: { taskId: task.id } } as object)}
     >
-      <StatusRing completed={task.completed} color={project?.color} onPress={onToggle} />
-      <View style={styles.taskBody}>
-        <View style={styles.taskTitleLine}>
-          <Text
-            numberOfLines={1}
-            style={[
-              styles.taskTitle,
-              settings.textSize === "small" && styles.taskTitleSmall,
-              settings.textSize === "large" && styles.taskTitleLarge,
-              task.completed && styles.taskTitleResolved,
-              task.completed && settings.strikeResolvedItems && styles.taskTitleCompleted,
-            ]}
-          >
-            {task.title}
-          </Text>
-          {!!task.note && <Icon name="note-outline" size={13} color="#99969c" />}
+      <ContextMenuPressable
+        accessibilityRole="button"
+        accessibilityState={{ selected }}
+        items={menuItems}
+        onPress={onSelect}
+        style={({ pressed }) => [styles.taskRow, settings.rowDensity === "compact" && styles.taskRowCompact, selected && styles.taskRowSelected, pressed && styles.taskRowPressed]}
+      >
+        <StatusRing completed={task.completed} color={project?.color} onPress={onToggle} />
+        <View style={styles.taskBody}>
+          <View style={styles.taskTitleLine}>
+            <Text
+              numberOfLines={1}
+              style={[
+                styles.taskTitle,
+                settings.textSize === "small" && styles.taskTitleSmall,
+                settings.textSize === "large" && styles.taskTitleLarge,
+                task.completed && styles.taskTitleResolved,
+                task.completed && settings.strikeResolvedItems && styles.taskTitleCompleted,
+              ]}
+            >
+              {task.title}
+            </Text>
+            {!!task.note && <Icon name="note-outline" size={13} color="#99969c" />}
+          </View>
+          <View style={styles.taskMeta}>
+            {!!project && <Text numberOfLines={1} style={styles.taskMetaText}>{project.name}</Text>}
+            {task.tags.map((tag) => <View key={tag} style={styles.tagChip}><Text style={styles.tagChipText}>{tag}</Text></View>)}
+          </View>
         </View>
-        <View style={styles.taskMeta}>
-          {!!project && <Text numberOfLines={1} style={styles.taskMetaText}>{project.name}</Text>}
-          {task.tags.map((tag) => <View key={tag} style={styles.tagChip}><Text style={styles.tagChipText}>{tag}</Text></View>)}
+        <View style={styles.taskTail}>
+          {!!task.due && <Text style={[styles.dueText, settings.colorDueItems && task.due.startsWith("Today") && styles.dueToday]}>{task.due}</Text>}
+          {task.flagged && <Icon name="flag" size={16} color={palette.flag} />}
+          <Pressable onPress={onInspect} hitSlop={8} style={styles.rowInfoButton} {...({ dataSet: { noMarquee: "true" } } as object)}><Icon name="information-outline" size={17} color="#8e8a91" /></Pressable>
         </View>
-      </View>
-      <View style={styles.taskTail}>
-        {!!task.due && <Text style={[styles.dueText, settings.colorDueItems && task.due.startsWith("Today") && styles.dueToday]}>{task.due}</Text>}
-        {task.flagged && <Icon name="flag" size={16} color={palette.flag} />}
-        <Pressable onPress={onInspect} hitSlop={8} style={styles.rowInfoButton}><Icon name="information-outline" size={17} color="#8e8a91" /></Pressable>
-      </View>
-    </ContextMenuPressable>
+      </ContextMenuPressable>
+    </View>
   );
 }
 
@@ -400,15 +427,17 @@ function Outline({
   customPerspective,
   projects,
   tasks,
-  selectedTaskId,
+  selectedTaskIds,
   projectFilter,
   settings,
   databaseEmpty,
   onSelectTask,
   onToggleTask,
+  onToggleSelectedTasks,
   onInspectTask,
   onToggleFlagTask,
   onDeleteTask,
+  onCopyTasks,
   onNewTask,
   onReviewProject,
   onOpenViewMenu,
@@ -416,21 +445,27 @@ function Outline({
   onNewActionInProject,
   onDeleteProject,
   onImport,
+  onMarqueeStart,
+  onMarqueeSelect,
+  onClearSelection,
+  onSelectAll,
 }: {
   title: string;
   perspective: ActivePerspective;
   customPerspective?: CustomPerspective | null;
   projects: Project[];
   tasks: Task[];
-  selectedTaskId: string | null;
+  selectedTaskIds: string[];
   projectFilter: string | null;
   settings: AppSettings;
   databaseEmpty?: boolean;
-  onSelectTask: (id: string) => void;
+  onSelectTask: (id: string, modifiers?: SelectionModifiers) => void;
   onToggleTask: (id: string) => void;
+  onToggleSelectedTasks: (id: string) => void;
   onInspectTask: (id: string) => void;
   onToggleFlagTask: (id: string) => void;
   onDeleteTask: (id: string) => void;
+  onCopyTasks: (id: string) => void;
   onNewTask: () => void;
   onReviewProject: (id: string) => void;
   onOpenViewMenu: () => void;
@@ -438,10 +473,26 @@ function Outline({
   onNewActionInProject: (id: string) => void;
   onDeleteProject: (id: string) => void;
   onImport: () => void;
+  onMarqueeStart: () => void;
+  onMarqueeSelect: (ids: string[], additive: boolean) => void;
+  onClearSelection: () => void;
+  onSelectAll: () => void;
 }) {
   const { openMenu } = useContextMenuTrigger();
+  const containerRef = useRef<View>(null);
+  const [marqueeReady, setMarqueeReady] = useState(false);
+  const modifiersRef = useModifierKeys();
+  const { registerRow, suppressClickRef, overlay } = useMarqueeSelection({
+    enabled: marqueeReady,
+    containerRef,
+    onStart: onMarqueeStart,
+    onSelect: onMarqueeSelect,
+    onClear: onClearSelection,
+  });
+  const selectedSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
   const outlineMenuItems: ContextMenuItem[] = [
+    { id: "select-all", label: "Select All", icon: "select-all", shortcut: "⌘A", onPress: onSelectAll },
     { id: "view-options", label: "View Options", icon: "tune-variant", onPress: onOpenViewMenu },
     { id: "new-action", label: "New Action", icon: "plus", onPress: onNewTask },
   ];
@@ -457,20 +508,31 @@ function Outline({
       <Text style={styles.projectHeadingCount}>{count}</Text>
     </ContextMenuPressable>
   );
-  const taskRow = (task: Task) => (
-    <TaskRow
-      key={task.id}
-      task={task}
-      project={task.projectId ? projectById.get(task.projectId) : undefined}
-      selected={selectedTaskId === task.id}
-      settings={settings}
-      onSelect={() => onSelectTask(task.id)}
-      onToggle={() => onToggleTask(task.id)}
-      onInspect={() => onInspectTask(task.id)}
-      onToggleFlag={() => onToggleFlagTask(task.id)}
-      onDelete={() => onDeleteTask(task.id)}
-    />
-  );
+  const taskRow = (task: Task) => {
+    const selected = selectedSet.has(task.id);
+    const bulkCount = selected && selectedTaskIds.length > 1 ? selectedTaskIds.length : 1;
+    return (
+      <TaskRow
+        key={task.id}
+        task={task}
+        project={task.projectId ? projectById.get(task.projectId) : undefined}
+        selected={selected}
+        bulkCount={bulkCount}
+        settings={settings}
+        registerRow={registerRow}
+        onSelect={() => {
+          if (suppressClickRef.current) return;
+          onSelectTask(task.id, modifiersRef.current);
+        }}
+        onToggle={() => onToggleTask(task.id)}
+        onInspect={() => onInspectTask(task.id)}
+        onToggleSelected={() => onToggleSelectedTasks(task.id)}
+        onToggleFlag={() => onToggleFlagTask(task.id)}
+        onDelete={() => onDeleteTask(task.id)}
+        onCopy={() => onCopyTasks(task.id)}
+      />
+    );
+  };
 
   const tags = [...new Set(tasks.flatMap((task) => task.tags))].sort();
   const groupBy = customPerspective ? effectiveGroupBy(customPerspective) : null;
@@ -481,7 +543,7 @@ function Outline({
       <View style={styles.outlineHeader}>
         <View style={styles.outlineHeaderCopy}>
           <Text numberOfLines={1} style={styles.outlineTitle}>{title}</Text>
-          <Text style={styles.outlineSubtitle}>{tasks.filter((task) => !task.completed).length} actions{perspective === "projects" && !projectFilter ? ` • ${projects.length} projects` : ""}</Text>
+          <Text style={styles.outlineSubtitle}>{tasks.filter((task) => !task.completed).length} actions{selectedTaskIds.length > 1 ? ` • ${selectedTaskIds.length} selected` : ""}{perspective === "projects" && !projectFilter ? ` • ${projects.length} projects` : ""}</Text>
         </View>
         <ContextMenuPressable
           accessibilityLabel="Outline options"
@@ -492,6 +554,15 @@ function Outline({
           <Icon name="dots-horizontal" size={20} color="#77747b" />
         </ContextMenuPressable>
       </View>
+      <View
+        ref={(node) => {
+          containerRef.current = node;
+          const ready = !!node;
+          if (ready !== marqueeReady) setMarqueeReady(ready);
+        }}
+        collapsable={false}
+        style={[styles.outlineBody, Platform.OS === "web" ? { userSelect: "none" } as object : null]}
+      >
       <ScrollView style={styles.outlineScroll} contentContainerStyle={styles.outlineContent} keyboardShouldPersistTaps="handled">
         {groupBy === "project" && [{ project: null as Project | null, groupTasks: tasks.filter((task) => task.projectId === null) }, ...projects.map((project) => ({ project, groupTasks: tasks.filter((task) => task.projectId === project.id) }))].map(({ project, groupTasks }) => {
           if (!groupTasks.length && !project) return null;
@@ -583,6 +654,8 @@ function Outline({
           </View>
         ) : null}
       </ScrollView>
+      {overlay}
+      </View>
       <Pressable onPress={onNewTask} style={styles.newActionBar}><Icon name="plus" size={20} color={palette.purpleDark} /><Text style={styles.newActionText}>New Action</Text></Pressable>
     </View>
   );
@@ -653,6 +726,47 @@ function Inspector({ task, projects, onChange, onToggle, onDelete, onClose, moda
           <Pressable onPress={onDelete} style={styles.deleteButton}><Icon name="trash-can-outline" size={17} color={palette.danger} /><Text style={styles.deleteButtonText}>Delete Action</Text></Pressable>
         </View>
       </ScrollView>
+    </View>
+  );
+}
+
+function MultiSelectInspector({
+  count,
+  allCompleted,
+  allFlagged,
+  onToggle,
+  onToggleFlag,
+  onDelete,
+}: {
+  count: number;
+  allCompleted: boolean;
+  allFlagged: boolean;
+  onToggle: () => void;
+  onToggleFlag: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <View style={styles.inspector}>
+      <View style={styles.inspectorTabs}>
+        <View style={styles.inspectorTabSelected}><Text style={styles.inspectorTabText}>Selection</Text></View>
+      </View>
+      <View style={styles.multiSelectBody}>
+        <Text style={styles.multiSelectCount}>{count}</Text>
+        <Text style={styles.multiSelectLabel}>actions selected</Text>
+        <Text style={styles.multiSelectHint}>Shift-click, ⌘-click, drag, or ⌘A to change the selection.</Text>
+        <Pressable onPress={onToggle} style={styles.multiSelectButton}>
+          <Icon name={allCompleted ? "circle-outline" : "check-circle-outline"} size={17} color={palette.purpleDark} />
+          <Text style={styles.multiSelectButtonText}>{allCompleted ? "Mark Incomplete" : "Mark Complete"}</Text>
+        </Pressable>
+        <Pressable onPress={onToggleFlag} style={styles.multiSelectButton}>
+          <Icon name={allFlagged ? "flag-off-outline" : "flag-outline"} size={17} color={allFlagged ? palette.muted : palette.flag} />
+          <Text style={styles.multiSelectButtonText}>{allFlagged ? "Remove Flags" : "Flag"}</Text>
+        </Pressable>
+        <Pressable onPress={onDelete} style={styles.deleteButton}>
+          <Icon name="trash-can-outline" size={17} color={palette.danger} />
+          <Text style={styles.deleteButtonText}>Delete {count} Actions</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -1001,7 +1115,7 @@ export default function App() {
   const [hydrated, setHydrated] = useState(false);
   const [perspective, setPerspective] = useState<ActivePerspective>("projects");
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selection, setSelection] = useState<SelectionState>(emptySelection);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -1009,7 +1123,7 @@ export default function App() {
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
-  const [pendingDeleteTaskId, setPendingDeleteTaskId] = useState<string | null>(null);
+  const [pendingDeleteTaskIds, setPendingDeleteTaskIds] = useState<string[]>([]);
   const [pendingDeleteDirection, setPendingDeleteDirection] = useState<"menu" | "previous" | "next">("menu");
   const [pendingDeleteProjectId, setPendingDeleteProjectId] = useState<string | null>(null);
   const [quickKind, setQuickKind] = useState<"task" | "project" | null>(null);
@@ -1065,8 +1179,12 @@ export default function App() {
     if (isPhone) setInspectorOpen(false);
   }, [isPhone]);
 
+  const selectedTaskIds = selection.ids;
+  const selectedTaskId = selection.headId ?? selection.ids[0] ?? null;
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
+  const selectedTasks = tasks.filter((task) => selectedTaskIds.includes(task.id));
   const selectedProject = selectedTask?.projectId ? projects.find((project) => project.id === selectedTask.projectId) : undefined;
+  const marqueeBaseRef = useRef<SelectionState>(emptySelection);
   const activeCustomPerspective = perspective.startsWith("custom:") ? customPerspectives.find((item) => item.id === perspective.slice(7)) ?? null : null;
   const barItems = useMemo(() => favoritePerspectives(settings, customPerspectives), [customPerspectives, settings]);
   const knownTags = useMemo(() => [...new Set(tasks.flatMap((task) => task.tags))].sort(), [tasks]);
@@ -1094,6 +1212,24 @@ export default function App() {
     }
     return result;
   }, [tasks, perspective, projectFilter, settings.showCompleted, settings.standardAvailability, query, activeCustomPerspective]);
+
+  const orderedTaskIds = useMemo(() => outlineTaskIds({
+    tasks: visibleTasks,
+    projects,
+    perspective,
+    groupBy: activeCustomPerspective ? effectiveGroupBy(activeCustomPerspective) : null,
+    projectFilter,
+  }), [visibleTasks, projects, perspective, activeCustomPerspective, projectFilter]);
+
+  useEffect(() => {
+    setSelection((current) => {
+      const next = pruneSelection(current, orderedTaskIds);
+      if (next.ids.length === current.ids.length && next.ids.every((id, index) => id === current.ids[index]) && next.anchorId === current.anchorId && next.headId === current.headId) {
+        return current;
+      }
+      return next;
+    });
+  }, [orderedTaskIds]);
 
   const perspectiveTitle = activeCustomPerspective?.name ?? (projectFilter && perspective === "projects"
     ? projects.find((project) => project.id === projectFilter)?.name ?? "Projects"
@@ -1152,33 +1288,46 @@ export default function App() {
     if (target) updateTask(id, { completed: !target.completed });
   };
 
-  const finalizeDeleteTask = useCallback((id: string, direction: "menu" | "previous" | "next") => {
-    const currentIndex = visibleTasks.findIndex((task) => task.id === id);
-    setTasks((current) => current.filter((task) => task.id !== id));
-    setPendingDeleteTaskId(null);
+  const idsForRow = (id: string) => (selectedTaskIds.includes(id) && selectedTaskIds.length > 1 ? selectedTaskIds : [id]);
+
+  const toggleTasks = (ids: string[]) => {
+    if (!ids.length) return;
+    const targets = tasks.filter((task) => ids.includes(task.id));
+    if (!targets.length) return;
+    const nextCompleted = !targets.every((task) => task.completed);
+    setTasks((current) => current.map((task) => ids.includes(task.id) ? { ...task, completed: nextCompleted } : task));
+  };
+
+  const toggleTaskFlags = (ids: string[]) => {
+    if (!ids.length) return;
+    const targets = tasks.filter((task) => ids.includes(task.id));
+    if (!targets.length) return;
+    const nextFlagged = !targets.every((task) => task.flagged);
+    setTasks((current) => current.map((task) => ids.includes(task.id) ? { ...task, flagged: nextFlagged } : task));
+  };
+
+  const finalizeDeleteTasks = useCallback((ids: string[], direction: "menu" | "previous" | "next") => {
+    const nextId = neighborAfterDelete(orderedTaskIds, ids, direction);
+    setTasks((current) => current.filter((task) => !ids.includes(task.id)));
+    setPendingDeleteTaskIds([]);
     setPendingDeleteDirection("menu");
-    setInspectorOpen(false);
+    setSelection(singleSelection(nextId));
+    if (!nextId) setInspectorOpen(false);
+  }, [orderedTaskIds]);
 
-    if (direction === "next" && currentIndex >= 0) {
-      const nextTask = visibleTasks[currentIndex + 1] ?? visibleTasks[currentIndex - 1];
-      setSelectedTaskId(nextTask && nextTask.id !== id ? nextTask.id : null);
-      return;
-    }
-    if (direction === "previous" && currentIndex >= 0) {
-      const previousTask = visibleTasks[currentIndex - 1] ?? visibleTasks[currentIndex + 1];
-      setSelectedTaskId(previousTask && previousTask.id !== id ? previousTask.id : null);
-      return;
-    }
-    setSelectedTaskId((current) => current === id ? null : current);
-  }, [visibleTasks]);
-
-  const deleteTask = (id: string, direction: "menu" | "previous" | "next" = "menu") => {
+  const deleteTasks = (ids: string[], direction: "menu" | "previous" | "next" = "menu") => {
+    const unique = [...new Set(ids.filter(Boolean))];
+    if (!unique.length) return;
     if (settings.confirmBeforeDelete) {
-      setPendingDeleteTaskId(id);
+      setPendingDeleteTaskIds(unique);
       setPendingDeleteDirection(direction);
       return;
     }
-    finalizeDeleteTask(id, direction);
+    finalizeDeleteTasks(unique, direction);
+  };
+
+  const deleteTask = (id: string, direction: "menu" | "previous" | "next" = "menu") => {
+    deleteTasks(idsForRow(id), direction);
   };
 
   const finalizeDeleteProject = (id: string) => {
@@ -1191,9 +1340,14 @@ export default function App() {
         : rule),
     })));
     setProjectFilter((current) => current === id ? null : current);
-    setSelectedTaskId((current) => {
-      const selected = tasks.find((task) => task.id === current);
-      return selected?.projectId === id ? null : current;
+    setSelection((current) => {
+      const remaining = current.ids.filter((taskId) => tasks.find((task) => task.id === taskId)?.projectId !== id);
+      if (!remaining.length) return emptySelection;
+      return {
+        ids: remaining,
+        anchorId: current.anchorId && remaining.includes(current.anchorId) ? current.anchorId : remaining[0] ?? null,
+        headId: current.headId && remaining.includes(current.headId) ? current.headId : remaining[remaining.length - 1] ?? null,
+      };
     });
     setPendingDeleteProjectId(null);
   };
@@ -1215,7 +1369,7 @@ export default function App() {
     } else {
       const task: Task = { id: makeId("task"), title, projectId, tags: [], flagged: false, completed: false, createdAt: new Date().toISOString() };
       setTasks((current) => [...current, task]);
-      setSelectedTaskId(task.id);
+      setSelection(singleSelection(task.id));
       if (projectId === null) selectPerspective("inbox");
       else {
         setPerspective("projects");
@@ -1226,24 +1380,26 @@ export default function App() {
   };
 
   const openInspector = (id: string) => {
-    setSelectedTaskId(id);
+    setSelection(singleSelection(id));
     setInspectorOpen(true);
   };
 
-  const selectTask = (id: string) => {
-    setSelectedTaskId(id);
-    if (isPhone || settings.openInspectorOnSelection) setInspectorOpen(true);
+  const selectTask = (id: string, modifiers: SelectionModifiers = {}) => {
+    setSelection((current) => applyClick(current, orderedTaskIds, id, modifiers));
+    if (!modifiers.shift && !modifiers.toggle && (isPhone || settings.openInspectorOnSelection)) setInspectorOpen(true);
   };
 
-  const selectAdjacentTask = useCallback((direction: "up" | "down") => {
-    if (!visibleTasks.length) return;
-    const currentIndex = selectedTaskId ? visibleTasks.findIndex((task) => task.id === selectedTaskId) : -1;
-    const nextIndex = direction === "down"
-      ? Math.min(currentIndex < 0 ? 0 : currentIndex + 1, visibleTasks.length - 1)
-      : Math.max(currentIndex < 0 ? visibleTasks.length - 1 : currentIndex - 1, 0);
-    const nextTask = visibleTasks[nextIndex];
-    if (nextTask) selectTask(nextTask.id);
-  }, [isPhone, selectedTaskId, settings.openInspectorOnSelection, visibleTasks]);
+  const selectAllVisible = useCallback(() => {
+    setSelection(applySelectAll(orderedTaskIds));
+  }, [orderedTaskIds]);
+
+  const selectAdjacentTask = useCallback((direction: "up" | "down", extend = false) => {
+    setSelection((current) => {
+      const next = applyMove(current, orderedTaskIds, direction, extend);
+      if (next.headId && !extend && (isPhone || settings.openInspectorOnSelection)) setInspectorOpen(true);
+      return next;
+    });
+  }, [isPhone, orderedTaskIds, settings.openInspectorOnSelection]);
 
   const focusSelected = () => {
     if (!selectedTask?.projectId) return;
@@ -1263,8 +1419,7 @@ export default function App() {
   };
 
   const toggleTaskFlag = (id: string) => {
-    const target = tasks.find((task) => task.id === id);
-    if (target) updateTask(id, { flagged: !target.flagged });
+    toggleTaskFlags(idsForRow(id));
   };
 
   const deleteCustomPerspective = (id: string) => {
@@ -1343,7 +1498,7 @@ export default function App() {
         rules: item.rules.map((rule) => rule.kind === "containedIn" ? { ...rule, projectIds: (rule.projectIds ?? []).filter((id) => retainedProjectIds.has(id)) } : rule),
       })));
     }
-    setSelectedTaskId(result.tasks[0]?.id ?? null);
+    setSelection(singleSelection(result.tasks[0]?.id ?? null));
     setPerspective("projects");
     setProjectFilter(null);
     setInspectorOpen(false);
@@ -1359,14 +1514,16 @@ export default function App() {
     ? pendingDeleteProjectActionCount
       ? `This project and ${pendingDeleteProjectActionCount} action${pendingDeleteProjectActionCount === 1 ? "" : "s"} will be permanently removed from your local database.`
       : "This project will be permanently removed from your local database."
-    : undefined;
+    : pendingDeleteTaskIds.length > 1
+      ? `These ${pendingDeleteTaskIds.length} actions will be permanently removed from your local database.`
+      : undefined;
   const sidebarPerspective: PerspectiveId = activeCustomPerspective
     ? (activeCustomPerspective.organizeBy === "projects" || effectiveGroupBy(activeCustomPerspective) === "project" ? "projects" : effectiveGroupBy(activeCustomPerspective) === "tag" ? "tags" : "projects")
     : perspective.startsWith("custom:") ? "projects" : perspective as PerspectiveId;
   const showSidebar = !isPhone && canShowSidebar && sidebarOpen && perspective !== "inbox" && !activeCustomPerspective?.keepSidebarHidden;
-  const showInspector = !isPhone && canShowInspector && inspectorOpen && !!selectedTask;
+  const showInspector = !isPhone && canShowInspector && inspectorOpen && selectedTaskIds.length > 0;
   const modalOpen = quickKind !== null || settingsOpen || perspectivesListOpen || quickOpenOpen || importGuideOpen || !!importPreview || !!importError || !!importSummary;
-  const nativeMenuTypes = new Set(["perspective", "toggleSidebar", "toggleInspector", "toggleSearch", "openSettings", "toggleViewMenu", "addPerspective", "showPerspectivesList", "togglePerspectivesBar", "quickOpen", "newAction", "newProject"]);
+  const nativeMenuTypes = new Set(["perspective", "toggleSidebar", "toggleInspector", "toggleSearch", "openSettings", "toggleViewMenu", "addPerspective", "showPerspectivesList", "togglePerspectivesBar", "quickOpen", "newAction", "newProject", "selectAll"]);
 
   const handleHotkeyAction = useCallback((action: HotkeyAction | MenuCommand) => {
     switch (action.type) {
@@ -1377,7 +1534,7 @@ export default function App() {
         if (canShowSidebar) setSidebarOpen((value) => !value);
         break;
       case "toggleInspector":
-        if (canShowInspector && selectedTask) setInspectorOpen((value) => !value);
+        if (canShowInspector && selectedTaskIds.length) setInspectorOpen((value) => !value);
         break;
       case "toggleSearch":
         setSearchOpen((value) => !value);
@@ -1416,13 +1573,13 @@ export default function App() {
         setQuickKind("task");
         break;
       case "toggleComplete":
-        if (selectedTaskId) toggleTask(selectedTaskId);
+        if (selectedTaskIds.length) toggleTasks(selectedTaskIds);
         break;
       case "toggleFlag":
-        if (selectedTask) updateTask(selectedTask.id, { flagged: !selectedTask.flagged });
+        if (selectedTaskIds.length) toggleTaskFlags(selectedTaskIds);
         break;
       case "delete":
-        if (selectedTaskId) deleteTask(selectedTaskId, action.direction);
+        if (selectedTaskIds.length) deleteTasks(selectedTaskIds, action.direction);
         else if (projectFilter) deleteProject(projectFilter);
         break;
       case "focusProject":
@@ -1436,17 +1593,29 @@ export default function App() {
       case "selectRow":
         selectAdjacentTask(action.direction);
         break;
+      case "extendRow":
+        selectAdjacentTask(action.direction, true);
+        break;
+      case "selectAll":
+        if (typeof document !== "undefined" && isTextInputTarget(document.activeElement)) {
+          const field = document.activeElement as HTMLInputElement | HTMLTextAreaElement;
+          if (typeof field.select === "function") field.select();
+          else document.execCommand("selectAll");
+          break;
+        }
+        selectAllVisible();
+        break;
       case "confirmDelete":
         if (pendingDeleteProjectId) finalizeDeleteProject(pendingDeleteProjectId);
-        else if (pendingDeleteTaskId) finalizeDeleteTask(pendingDeleteTaskId, pendingDeleteDirection);
+        else if (pendingDeleteTaskIds.length) finalizeDeleteTasks(pendingDeleteTaskIds, pendingDeleteDirection);
         break;
       case "cancel":
         if (pendingDeleteProjectId) {
           setPendingDeleteProjectId(null);
           break;
         }
-        if (pendingDeleteTaskId) {
-          setPendingDeleteTaskId(null);
+        if (pendingDeleteTaskIds.length) {
+          setPendingDeleteTaskIds([]);
           setPendingDeleteDirection("menu");
           break;
         }
@@ -1463,6 +1632,7 @@ export default function App() {
           setQuery("");
           setSearchOpen(false);
         }
+        else if (selectedTaskIds.length) setSelection(emptySelection);
         break;
     }
   }, [
@@ -1470,9 +1640,9 @@ export default function App() {
     canShowSidebar,
     closeImport,
     deleteProject,
-    deleteTask,
+    deleteTasks,
     finalizeDeleteProject,
-    finalizeDeleteTask,
+    finalizeDeleteTasks,
     focusSelected,
     importError,
     importGuideOpen,
@@ -1480,15 +1650,16 @@ export default function App() {
     importSummary,
     pendingDeleteDirection,
     pendingDeleteProjectId,
-    pendingDeleteTaskId,
+    pendingDeleteTaskIds,
     perspective,
     perspectivesListOpen,
     quickKind,
     quickOpenOpen,
     searchOpen,
     selectAdjacentTask,
+    selectAllVisible,
     selectedTask,
-    selectedTaskId,
+    selectedTaskIds,
     settingsOpen,
     viewMenuOpen,
     projectFilter,
@@ -1498,7 +1669,7 @@ export default function App() {
     if (Platform.OS !== "web" || typeof window === "undefined") return;
     const onKeyDown = (event: KeyboardEvent) => {
       const action = matchOmniFocusHotkey(event, {
-        deleteDialogOpen: !!pendingDeleteTaskId || !!pendingDeleteProjectId,
+        deleteDialogOpen: !!pendingDeleteTaskIds.length || !!pendingDeleteProjectId,
         perspectiveShortcuts: settings.perspectiveShortcuts,
         shortcutCapture: !!shortcutRecordingId,
       });
@@ -1510,7 +1681,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handleHotkeyAction, hasNativeMenu, modalOpen, pendingDeleteProjectId, pendingDeleteTaskId, settings.perspectiveShortcuts, shortcutRecordingId]);
+  }, [handleHotkeyAction, hasNativeMenu, modalOpen, pendingDeleteProjectId, pendingDeleteTaskIds, settings.perspectiveShortcuts, shortcutRecordingId]);
 
   useEffect(() => {
     if (!hasNativeMenu || typeof window === "undefined") return;
@@ -1654,14 +1825,19 @@ export default function App() {
             customPerspective={activeCustomPerspective}
             projects={projects}
             tasks={visibleTasks}
-            selectedTaskId={selectedTaskId}
+            selectedTaskIds={selectedTaskIds}
             projectFilter={projectFilter}
             settings={settings}
             onSelectTask={selectTask}
             onToggleTask={toggleTask}
+            onToggleSelectedTasks={(id) => toggleTasks(idsForRow(id))}
             onInspectTask={openInspector}
             onToggleFlagTask={toggleTaskFlag}
             onDeleteTask={(id) => deleteTask(id)}
+            onCopyTasks={(id) => {
+              const ids = idsForRow(id);
+              copyToClipboard(tasks.filter((task) => ids.includes(task.id)).map((task) => task.title).join("\n"));
+            }}
             onNewTask={() => setQuickKind("task")}
             onReviewProject={(id) => setProjects((current) => current.map((project) => project.id === id ? { ...project, lastReviewedAt: new Date().toISOString() } : project))}
             onOpenViewMenu={() => setViewMenuOpen(true)}
@@ -1669,9 +1845,23 @@ export default function App() {
             onNewActionInProject={newActionInProject}
             onDeleteProject={deleteProject}
             onImport={openOmniFocusImport}
+            onMarqueeStart={() => { marqueeBaseRef.current = selection; }}
+            onMarqueeSelect={(ids, additive) => setSelection(applyMarquee(additive ? marqueeBaseRef.current : emptySelection, ids, additive))}
+            onClearSelection={() => setSelection(emptySelection)}
+            onSelectAll={selectAllVisible}
             databaseEmpty={hydrated && projects.length === 0 && tasks.length === 0}
           />
-          {showInspector && selectedTask && <Inspector task={selectedTask} projects={projects} onChange={(patch) => updateTask(selectedTask.id, patch)} onToggle={() => toggleTask(selectedTask.id)} onDelete={() => deleteTask(selectedTask.id)} />}
+          {showInspector && selectedTaskIds.length > 1 && (
+            <MultiSelectInspector
+              count={selectedTaskIds.length}
+              allCompleted={selectedTasks.length > 0 && selectedTasks.every((task) => task.completed)}
+              allFlagged={selectedTasks.length > 0 && selectedTasks.every((task) => task.flagged)}
+              onToggle={() => toggleTasks(selectedTaskIds)}
+              onToggleFlag={() => toggleTaskFlags(selectedTaskIds)}
+              onDelete={() => deleteTasks(selectedTaskIds)}
+            />
+          )}
+          {showInspector && selectedTaskIds.length === 1 && selectedTask && <Inspector task={selectedTask} projects={projects} onChange={(patch) => updateTask(selectedTask.id, patch)} onToggle={() => toggleTask(selectedTask.id)} onDelete={() => deleteTask(selectedTask.id)} />}
         </View>
 
         {isPhone && (
@@ -1734,11 +1924,11 @@ export default function App() {
       <OmniImportModal data={importPreview} error={importError} summary={importSummary} guide={importGuideOpen} onClose={closeImport} onApply={applyImport} onChooseFile={() => void chooseOmniFocusFile()} />
 
       <ConfirmDeleteModal
-        visible={!!pendingDeleteTaskId || !!pendingDeleteProjectId}
-        title={pendingDeleteProject?.name ?? tasks.find((task) => task.id === pendingDeleteTaskId)?.title ?? (pendingDeleteProjectId ? "this project" : "this action")}
+        visible={pendingDeleteTaskIds.length > 0 || !!pendingDeleteProjectId}
+        title={pendingDeleteProject?.name ?? (pendingDeleteTaskIds.length > 1 ? `${pendingDeleteTaskIds.length} actions` : tasks.find((task) => task.id === pendingDeleteTaskIds[0])?.title) ?? (pendingDeleteProjectId ? "this project" : "this action")}
         message={pendingDeleteMessage}
         onCancel={() => {
-          setPendingDeleteTaskId(null);
+          setPendingDeleteTaskIds([]);
           setPendingDeleteDirection("menu");
           setPendingDeleteProjectId(null);
         }}
@@ -1747,8 +1937,8 @@ export default function App() {
             finalizeDeleteProject(pendingDeleteProjectId);
             return;
           }
-          if (!pendingDeleteTaskId) return;
-          finalizeDeleteTask(pendingDeleteTaskId, pendingDeleteDirection);
+          if (!pendingDeleteTaskIds.length) return;
+          finalizeDeleteTasks(pendingDeleteTaskIds, pendingDeleteDirection);
         }}
       />
 
@@ -1833,6 +2023,7 @@ const styles = StyleSheet.create({
   outlineTitle: { fontSize: 24, lineHeight: 29, fontWeight: "700", letterSpacing: -.55, color: palette.text },
   outlineSubtitle: { fontSize: 10, color: "#858189" },
   iconButton: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 7 },
+  outlineBody: { flex: 1, position: "relative", overflow: "hidden" },
   outlineScroll: { flex: 1 },
   outlineContent: { paddingBottom: 48 },
   projectGroup: { borderBottomWidth: 7, borderBottomColor: "#f5f4f6" },
@@ -1888,6 +2079,12 @@ const styles = StyleSheet.create({
   inspectorTabText: { fontSize: 9.5, color: "#5f5c63" },
   modalClose: { marginRight: "auto" },
   inspectorScroll: { flex: 1 },
+  multiSelectBody: { flex: 1, paddingHorizontal: 22, paddingTop: 36, alignItems: "center" },
+  multiSelectCount: { fontSize: 42, lineHeight: 46, fontWeight: "700", color: palette.purpleDark },
+  multiSelectLabel: { marginTop: 2, fontSize: 13, fontWeight: "600", color: "#3a373d" },
+  multiSelectHint: { marginTop: 10, marginBottom: 22, fontSize: 11, lineHeight: 16, textAlign: "center", color: palette.muted },
+  multiSelectButton: { width: "100%", height: 34, marginBottom: 8, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 7, borderWidth: StyleSheet.hairlineWidth, borderColor: "#ccc9cf", backgroundColor: "#fff" },
+  multiSelectButtonText: { fontSize: 12, fontWeight: "600", color: "#3a373d" },
   inspectorTitleRow: { minHeight: 82, padding: 13, flexDirection: "row", alignItems: "flex-start", gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
   inspectorTitleInput: { flex: 1, minHeight: 45, padding: 0, fontSize: 13, lineHeight: 18, color: palette.text, textAlignVertical: "top" },
   inspectorSection: { paddingHorizontal: 13, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line },
