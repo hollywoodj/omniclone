@@ -44,7 +44,7 @@ Installers are written to `release/`.
 - `src/importOmniFocus.ts` parses OmniFocus CSV and TaskPaper exports, including UTF-8 and UTF-16 files, and performs duplicate-safe merges.
 - `app.json` contains the iOS and Android identifiers and Expo native configuration.
 
-Custom Perspectives are stored with the database. Each can define status, flag, due-date, project, tag, and text rules, plus project/tag grouping, sorting, icon, and color.
+Custom Perspectives are stored with the database. Each can define OmniFocus-style Contents rules (All/Any/None of the following), Flexible or Organized structure, icon, and color. Manage favorites and keyboard shortcuts in **Perspectives → Show Perspectives List** (`⌃⌘P`). Add a perspective from that list or **Perspectives → Add Perspective…**, then edit it live in **View Options** (`⇧⌘V`).
 
 Use **View → Import from OmniFocus…** on desktop, or **Import** in the phone navigation bar, to migrate an old database. CSV is recommended and can be exported from OmniFocus Database Settings on iPhone or iPad. TaskPaper and plain-text TaskPaper exports are also supported. The preview shows record counts before offering a duplicate-safe merge or a confirmed replacement.
 

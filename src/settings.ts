@@ -7,7 +7,15 @@ export async function loadSettings(): Promise<AppSettings> {
   try {
     const stored = await AsyncStorage.getItem(SETTINGS_STORAGE_KEY);
     if (!stored) return defaultSettings;
-    return { ...defaultSettings, ...(JSON.parse(stored) as Partial<AppSettings>), version: 1 };
+    const parsed = JSON.parse(stored) as Partial<AppSettings>;
+    return {
+      ...defaultSettings,
+      ...parsed,
+      version: 1,
+      perspectiveBarIds: parsed.perspectiveBarIds?.length ? parsed.perspectiveBarIds : defaultSettings.perspectiveBarIds,
+      perspectiveShortcuts: { ...defaultSettings.perspectiveShortcuts, ...parsed.perspectiveShortcuts },
+      standardAvailability: { ...defaultSettings.standardAvailability, ...parsed.standardAvailability },
+    };
   } catch {
     return defaultSettings;
   }

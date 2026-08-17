@@ -38,7 +38,41 @@ import { loadDatabase, saveDatabase } from "./src/storage";
 import { loadSettings, saveSettings } from "./src/settings";
 import { applyOmniFocusImport, parseOmniFocusFile, type ImportMode, type OmniImportData } from "./src/importOmniFocus";
 import { matchOmniFocusHotkey, type HotkeyAction } from "./src/hotkeys";
-import { ContextMenuProvider, useContextMenuTrigger } from "./src/contextMenu";
+import { ContextMenuProvider, useContextMenuTrigger, type ContextMenuItem } from "./src/contextMenu";
+import { MenuBar, type MenuCommand } from "./src/menuBar";
+import { ViewOptionsPanel } from "./src/viewOptions";
+import { PerspectivesListModal } from "./src/perspectivesList";
+import { QuickOpenModal } from "./src/quickOpen";
+import { compareTasks, duplicateCustomPerspective, effectiveGroupBy, normalizeCustomPerspective, taskMatchesCustomPerspective } from "./src/perspectiveRules";
+import { formatShortcut, toElectronAccelerator } from "./src/shortcuts";
+
+declare global {
+  interface Window {
+    omniclone?: {
+      onMenuCommand: (cb: (command: MenuCommand) => void) => () => void;
+      setPerspectivesMenu: (items: Array<{ id: string; label: string; accelerator?: string }>) => void;
+    };
+  }
+}
+
+type RailPerspective = {
+  id: ActivePerspective;
+  name: string;
+  icon: string;
+  color: string;
+  custom?: CustomPerspective;
+};
+
+function favoritePerspectives(settings: AppSettings, customPerspectives: CustomPerspective[]): RailPerspective[] {
+  const byId = new Map<string, RailPerspective>();
+  for (const item of perspectives) {
+    byId.set(item.id, { id: item.id, name: item.label, icon: item.icon, color: palette.purpleDark });
+  }
+  for (const item of customPerspectives) {
+    byId.set(`custom:${item.id}`, { id: `custom:${item.id}`, name: item.name, icon: item.icon, color: item.color, custom: item });
+  }
+  return settings.perspectiveBarIds.map((id) => byId.get(id)).filter((item): item is RailPerspective => !!item);
+}
 
 type IconName = React.ComponentProps<typeof MaterialCommunityIcons>["name"];
 
@@ -94,67 +128,64 @@ function copyToClipboard(text: string) {
   }
 }
 
-function PerspectiveRail({ current, inboxCount, customPerspectives, showTitles, onSelect, onCreate, onEdit, onOpenSettings }: {
+function PerspectiveRail({ current, inboxCount, items, showTitles, shortcuts, onSelect, onEdit, onUnfavorite, onOpenList, onOpenSettings, onDelete }: {
   current: ActivePerspective;
   inboxCount: number;
-  customPerspectives: CustomPerspective[];
+  items: RailPerspective[];
   showTitles: boolean;
+  shortcuts: Record<string, string>;
   onSelect: (id: ActivePerspective) => void;
-  onCreate: () => void;
-  onEdit: (perspective: CustomPerspective) => void;
+  onEdit: (id: ActivePerspective) => void;
+  onUnfavorite: (id: ActivePerspective) => void;
+  onOpenList: () => void;
   onOpenSettings: () => void;
+  onDelete: (id: string) => void;
 }) {
   const { contextMenuProps } = useContextMenuTrigger();
 
   return (
     <View style={styles.perspectiveRail}>
       <ScrollView style={styles.perspectiveRailList} showsVerticalScrollIndicator={false} contentContainerStyle={styles.perspectiveRailScroll}>
-        {perspectives.map((item) => {
+        {items.map((item) => {
           const selected = current === item.id;
+          const accent = item.custom?.color ?? palette.purpleDark;
+          const menuItems: ContextMenuItem[] = [
+            { id: "edit", label: "Edit", icon: "pencil-outline", shortcut: formatShortcut("meta+shift+v"), onPress: () => onEdit(item.id) },
+            { id: "unfavorite", label: "Unfavorite", icon: "star-off-outline", onPress: () => onUnfavorite(item.id) },
+            { id: "copy", label: "Copy Link", icon: "link-variant", onPress: () => copyToClipboard(`omniclone://perspective/${item.id}`) },
+            { id: "sep-1", label: "", separator: true },
+            { id: "list", label: "Perspectives", icon: "view-list-outline", shortcut: formatShortcut("ctrl+meta+p"), onPress: onOpenList },
+            ...(item.custom ? [
+              { id: "sep-2", label: "", separator: true },
+              { id: "delete", label: "Delete", icon: "trash-can-outline" as IconName, destructive: true, onPress: () => onDelete(item.custom!.id) },
+            ] : []),
+          ];
+          const menuProps = contextMenuProps(menuItems);
           return (
             <Pressable
               key={item.id}
               accessibilityRole="tab"
               accessibilityState={{ selected }}
+              accessibilityHint={formatShortcut(shortcuts[item.id])}
               onPress={() => onSelect(item.id)}
-              style={({ pressed }) => [styles.perspectiveItem, selected && styles.perspectiveItemSelected, pressed && styles.pressed]}
+              onLongPress={menuProps.onLongPress}
+              {...(menuProps.onContextMenu ? { onContextMenu: menuProps.onContextMenu } : {})}
+              style={({ pressed }) => [styles.perspectiveItem, selected && (item.custom ? { backgroundColor: `${accent}20` } : styles.perspectiveItemSelected), pressed && styles.pressed]}
             >
               <View>
-                <Icon name={item.icon as IconName} size={24} color={selected ? palette.purpleDark : "#656269"} />
+                <Icon name={item.icon as IconName} size={24} color={selected ? accent : "#656269"} />
                 {item.id === "inbox" && inboxCount > 0 && (
                   <View style={[styles.badge, selected && styles.badgeSelected]}><Text style={styles.badgeText}>{inboxCount}</Text></View>
                 )}
               </View>
-              {showTitles && <Text numberOfLines={1} style={[styles.perspectiveLabel, selected && styles.perspectiveLabelSelected]}>{item.label}</Text>}
-            </Pressable>
-          );
-        })}
-        {!!customPerspectives.length && <View style={styles.customRailDivider} />}
-        {customPerspectives.map((item) => {
-          const id: ActivePerspective = `custom:${item.id}`;
-          const selected = current === id;
-          const menuProps = contextMenuProps([
-            { id: "edit", label: "Edit Perspective", icon: "pencil-outline", onPress: () => onEdit(item) },
-          ]);
-          return (
-            <Pressable
-              key={item.id}
-              accessibilityRole="tab"
-              accessibilityState={{ selected }}
-              onPress={() => onSelect(id)}
-              onLongPress={menuProps.onLongPress}
-              {...(menuProps.onContextMenu ? { onContextMenu: menuProps.onContextMenu } : {})}
-              style={({ pressed }) => [styles.perspectiveItem, selected && { backgroundColor: `${item.color}20` }, pressed && styles.pressed]}
-            >
-              <Icon name={item.icon as IconName} size={24} color={selected ? item.color : "#656269"} />
-              {showTitles && <Text numberOfLines={1} style={[styles.perspectiveLabel, selected && { color: item.color, fontWeight: "700" }]}>{item.name}</Text>}
+              {showTitles && <Text numberOfLines={1} style={[styles.perspectiveLabel, selected && { color: accent, fontWeight: "700" }]}>{item.name}</Text>}
             </Pressable>
           );
         })}
       </ScrollView>
-      <Pressable onPress={onCreate} style={styles.perspectiveItem}>
-        <Icon name="plus-circle-outline" size={23} color={palette.purpleDark} />
-        {showTitles && <Text style={styles.perspectiveLabel}>Perspective</Text>}
+      <Pressable accessibilityRole="button" accessibilityLabel="Perspectives List" onPress={onOpenList} style={styles.perspectiveItem}>
+        <Icon name="view-list-outline" size={22} color="#706d74" />
+        {showTitles && <Text style={styles.perspectiveLabel}>List</Text>}
       </Pressable>
       <Pressable accessibilityRole="button" accessibilityLabel="Settings" onPress={onOpenSettings} style={styles.railSettingsButton}>
         <Icon name="cog-outline" size={21} color="#706d74" />
@@ -330,15 +361,24 @@ function MobileCustomPerspectiveItem({
   selected,
   onSelect,
   onEdit,
+  onUnfavorite,
+  onOpenList,
+  onDelete,
 }: {
-  item: CustomPerspective;
+  item: RailPerspective;
   selected: boolean;
   onSelect: () => void;
-  onEdit: (item: CustomPerspective) => void;
+  onEdit: () => void;
+  onUnfavorite: () => void;
+  onOpenList: () => void;
+  onDelete?: () => void;
 }) {
   const { contextMenuProps } = useContextMenuTrigger();
   const menuProps = contextMenuProps([
-    { id: "edit", label: "Edit Perspective", icon: "pencil-outline", onPress: () => onEdit(item) },
+    { id: "edit", label: "Edit", icon: "pencil-outline", onPress: onEdit },
+    { id: "unfavorite", label: "Unfavorite", icon: "star-off-outline", onPress: onUnfavorite },
+    { id: "list", label: "Perspectives", icon: "view-list-outline", onPress: onOpenList },
+    ...(item.custom && onDelete ? [{ id: "delete", label: "Delete", icon: "trash-can-outline" as IconName, destructive: true, onPress: onDelete }] : []),
   ]);
 
   return (
@@ -411,6 +451,7 @@ function Outline({
   );
 
   const tags = [...new Set(tasks.flatMap((task) => task.tags))].sort();
+  const groupBy = customPerspective ? effectiveGroupBy(customPerspective) : null;
 
   return (
     <View style={styles.outline}>
@@ -429,13 +470,13 @@ function Outline({
         </Pressable>
       </View>
       <ScrollView style={styles.outlineScroll} contentContainerStyle={styles.outlineContent} keyboardShouldPersistTaps="handled">
-        {customPerspective?.groupBy === "project" && [{ project: null, groupTasks: tasks.filter((task) => task.projectId === null) }, ...projects.map((project) => ({ project, groupTasks: tasks.filter((task) => task.projectId === project.id) }))].map(({ project, groupTasks }) => {
+        {groupBy === "project" && [{ project: null, groupTasks: tasks.filter((task) => task.projectId === null) }, ...projects.map((project) => ({ project, groupTasks: tasks.filter((task) => task.projectId === project.id) }))].map(({ project, groupTasks }) => {
           if (!groupTasks.length) return null;
           return (
             <View key={project?.id ?? "inbox"} style={styles.projectGroup}>
               <View style={styles.projectHeading}>
                 <Icon name="chevron-down" size={18} color="#6e6c72" />
-                {project ? <View style={[styles.projectHeadingRing, { borderColor: project.color }]} /> : <Icon name="inbox-arrow-down-outline" size={20} color={customPerspective.color} />}
+                {project ? <View style={[styles.projectHeadingRing, { borderColor: project.color }]} /> : <Icon name="inbox-arrow-down-outline" size={20} color={customPerspective?.color ?? palette.purple} />}
                 <View style={styles.projectHeadingCopy}><Text style={styles.projectHeadingTitle}>{project?.name ?? "Inbox"}</Text><Text numberOfLines={1} style={styles.projectHeadingNote}>{project?.note || "Actions without a project"}</Text></View>
                 <Text style={styles.projectHeadingCount}>{groupTasks.length}</Text>
               </View>
@@ -443,16 +484,35 @@ function Outline({
             </View>
           );
         })}
-        {customPerspective?.groupBy === "tag" && tags.map((tag) => {
+        {groupBy === "tag" && tags.map((tag) => {
           const tagged = tasks.filter((task) => task.tags.includes(tag));
           return (
             <View key={tag} style={styles.projectGroup}>
-              <View style={styles.tagHeading}><Icon name="pound" size={22} color={customPerspective.color} /><View><Text style={styles.projectHeadingTitle}>{tag}</Text><Text style={styles.projectHeadingNote}>{tagged.length} actions</Text></View></View>
+              <View style={styles.tagHeading}><Icon name="pound" size={22} color={customPerspective?.color ?? palette.purple} /><View><Text style={styles.projectHeadingTitle}>{tag}</Text><Text style={styles.projectHeadingNote}>{tagged.length} actions</Text></View></View>
               {tagged.map(taskRow)}
             </View>
           );
         })}
-        {customPerspective?.groupBy === "none" && tasks.map(taskRow)}
+        {groupBy === "flagged" && [true, false].map((flagged) => {
+          const groupTasks = tasks.filter((task) => task.flagged === flagged);
+          if (!groupTasks.length) return null;
+          return (
+            <View key={flagged ? "flagged" : "unflagged"} style={styles.projectGroup}>
+              <View style={styles.tagHeading}><Icon name={flagged ? "flag" : "flag-outline"} size={20} color={flagged ? palette.flag : "#8b888f"} /><View><Text style={styles.projectHeadingTitle}>{flagged ? "Flagged" : "Unflagged"}</Text><Text style={styles.projectHeadingNote}>{groupTasks.length} actions</Text></View></View>
+              {groupTasks.map(taskRow)}
+            </View>
+          );
+        })}
+        {groupBy === "due" && [...new Set(tasks.map((task) => task.due ?? "No Due Date"))].map((due) => {
+          const groupTasks = tasks.filter((task) => (task.due ?? "No Due Date") === due);
+          return (
+            <View key={due} style={styles.projectGroup}>
+              <View style={styles.tagHeading}><Icon name="calendar-month-outline" size={20} color={customPerspective?.color ?? palette.purple} /><View><Text style={styles.projectHeadingTitle}>{due}</Text><Text style={styles.projectHeadingNote}>{groupTasks.length} actions</Text></View></View>
+              {groupTasks.map(taskRow)}
+            </View>
+          );
+        })}
+        {groupBy === "none" && tasks.map(taskRow)}
         {!customPerspective && perspective === "projects" && projects.filter((project) => !projectFilter || project.id === projectFilter).map((project) => {
           const projectTasks = tasks.filter((task) => task.projectId === project.id);
           if (!projectTasks.length) return null;
@@ -720,7 +780,10 @@ function SettingsModal({
                       />
                     </View>
                     <SettingsRow title="Show completed actions" detail="Include resolved actions in built-in perspectives.">
-                      <Switch value={settings.showCompleted} onValueChange={(showCompleted) => onChange({ showCompleted })} trackColor={{ true: palette.purple }} />
+                      <Switch value={settings.showCompleted} onValueChange={(showCompleted) => onChange({
+                        showCompleted,
+                        standardAvailability: Object.fromEntries(Object.keys(settings.standardAvailability).map((id) => [id, showCompleted ? "all" : "remaining"])) as AppSettings["standardAvailability"],
+                      })} trackColor={{ true: palette.purple }} />
                     </SettingsRow>
                     <SettingsRow title="Open Inspector on selection" detail="Reveal action details when you select an item.">
                       <Switch value={settings.openInspectorOnSelection} onValueChange={(openInspectorOnSelection) => onChange({ openInspectorOnSelection })} trackColor={{ true: palette.purple }} />
@@ -755,6 +818,9 @@ function SettingsModal({
                   </View>
                   <Text style={styles.settingsGroupLabel}>SIDEBAR</Text>
                   <View style={styles.settingsGroup}>
+                    <SettingsRow title="Show Perspectives Bar">
+                      <Switch value={settings.perspectiveBarVisible} onValueChange={(perspectiveBarVisible) => onChange({ perspectiveBarVisible })} trackColor={{ true: palette.purple }} />
+                    </SettingsRow>
                     <SettingsRow title="Perspectives bar shows titles">
                       <Switch value={settings.perspectiveBarShowsTitles} onValueChange={(perspectiveBarShowsTitles) => onChange({ perspectiveBarShowsTitles })} trackColor={{ true: palette.purple }} />
                     </SettingsRow>
@@ -813,90 +879,6 @@ function ConfirmDeleteModal({ visible, title, onCancel, onConfirm }: {
           </View>
         </View>
       </View>
-    </Modal>
-  );
-}
-
-function CustomPerspectiveModal({ perspective, projects, isNew, onClose, onSave, onDelete }: {
-  perspective: CustomPerspective;
-  projects: Project[];
-  isNew: boolean;
-  onClose: () => void;
-  onSave: (perspective: CustomPerspective) => void;
-  onDelete: (id: string) => void;
-}) {
-  const [draft, setDraft] = useState<CustomPerspective>(perspective);
-  const iconChoices: IconName[] = ["star-four-points-outline", "weather-sunny", "briefcase-outline", "home-outline", "lightning-bolt-outline", "heart-outline", "target", "book-open-page-variant-outline"];
-  const colorChoices = [palette.purple, "#2f8de4", "#58a65c", "#d96b46", "#d05475", "#43a5a1", "#6366b8"];
-
-  useEffect(() => setDraft(perspective), [perspective]);
-
-  const toggleProject = (id: string) => {
-    setDraft((current) => ({ ...current, projectIds: current.projectIds.includes(id) ? current.projectIds.filter((projectId) => projectId !== id) : [...current.projectIds, id] }));
-  };
-
-  return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.perspectiveModalBackdrop}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        <View style={styles.perspectiveEditor}>
-          <View style={styles.perspectiveEditorHeader}>
-            <Pressable onPress={onClose}><Text style={styles.editorCancelText}>Cancel</Text></Pressable>
-            <Text style={styles.perspectiveEditorTitle}>Custom Perspective</Text>
-            <Pressable disabled={!draft.name.trim()} onPress={() => onSave({ ...draft, name: draft.name.trim() })}><Text style={[styles.editorSaveText, !draft.name.trim() && styles.disabled]}>Save</Text></Pressable>
-          </View>
-          <ScrollView style={styles.perspectiveEditorScroll} contentContainerStyle={styles.perspectiveEditorContent} keyboardShouldPersistTaps="handled">
-            <View style={styles.perspectiveIdentity}>
-              <View style={[styles.perspectivePreviewIcon, { backgroundColor: `${draft.color}20` }]}><Icon name={draft.icon as IconName} size={31} color={draft.color} /></View>
-              <TextInput value={draft.name} onChangeText={(name) => setDraft((current) => ({ ...current, name }))} placeholder="Perspective name" style={styles.perspectiveNameInput} />
-            </View>
-
-            <Text style={styles.editorSectionTitle}>ICON</Text>
-            <View style={styles.iconChoiceRow}>
-              {iconChoices.map((icon) => <Pressable key={icon} onPress={() => setDraft((current) => ({ ...current, icon }))} style={[styles.iconChoice, draft.icon === icon && { borderColor: draft.color, backgroundColor: `${draft.color}18` }]}><Icon name={icon} size={22} color={draft.icon === icon ? draft.color : "#67636b"} /></Pressable>)}
-            </View>
-            <Text style={styles.editorSectionTitle}>COLOR</Text>
-            <View style={styles.colorChoiceRow}>{colorChoices.map((color) => <Pressable key={color} onPress={() => setDraft((current) => ({ ...current, color }))} style={[styles.colorChoice, { backgroundColor: color }, draft.color === color && styles.colorChoiceSelected]}>{draft.color === color && <Icon name="check" size={15} color="#fff" />}</Pressable>)}</View>
-
-            <View style={styles.ruleCard}>
-              <View style={styles.ruleCardHeader}><Icon name="filter-variant" size={19} color={draft.color} /><Text style={styles.ruleCardTitle}>Filter rules</Text></View>
-              <Text style={styles.ruleLabel}>Status</Text>
-              <RuleChoices value={draft.status} onChange={(status) => setDraft((current) => ({ ...current, status: status as CustomPerspective["status"] }))} options={[{ label: "Remaining", value: "remaining" }, { label: "Completed", value: "completed" }, { label: "All", value: "all" }]} />
-              <Text style={styles.ruleLabel}>Flag</Text>
-              <RuleChoices value={draft.flagged} onChange={(flagged) => setDraft((current) => ({ ...current, flagged: flagged as CustomPerspective["flagged"] }))} options={[{ label: "Any", value: "any" }, { label: "Flagged", value: "flagged" }, { label: "Unflagged", value: "unflagged" }]} />
-              <Text style={styles.ruleLabel}>Due date</Text>
-              <RuleChoices value={draft.due} onChange={(due) => setDraft((current) => ({ ...current, due: due as CustomPerspective["due"] }))} options={[{ label: "Any", value: "any" }, { label: "Today", value: "today" }, { label: "Has date", value: "has-date" }, { label: "No date", value: "no-date" }]} />
-
-              <Text style={styles.ruleLabel}>Projects <Text style={styles.ruleOptional}>— leave empty for all</Text></Text>
-              <View style={styles.projectRuleWrap}>
-                {projects.map((project) => {
-                  const selected = draft.projectIds.includes(project.id);
-                  return <Pressable key={project.id} onPress={() => toggleProject(project.id)} style={[styles.projectRuleChip, selected && { borderColor: project.color, backgroundColor: `${project.color}18` }]}><View style={[styles.miniDot, { backgroundColor: project.color }]} /><Text style={[styles.projectRuleText, selected && { color: project.color, fontWeight: "700" }]}>{project.name}</Text>{selected && <Icon name="check" size={13} color={project.color} />}</Pressable>;
-                })}
-              </View>
-
-              <Text style={styles.ruleLabel}>Tags <Text style={styles.ruleOptional}>— comma separated</Text></Text>
-              <TextInput value={draft.tags.join(", ")} onChangeText={(value) => setDraft((current) => ({ ...current, tags: value.split(",").map((tag) => tag.trim()).filter(Boolean) }))} placeholder="Home, Errands" style={styles.editorInput} />
-              <View style={styles.matchRow}><Text style={styles.matchRowText}>Match all selected tags</Text><Switch value={draft.tagMatch === "all"} onValueChange={(all) => setDraft((current) => ({ ...current, tagMatch: all ? "all" : "any" }))} trackColor={{ true: draft.color }} /></View>
-
-              <Text style={styles.ruleLabel}>Text contains</Text>
-              <TextInput value={draft.search} onChangeText={(search) => setDraft((current) => ({ ...current, search }))} placeholder="Optional title, note, or tag search" style={styles.editorInput} />
-            </View>
-
-            <View style={styles.ruleCard}>
-              <View style={styles.ruleCardHeader}><Icon name="sort-variant" size={19} color={draft.color} /><Text style={styles.ruleCardTitle}>Presentation</Text></View>
-              <Text style={styles.ruleLabel}>Group by</Text>
-              <RuleChoices value={draft.groupBy} onChange={(groupBy) => setDraft((current) => ({ ...current, groupBy: groupBy as CustomPerspective["groupBy"] }))} options={[{ label: "None", value: "none" }, { label: "Project", value: "project" }, { label: "Tag", value: "tag" }]} />
-              <Text style={styles.ruleLabel}>Sort by</Text>
-              <RuleChoices value={draft.sortBy} onChange={(sortBy) => setDraft((current) => ({ ...current, sortBy: sortBy as CustomPerspective["sortBy"] }))} options={[{ label: "Added", value: "created" }, { label: "Title", value: "title" }, { label: "Due", value: "due" }]} />
-            </View>
-
-            {!isNew && (
-              <Pressable onPress={() => onDelete(perspective.id)} style={styles.deletePerspectiveButton}><Icon name="trash-can-outline" size={18} color={palette.danger} /><Text style={styles.deletePerspectiveText}>Delete Perspective</Text></Pressable>
-            )}
-          </ScrollView>
-        </View>
-      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -979,20 +961,29 @@ export default function App() {
   const [pendingDeleteTaskId, setPendingDeleteTaskId] = useState<string | null>(null);
   const [pendingDeleteDirection, setPendingDeleteDirection] = useState<"menu" | "previous" | "next">("menu");
   const [quickKind, setQuickKind] = useState<"task" | "project" | null>(null);
-  const [editingPerspective, setEditingPerspective] = useState<{ draft: CustomPerspective; isNew: boolean } | null>(null);
+  const [perspectivesListOpen, setPerspectivesListOpen] = useState(false);
+  const [quickOpenOpen, setQuickOpenOpen] = useState(false);
+  const [shortcutRecordingId, setShortcutRecordingId] = useState<string | null>(null);
   const [importPreview, setImportPreview] = useState<OmniImportData | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importSummary, setImportSummary] = useState<string | null>(null);
+  const hasNativeMenu = typeof window !== "undefined" && !!window.omniclone;
 
   useEffect(() => {
     Promise.all([loadDatabase(), loadSettings()]).then(([saved, savedSettings]) => {
+      let nextSettings = savedSettings;
       if (saved) {
         setProjects(saved.projects);
         setTasks(saved.tasks);
-        setCustomPerspectives(saved.customPerspectives);
+        const customs = saved.customPerspectives.map((item) => normalizeCustomPerspective(item));
+        setCustomPerspectives(customs);
+        const extraBarIds = customs.map((item) => `custom:${item.id}`).filter((id) => !savedSettings.perspectiveBarIds.includes(id));
+        if (extraBarIds.length && savedSettings.perspectiveBarIds.join() === defaultSettings.perspectiveBarIds.join()) {
+          nextSettings = { ...savedSettings, perspectiveBarIds: [...savedSettings.perspectiveBarIds, ...extraBarIds] };
+        }
       }
-      setSettings(savedSettings);
-      setPerspective(savedSettings.defaultPerspective);
+      setSettings(nextSettings);
+      setPerspective(nextSettings.defaultPerspective);
       setHydrated(true);
     });
   }, []);
@@ -1024,44 +1015,32 @@ export default function App() {
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
   const selectedProject = selectedTask?.projectId ? projects.find((project) => project.id === selectedTask.projectId) : undefined;
   const activeCustomPerspective = perspective.startsWith("custom:") ? customPerspectives.find((item) => item.id === perspective.slice(7)) ?? null : null;
+  const barItems = useMemo(() => favoritePerspectives(settings, customPerspectives), [customPerspectives, settings]);
+  const knownTags = useMemo(() => [...new Set(tasks.flatMap((task) => task.tags))].sort(), [tasks]);
 
   const visibleTasks = useMemo(() => {
     let result = [...tasks];
     if (activeCustomPerspective) {
       const custom = activeCustomPerspective;
-      if (custom.status === "remaining") result = result.filter((task) => !task.completed);
-      if (custom.status === "completed") result = result.filter((task) => task.completed);
-      if (custom.flagged === "flagged") result = result.filter((task) => task.flagged);
-      if (custom.flagged === "unflagged") result = result.filter((task) => !task.flagged);
-      if (custom.due === "today") result = result.filter((task) => task.due?.startsWith("Today"));
-      if (custom.due === "has-date") result = result.filter((task) => !!task.due);
-      if (custom.due === "no-date") result = result.filter((task) => !task.due);
-      if (custom.projectIds.length) result = result.filter((task) => !!task.projectId && custom.projectIds.includes(task.projectId));
-      if (custom.tags.length) {
-        result = result.filter((task) => {
-          const taskTags = task.tags.map((tag) => tag.toLowerCase());
-          return custom.tagMatch === "all" ? custom.tags.every((tag) => taskTags.includes(tag.toLowerCase())) : custom.tags.some((tag) => taskTags.includes(tag.toLowerCase()));
-        });
-      }
-      if (custom.search.trim()) {
-        const customNeedle = custom.search.trim().toLowerCase();
-        result = result.filter((task) => `${task.title} ${task.note ?? ""} ${task.tags.join(" ")}`.toLowerCase().includes(customNeedle));
-      }
-      result.sort((a, b) => custom.sortBy === "title" ? a.title.localeCompare(b.title) : custom.sortBy === "due" ? (a.due ?? "zzzz").localeCompare(b.due ?? "zzzz") : a.createdAt.localeCompare(b.createdAt));
+      result = result.filter((task) => taskMatchesCustomPerspective(task, custom));
+      if (projectFilter) result = result.filter((task) => task.projectId === projectFilter);
+      result.sort((a, b) => compareTasks(a, b, custom.sortBy));
     } else {
       if (perspective === "inbox") result = result.filter((task) => task.projectId === null);
       if (perspective === "projects") result = result.filter((task) => task.projectId !== null);
       if (perspective === "forecast") result = result.filter((task) => !!task.due);
       if (perspective === "flagged") result = result.filter((task) => task.flagged);
       if (projectFilter && perspective === "projects") result = result.filter((task) => task.projectId === projectFilter);
-      if (!settings.showCompleted) result = result.filter((task) => !task.completed);
+      const availability = settings.standardAvailability[perspective as PerspectiveId] ?? (settings.showCompleted ? "all" : "remaining");
+      if (availability === "completed") result = result.filter((task) => task.completed);
+      else if (availability !== "all") result = result.filter((task) => !task.completed);
     }
     if (query.trim()) {
       const needle = query.trim().toLowerCase();
       result = result.filter((task) => `${task.title} ${task.note ?? ""} ${task.tags.join(" ")}`.toLowerCase().includes(needle));
     }
     return result;
-  }, [tasks, perspective, projectFilter, settings.showCompleted, query, activeCustomPerspective]);
+  }, [tasks, perspective, projectFilter, settings.showCompleted, settings.standardAvailability, query, activeCustomPerspective]);
 
   const perspectiveTitle = activeCustomPerspective?.name ?? (projectFilter && perspective === "projects"
     ? projects.find((project) => project.id === projectFilter)?.name ?? "Projects"
@@ -1070,7 +1049,45 @@ export default function App() {
   const selectPerspective = (id: ActivePerspective) => {
     setPerspective(id);
     setProjectFilter(null);
-    setViewMenuOpen(false);
+  };
+
+  const openViewOptions = (id?: ActivePerspective) => {
+    if (id) selectPerspective(id);
+    setViewMenuOpen(true);
+    setPerspectivesListOpen(false);
+  };
+
+  const addCustomPerspective = () => {
+    const created = createCustomPerspective();
+    setCustomPerspectives((current) => [...current, created]);
+    setSettings((current) => ({ ...current, perspectiveBarIds: [...current.perspectiveBarIds, `custom:${created.id}`] }));
+    setPerspective(`custom:${created.id}`);
+    setProjectFilter(null);
+    setPerspectivesListOpen(false);
+    setViewMenuOpen(true);
+  };
+
+  const patchCustomPerspective = (id: string, patch: Partial<CustomPerspective>) => {
+    setCustomPerspectives((current) => current.map((item) => item.id === id ? { ...item, ...patch, name: patch.name !== undefined ? patch.name : item.name } : item));
+  };
+
+  const toggleFavorite = (id: ActivePerspective) => {
+    setSettings((current) => {
+      const exists = current.perspectiveBarIds.includes(id);
+      return { ...current, perspectiveBarIds: exists ? current.perspectiveBarIds.filter((item) => item !== id) : [...current.perspectiveBarIds, id] };
+    });
+  };
+
+  const movePerspective = (id: ActivePerspective, direction: -1 | 1) => {
+    setSettings((current) => {
+      const ids = [...current.perspectiveBarIds];
+      const from = ids.indexOf(id);
+      if (from < 0) return { ...current, perspectiveBarIds: direction === 1 ? [...ids, id] : [id, ...ids] };
+      const to = Math.max(0, Math.min(ids.length - 1, from + direction));
+      ids.splice(from, 1);
+      ids.splice(to, 0, id);
+      return { ...current, perspectiveBarIds: ids };
+    });
   };
 
   const updateTask = (id: string, patch: Partial<Task>) => {
@@ -1172,24 +1189,30 @@ export default function App() {
     if (target) updateTask(id, { flagged: !target.flagged });
   };
 
-  const saveCustomPerspective = (savedPerspective: CustomPerspective) => {
-    setCustomPerspectives((current) => {
-      const exists = current.some((item) => item.id === savedPerspective.id);
-      return exists ? current.map((item) => item.id === savedPerspective.id ? savedPerspective : item) : [...current, savedPerspective];
-    });
-    setPerspective(`custom:${savedPerspective.id}`);
-    setProjectFilter(null);
-    setEditingPerspective(null);
-  };
-
   const deleteCustomPerspective = (id: string) => {
     const performDelete = () => {
       setCustomPerspectives((current) => current.filter((item) => item.id !== id));
+      setSettings((current) => ({
+        ...current,
+        perspectiveBarIds: current.perspectiveBarIds.filter((item) => item !== `custom:${id}`),
+        perspectiveShortcuts: Object.fromEntries(Object.entries(current.perspectiveShortcuts).filter(([key]) => key !== `custom:${id}`)),
+      }));
       if (perspective === `custom:${id}`) setPerspective("projects");
-      setEditingPerspective(null);
+      setViewMenuOpen(false);
     };
-    if (Platform.OS === "web") performDelete();
-    else Alert.alert("Delete Perspective?", "The perspective will be removed. Your actions and projects will not be changed.", [{ text: "Cancel", style: "cancel" }, { text: "Delete", style: "destructive", onPress: performDelete }]);
+    if (Platform.OS === "web") {
+      if (typeof window === "undefined" || window.confirm("Delete this perspective? Your actions and projects will not be changed.")) performDelete();
+    } else {
+      Alert.alert("Delete Perspective?", "The perspective will be removed. Your actions and projects will not be changed.", [{ text: "Cancel", style: "cancel" }, { text: "Delete", style: "destructive", onPress: performDelete }]);
+    }
+  };
+
+  const duplicatePerspective = (perspectiveToCopy: CustomPerspective) => {
+    const copy = duplicateCustomPerspective(perspectiveToCopy);
+    setCustomPerspectives((current) => [...current, copy]);
+    setSettings((current) => ({ ...current, perspectiveBarIds: [...current.perspectiveBarIds, `custom:${copy.id}`] }));
+    setPerspective(`custom:${copy.id}`);
+    setViewMenuOpen(true);
   };
 
   const closeImport = () => {
@@ -1225,7 +1248,10 @@ export default function App() {
     setTasks(result.tasks);
     if (mode === "replace") {
       const retainedProjectIds = new Set(result.projects.map((project) => project.id));
-      setCustomPerspectives((current) => current.map((item) => ({ ...item, projectIds: item.projectIds.filter((id) => retainedProjectIds.has(id)) })));
+      setCustomPerspectives((current) => current.map((item) => ({
+        ...item,
+        rules: item.rules.map((rule) => rule.kind === "containedIn" ? { ...rule, projectIds: (rule.projectIds ?? []).filter((id) => retainedProjectIds.has(id)) } : rule),
+      })));
     }
     setSelectedTaskId(result.tasks[0]?.id ?? null);
     setPerspective("projects");
@@ -1237,17 +1263,21 @@ export default function App() {
   };
 
   const defaultProjectId = projectFilter ?? selectedProject?.id ?? null;
-  const showSidebar = !isPhone && canShowSidebar && sidebarOpen && !activeCustomPerspective;
+  const sidebarPerspective: PerspectiveId = activeCustomPerspective
+    ? (activeCustomPerspective.organizeBy === "projects" || effectiveGroupBy(activeCustomPerspective) === "project" ? "projects" : effectiveGroupBy(activeCustomPerspective) === "tag" ? "tags" : "projects")
+    : perspective.startsWith("custom:") ? "projects" : perspective as PerspectiveId;
+  const showSidebar = !isPhone && canShowSidebar && sidebarOpen && perspective !== "inbox" && !activeCustomPerspective?.keepSidebarHidden;
   const showInspector = !isPhone && canShowInspector && inspectorOpen && !!selectedTask;
-  const modalOpen = quickKind !== null || settingsOpen || !!editingPerspective || !!importPreview || !!importError || !!importSummary;
+  const modalOpen = quickKind !== null || settingsOpen || perspectivesListOpen || quickOpenOpen || !!importPreview || !!importError || !!importSummary;
+  const nativeMenuTypes = new Set(["perspective", "toggleSidebar", "toggleInspector", "toggleSearch", "openSettings", "toggleViewMenu", "addPerspective", "showPerspectivesList", "togglePerspectivesBar", "quickOpen", "newAction", "newProject"]);
 
-  const handleHotkeyAction = useCallback((action: HotkeyAction) => {
+  const handleHotkeyAction = useCallback((action: HotkeyAction | MenuCommand) => {
     switch (action.type) {
       case "perspective":
         selectPerspective(action.id);
         break;
       case "toggleSidebar":
-        if (canShowSidebar && !activeCustomPerspective) setSidebarOpen((value) => !value);
+        if (canShowSidebar) setSidebarOpen((value) => !value);
         break;
       case "toggleInspector":
         if (canShowInspector && selectedTask) setInspectorOpen((value) => !value);
@@ -1260,6 +1290,24 @@ export default function App() {
         break;
       case "toggleViewMenu":
         setViewMenuOpen((value) => !value);
+        break;
+      case "addPerspective":
+        addCustomPerspective();
+        break;
+      case "showPerspectivesList":
+        setPerspectivesListOpen((value) => !value);
+        break;
+      case "togglePerspectivesBar":
+        setSettings((current) => ({ ...current, perspectiveBarVisible: !current.perspectiveBarVisible }));
+        break;
+      case "quickOpen":
+        setQuickOpenOpen(true);
+        break;
+      case "importOmniFocus":
+        void openOmniFocusImport();
+        break;
+      case "toggleTitles":
+        setSettings((current) => ({ ...current, perspectiveBarShowsTitles: !current.perspectiveBarShowsTitles }));
         break;
       case "newAction":
         setQuickKind("task");
@@ -1301,7 +1349,11 @@ export default function App() {
         }
         if (quickKind) setQuickKind(null);
         else if (settingsOpen) setSettingsOpen(false);
-        else if (editingPerspective) setEditingPerspective(null);
+        else if (perspectivesListOpen) {
+          setShortcutRecordingId(null);
+          setPerspectivesListOpen(false);
+        }
+        else if (quickOpenOpen) setQuickOpenOpen(false);
         else if (importPreview || importError || importSummary) closeImport();
         else if (viewMenuOpen) setViewMenuOpen(false);
         else if (searchOpen) {
@@ -1311,12 +1363,10 @@ export default function App() {
         break;
     }
   }, [
-    activeCustomPerspective,
     canShowInspector,
     canShowSidebar,
     closeImport,
     deleteTask,
-    editingPerspective,
     finalizeDeleteTask,
     focusSelected,
     importError,
@@ -1325,7 +1375,9 @@ export default function App() {
     pendingDeleteDirection,
     pendingDeleteTaskId,
     perspective,
+    perspectivesListOpen,
     quickKind,
+    quickOpenOpen,
     searchOpen,
     selectAdjacentTask,
     selectedTask,
@@ -1337,48 +1389,64 @@ export default function App() {
   useEffect(() => {
     if (Platform.OS !== "web" || typeof window === "undefined") return;
     const onKeyDown = (event: KeyboardEvent) => {
-      const action = matchOmniFocusHotkey(event, { deleteDialogOpen: !!pendingDeleteTaskId });
+      const action = matchOmniFocusHotkey(event, {
+        deleteDialogOpen: !!pendingDeleteTaskId,
+        perspectiveShortcuts: settings.perspectiveShortcuts,
+        shortcutCapture: !!shortcutRecordingId,
+      });
       if (!action) return;
+      if (hasNativeMenu && nativeMenuTypes.has(action.type)) return;
       if (modalOpen && action.type !== "cancel" && action.type !== "confirmDelete") return;
       event.preventDefault();
       handleHotkeyAction(action);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handleHotkeyAction, modalOpen, pendingDeleteTaskId]);
+  }, [handleHotkeyAction, hasNativeMenu, modalOpen, pendingDeleteTaskId, settings.perspectiveShortcuts, shortcutRecordingId]);
+
+  useEffect(() => {
+    if (!hasNativeMenu || typeof window === "undefined") return;
+    window.omniclone?.setPerspectivesMenu(customPerspectives.map((item) => ({
+      id: `custom:${item.id}`,
+      label: item.name,
+      accelerator: toElectronAccelerator(settings.perspectiveShortcuts[`custom:${item.id}`]),
+    })));
+  }, [customPerspectives, hasNativeMenu, settings.perspectiveShortcuts]);
+
+  useEffect(() => {
+    if (!hasNativeMenu || typeof window === "undefined") return;
+    return window.omniclone?.onMenuCommand((command) => handleHotkeyAction(command));
+  }, [handleHotkeyAction, hasNativeMenu]);
 
   return (
     <ContextMenuProvider>
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
       <View style={styles.appShell}>
+        {!isPhone && (
+          <MenuBar
+            settings={settings}
+            customPerspectives={customPerspectives}
+            perspectiveBarVisible={settings.perspectiveBarVisible}
+            sidebarOpen={sidebarOpen}
+            inspectorOpen={inspectorOpen}
+            viewOptionsOpen={viewMenuOpen}
+            nativeMenu={hasNativeMenu}
+            onCommand={handleHotkeyAction}
+          />
+        )}
         {!isPhone ? (
           <View style={styles.toolbar}>
             <View style={styles.trafficLights}><View style={[styles.trafficLight, { backgroundColor: "#ff5f57" }]} /><View style={[styles.trafficLight, { backgroundColor: "#febc2e" }]} /><View style={[styles.trafficLight, { backgroundColor: "#28c840" }]} /></View>
             <View style={styles.toolbarLeading}>
               <ToolbarButton icon="page-layout-sidebar-left" label="Sidebar" active={showSidebar} onPress={() => setSidebarOpen((value) => !value)} />
               <ToolbarButton icon="chevron-left" label="Back" disabled onPress={() => undefined} />
-              <View>
-                <ToolbarButton icon="tune-variant" label="View" active={viewMenuOpen} onPress={() => setViewMenuOpen((value) => !value)} />
-                {viewMenuOpen && (
-                  <View style={styles.viewMenu}>
-                    <Text style={styles.viewMenuTitle}>View Options</Text>
-                    {activeCustomPerspective ? (
-                      <Pressable onPress={() => { setEditingPerspective({ draft: activeCustomPerspective, isNew: false }); setViewMenuOpen(false); }} style={styles.viewMenuAction}><Icon name="pencil-outline" size={17} color={activeCustomPerspective.color} /><Text style={styles.viewMenuText}>Edit “{activeCustomPerspective.name}”</Text></Pressable>
-                    ) : (
-                      <View style={styles.viewMenuRow}><Text style={styles.viewMenuText}>Show completed</Text><Switch value={settings.showCompleted} onValueChange={(showCompleted) => setSettings((current) => ({ ...current, showCompleted }))} trackColor={{ true: palette.purple }} /></View>
-                    )}
-                    <Pressable onPress={() => { setEditingPerspective({ draft: createCustomPerspective(), isNew: true }); setViewMenuOpen(false); }} style={styles.viewMenuAction}><Icon name="plus-circle-outline" size={17} color={palette.purpleDark} /><Text style={styles.viewMenuText}>New Custom Perspective</Text></Pressable>
-                    <Pressable accessibilityLabel="Import from OmniFocus" onPress={() => void openOmniFocusImport()} style={styles.viewMenuAction}><Icon name="database-import-outline" size={17} color={palette.purpleDark} /><Text style={styles.viewMenuText}>Import from OmniFocus…</Text></Pressable>
-                    <Pressable onPress={() => { setSettingsOpen(true); setViewMenuOpen(false); }} style={styles.viewMenuAction}><Icon name="cog-outline" size={17} color="#656169" /><Text style={styles.viewMenuText}>Settings…</Text></Pressable>
-                    <Text style={styles.viewMenuFoot}>{activeCustomPerspective ? `${visibleTasks.length} matching actions` : "Remaining actions • Grouped naturally"}</Text>
-                  </View>
-                )}
-              </View>
+              <ToolbarButton icon="tune-variant" label="View" active={viewMenuOpen} onPress={() => setViewMenuOpen((value) => !value)} />
             </View>
             <View style={styles.toolbarCenter}>
               <ToolbarButton icon="plus" label="New Action" onPress={() => setQuickKind("task")} />
               <ToolbarButton icon="tray-arrow-down" label="Quick Entry" onPress={() => setQuickKind("task")} />
+              <ToolbarButton icon="file-find-outline" label="Quick Open" onPress={() => setQuickOpenOpen(true)} />
               <ToolbarButton icon="bullseye-arrow" label="Focus" disabled={!selectedTask?.projectId} onPress={focusSelected} />
             </View>
             <View style={styles.toolbarTrailing}>
@@ -1390,7 +1458,12 @@ export default function App() {
         ) : (
           <View style={styles.mobileHeader}>
             <View><Text style={styles.mobileEyebrow}>OMNIFOCUS</Text><Text numberOfLines={1} style={styles.mobileTitle}>{perspectiveTitle}</Text></View>
-            <View style={styles.mobileHeaderActions}><Pressable accessibilityLabel="More and settings" onPress={() => setSettingsOpen(true)} style={styles.mobileCircleButton}><Icon name="dots-horizontal" size={20} color={palette.purpleDark} /></Pressable><Pressable onPress={() => setSearchOpen((value) => !value)} style={styles.mobileCircleButton}><Icon name="magnify" size={21} color={palette.purpleDark} /></Pressable><Pressable onPress={() => setQuickKind("task")} style={styles.mobileAddButton}><Icon name="plus" size={24} color="#fff" /></Pressable></View>
+            <View style={styles.mobileHeaderActions}>
+              <Pressable accessibilityLabel="View Options" onPress={() => setViewMenuOpen(true)} style={styles.mobileCircleButton}><Icon name="tune-variant" size={18} color={palette.purpleDark} /></Pressable>
+              <Pressable accessibilityLabel="More and settings" onPress={() => setSettingsOpen(true)} style={styles.mobileCircleButton}><Icon name="dots-horizontal" size={20} color={palette.purpleDark} /></Pressable>
+              <Pressable onPress={() => setSearchOpen((value) => !value)} style={styles.mobileCircleButton}><Icon name="magnify" size={21} color={palette.purpleDark} /></Pressable>
+              <Pressable onPress={() => setQuickKind("task")} style={styles.mobileAddButton}><Icon name="plus" size={24} color="#fff" /></Pressable>
+            </View>
           </View>
         )}
 
@@ -1402,11 +1475,71 @@ export default function App() {
           </View>
         )}
 
-        {viewMenuOpen && <Pressable accessibilityLabel="Close view options" onPress={() => setViewMenuOpen(false)} style={styles.menuDismissLayer} />}
+        {viewMenuOpen && !isPhone && (
+          <>
+            <Pressable accessibilityLabel="Close view options" onPress={() => setViewMenuOpen(false)} style={styles.menuDismissLayer} />
+            <ViewOptionsPanel
+              compact={false}
+              perspective={perspective}
+              custom={activeCustomPerspective}
+              projects={projects}
+              tags={knownTags}
+              availability={settings.standardAvailability[perspective as PerspectiveId] ?? "remaining"}
+              onChangeAvailability={(availability) => {
+                if (perspective.startsWith("custom:")) return;
+                setSettings((current) => ({
+                  ...current,
+                  standardAvailability: { ...current.standardAvailability, [perspective]: availability },
+                  showCompleted: availability === "all" || availability === "completed",
+                }));
+              }}
+              onChangeCustom={(patch) => {
+                if (activeCustomPerspective) patchCustomPerspective(activeCustomPerspective.id, patch);
+              }}
+              onClose={() => setViewMenuOpen(false)}
+            />
+          </>
+        )}
+        {viewMenuOpen && isPhone && (
+          <ViewOptionsPanel
+            compact
+            perspective={perspective}
+            custom={activeCustomPerspective}
+            projects={projects}
+            tags={knownTags}
+            availability={settings.standardAvailability[perspective as PerspectiveId] ?? "remaining"}
+            onChangeAvailability={(availability) => {
+              if (perspective.startsWith("custom:")) return;
+              setSettings((current) => ({
+                ...current,
+                standardAvailability: { ...current.standardAvailability, [perspective]: availability },
+                showCompleted: availability === "all" || availability === "completed",
+              }));
+            }}
+            onChangeCustom={(patch) => {
+              if (activeCustomPerspective) patchCustomPerspective(activeCustomPerspective.id, patch);
+            }}
+            onClose={() => setViewMenuOpen(false)}
+          />
+        )}
 
         <View style={styles.workspace}>
-          {!isPhone && <PerspectiveRail current={perspective} inboxCount={tasks.filter((task) => task.projectId === null && !task.completed).length} customPerspectives={customPerspectives} showTitles={settings.perspectiveBarShowsTitles} onSelect={selectPerspective} onCreate={() => setEditingPerspective({ draft: createCustomPerspective(), isNew: true })} onEdit={(item) => setEditingPerspective({ draft: item, isNew: false })} onOpenSettings={() => setSettingsOpen(true)} />}
-          {showSidebar && <ProjectSidebar perspective={perspective as PerspectiveId} projects={projects} tasks={tasks} selectedProjectId={projectFilter} showCounts={settings.showSidebarCounts} onSelectProject={setProjectFilter} onNewProject={() => setQuickKind("project")} onFocusProject={focusProject} onNewActionInProject={newActionInProject} />}
+          {!isPhone && settings.perspectiveBarVisible && (
+            <PerspectiveRail
+              current={perspective}
+              inboxCount={tasks.filter((task) => task.projectId === null && !task.completed).length}
+              items={barItems}
+              showTitles={settings.perspectiveBarShowsTitles}
+              shortcuts={settings.perspectiveShortcuts}
+              onSelect={selectPerspective}
+              onEdit={openViewOptions}
+              onUnfavorite={toggleFavorite}
+              onOpenList={() => setPerspectivesListOpen(true)}
+              onOpenSettings={() => setSettingsOpen(true)}
+              onDelete={deleteCustomPerspective}
+            />
+          )}
+          {showSidebar && <ProjectSidebar perspective={sidebarPerspective} projects={projects} tasks={tasks} selectedProjectId={projectFilter} showCounts={settings.showSidebarCounts} onSelectProject={setProjectFilter} onNewProject={() => setQuickKind("project")} onFocusProject={focusProject} onNewActionInProject={newActionInProject} />}
           <Outline
             title={perspectiveTitle}
             perspective={perspective}
@@ -1431,24 +1564,19 @@ export default function App() {
         {isPhone && (
           <View style={styles.mobileNav}>
             <ScrollView style={styles.mobileNavList} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mobileNavScroll}>
-              {perspectives.map((item) => {
-                const selected = item.id === perspective;
-                return <Pressable key={item.id} onPress={() => selectPerspective(item.id)} style={styles.mobileNavItem}><Icon name={item.icon as IconName} size={21} color={selected ? palette.purpleDark : "#77747b"} /><Text numberOfLines={1} style={[styles.mobileNavLabel, selected && styles.mobileNavLabelSelected]}>{item.label}</Text></Pressable>;
-              })}
-              {customPerspectives.map((item) => {
-                const id: ActivePerspective = `custom:${item.id}`;
-                const selected = id === perspective;
-                return (
-                  <MobileCustomPerspectiveItem
-                    key={item.id}
-                    item={item}
-                    selected={selected}
-                    onSelect={() => selectPerspective(id)}
-                    onEdit={(perspectiveItem) => setEditingPerspective({ draft: perspectiveItem, isNew: false })}
-                  />
-                );
-              })}
-              <Pressable onPress={() => setEditingPerspective({ draft: createCustomPerspective(), isNew: true })} style={styles.mobileNavItem}><Icon name="plus-circle-outline" size={21} color={palette.purpleDark} /><Text style={styles.mobileNavLabel}>New</Text></Pressable>
+              {barItems.map((item) => (
+                <MobileCustomPerspectiveItem
+                  key={item.id}
+                  item={item}
+                  selected={item.id === perspective}
+                  onSelect={() => selectPerspective(item.id)}
+                  onEdit={() => openViewOptions(item.id)}
+                  onUnfavorite={() => toggleFavorite(item.id)}
+                  onOpenList={() => setPerspectivesListOpen(true)}
+                  onDelete={item.custom ? () => deleteCustomPerspective(item.custom!.id) : undefined}
+                />
+              ))}
+              <Pressable onPress={() => setPerspectivesListOpen(true)} style={styles.mobileNavItem}><Icon name="view-list-outline" size={21} color={palette.purpleDark} /><Text style={styles.mobileNavLabel}>List</Text></Pressable>
               <Pressable accessibilityLabel="Import from OmniFocus" onPress={() => void openOmniFocusImport()} style={styles.mobileNavItem}><Icon name="database-import-outline" size={21} color={palette.purpleDark} /><Text style={styles.mobileNavLabel}>Import</Text></Pressable>
               <Pressable accessibilityLabel="Settings" onPress={() => setSettingsOpen(true)} style={styles.mobileNavItem}><Icon name="cog-outline" size={21} color={palette.purpleDark} /><Text style={styles.mobileNavLabel}>Settings</Text></Pressable>
             </ScrollView>
@@ -1460,7 +1588,35 @@ export default function App() {
 
       {settingsOpen && <SettingsModal settings={settings} projectCount={projects.length} taskCount={tasks.length} compact={isPhone} onChange={(patch) => setSettings((current) => ({ ...current, ...patch }))} onClose={() => setSettingsOpen(false)} onImport={() => { setSettingsOpen(false); void openOmniFocusImport(); }} onReset={() => setSettings(defaultSettings)} />}
 
-      {editingPerspective && <CustomPerspectiveModal perspective={editingPerspective.draft} isNew={editingPerspective.isNew} projects={projects} onClose={() => setEditingPerspective(null)} onSave={saveCustomPerspective} onDelete={deleteCustomPerspective} />}
+      <PerspectivesListModal
+        visible={perspectivesListOpen}
+        compact={isPhone}
+        settings={settings}
+        customPerspectives={customPerspectives}
+        current={perspective}
+        recordingId={shortcutRecordingId}
+        onClose={() => { setShortcutRecordingId(null); setPerspectivesListOpen(false); }}
+        onOpen={(id) => { selectPerspective(id); setPerspectivesListOpen(false); }}
+        onEdit={openViewOptions}
+        onAdd={addCustomPerspective}
+        onDuplicate={duplicatePerspective}
+        onDelete={deleteCustomPerspective}
+        onToggleFavorite={toggleFavorite}
+        onMove={movePerspective}
+        onShortcutChange={(id, shortcut) => setSettings((current) => ({ ...current, perspectiveShortcuts: { ...current.perspectiveShortcuts, [id]: shortcut } }))}
+        onStartRecording={setShortcutRecordingId}
+        onStopRecording={() => setShortcutRecordingId(null)}
+      />
+
+      <QuickOpenModal
+        visible={quickOpenOpen}
+        customPerspectives={customPerspectives}
+        projects={projects}
+        tags={knownTags}
+        onClose={() => setQuickOpenOpen(false)}
+        onSelectPerspective={selectPerspective}
+        onSelectProject={(id) => { setPerspective("projects"); setProjectFilter(id); }}
+      />
 
       <OmniImportModal data={importPreview} error={importError} summary={importSummary} onClose={closeImport} onApply={applyImport} />
 
@@ -1507,7 +1663,7 @@ const styles = StyleSheet.create({
   viewMenuAction: { minHeight: 38, flexDirection: "row", alignItems: "center", gap: 7, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.line },
   viewMenuText: { fontSize: 12 },
   viewMenuFoot: { paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: palette.line, fontSize: 10, color: palette.muted },
-  menuDismissLayer: { position: "absolute", top: 62, left: 0, right: 0, bottom: 0, zIndex: 10 },
+  menuDismissLayer: { position: "absolute", top: 90, left: 0, right: 0, bottom: 0, zIndex: 10 },
   mobileHeader: { minHeight: 66, paddingHorizontal: 16, paddingVertical: 9, flexDirection: "row", justifyContent: "space-between", alignItems: "center", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line, backgroundColor: "#f7f5f8" },
   mobileEyebrow: { fontSize: 8, letterSpacing: 1.2, fontWeight: "700", color: palette.purpleDark },
   mobileTitle: { maxWidth: 220, fontSize: 23, fontWeight: "700", letterSpacing: -.4, color: palette.text },

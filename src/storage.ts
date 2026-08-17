@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getDb } from "./db/client";
 import { seedCustomPerspectives, type CustomPerspective, type PersistedState, type Project, type Task } from "./model";
+import { normalizeCustomPerspective } from "./perspectiveRules";
 
 const LEGACY_STORAGE_KEY = "omniclone.database.v1";
 
@@ -41,6 +42,11 @@ type CustomPerspectiveRow = {
   sort_by: string;
   project_ids: string;
   tags: string;
+  combinator?: string;
+  structure?: string;
+  organize_by?: string;
+  keep_sidebar_hidden?: number;
+  rules?: string;
 };
 
 async function migrateLegacyAsyncStorage(): Promise<PersistedState | null> {
@@ -119,7 +125,7 @@ export async function loadDatabase(): Promise<PersistedState | null> {
     createdAt: row.created_at,
   }));
 
-  const customPerspectives: CustomPerspective[] = perspectiveRows.map((row) => ({
+  const customPerspectives: CustomPerspective[] = perspectiveRows.map((row) => normalizeCustomPerspective({
     id: row.id,
     name: row.name,
     icon: row.icon,
@@ -133,6 +139,11 @@ export async function loadDatabase(): Promise<PersistedState | null> {
     search: row.search,
     groupBy: row.group_by as CustomPerspective["groupBy"],
     sortBy: row.sort_by as CustomPerspective["sortBy"],
+    combinator: (row.combinator as CustomPerspective["combinator"] | undefined) ?? "all",
+    structure: (row.structure as CustomPerspective["structure"] | undefined) ?? "flexible",
+    organizeBy: (row.organize_by as CustomPerspective["organizeBy"] | undefined) ?? "actions",
+    keepSidebarHidden: !!row.keep_sidebar_hidden,
+    rules: parseRules(row.rules),
   }));
 
   return { version: 2, projects, tasks, customPerspectives };
@@ -191,22 +202,46 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
     }
 
     for (const perspective of state.customPerspectives) {
+      const normalized = normalizeCustomPerspective(perspective);
       await db.runAsync(
-        "INSERT INTO custom_perspectives (id, name, icon, color, status, flagged, due, tag_match, search, group_by, sort_by, project_ids, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        perspective.id,
-        perspective.name,
-        perspective.icon,
-        perspective.color,
-        perspective.status,
-        perspective.flagged,
-        perspective.due,
-        perspective.tagMatch,
-        perspective.search,
-        perspective.groupBy,
-        perspective.sortBy,
-        JSON.stringify(perspective.projectIds),
-        JSON.stringify(perspective.tags)
+        "INSERT INTO custom_perspectives (id, name, icon, color, status, flagged, due, tag_match, search, group_by, sort_by, project_ids, tags, combinator, structure, organize_by, keep_sidebar_hidden, rules) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        normalized.id,
+        normalized.name,
+        normalized.icon,
+        normalized.color,
+        "remaining",
+        "any",
+        "any",
+        "any",
+        "",
+        normalized.groupBy,
+        normalized.sortBy,
+        JSON.stringify(legacyProjectIds(normalized)),
+        JSON.stringify(legacyTags(normalized)),
+        normalized.combinator,
+        normalized.structure,
+        normalized.organizeBy,
+        normalized.keepSidebarHidden ? 1 : 0,
+        JSON.stringify(normalized.rules)
       );
     }
   });
+}
+
+function parseRules(raw: string | undefined): CustomPerspective["rules"] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as CustomPerspective["rules"];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function legacyProjectIds(perspective: CustomPerspective): string[] {
+  return perspective.rules.find((rule) => rule.kind === "containedIn")?.projectIds ?? [];
+}
+
+function legacyTags(perspective: CustomPerspective): string[] {
+  return perspective.rules.find((rule) => rule.kind === "taggedAny" || rule.kind === "taggedAll")?.tags ?? [];
 }

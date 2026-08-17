@@ -9,9 +9,11 @@ export type ContextMenuItem = {
   id: string;
   label: string;
   icon?: IconName;
+  shortcut?: string;
   destructive?: boolean;
   disabled?: boolean;
-  onPress: () => void;
+  separator?: boolean;
+  onPress?: () => void;
 };
 
 type ContextMenuState = {
@@ -27,7 +29,7 @@ type ContextMenuContextValue = {
 
 const ContextMenuContext = createContext<ContextMenuContextValue | null>(null);
 
-const MENU_WIDTH = 220;
+const MENU_WIDTH = 248;
 const MENU_ITEM_HEIGHT = 36;
 const MENU_PADDING = 8;
 
@@ -63,18 +65,20 @@ export function ContextMenuProvider({ children }: { children: React.ReactNode })
             style={styles.dismissLayer}
           />
           <View style={[styles.menu, { left, top, width: MENU_WIDTH }]}>
-            {menu.items.map((item, index) => (
+            {menu.items.map((item, index) => item.separator ? (
+              <View key={item.id} style={styles.separator} />
+            ) : (
               <Pressable
                 key={item.id}
                 accessibilityRole="menuitem"
                 disabled={item.disabled}
                 onPress={() => {
                   closeContextMenu();
-                  item.onPress();
+                  item.onPress?.();
                 }}
                 style={({ pressed }) => [
                   styles.menuItem,
-                  index > 0 && styles.menuItemBorder,
+                  index > 0 && !menu.items[index - 1]?.separator && styles.menuItemBorder,
                   item.disabled && styles.menuItemDisabled,
                   pressed && !item.disabled && styles.menuItemPressed,
                 ]}
@@ -95,6 +99,7 @@ export function ContextMenuProvider({ children }: { children: React.ReactNode })
                 >
                   {item.label}
                 </Text>
+                {!!item.shortcut && <Text style={styles.menuItemShortcut}>{item.shortcut}</Text>}
               </Pressable>
             ))}
           </View>
@@ -185,5 +190,16 @@ const styles = StyleSheet.create({
   },
   menuItemTextDisabled: {
     color: "#8b888f",
+  },
+  menuItemShortcut: {
+    fontSize: 11,
+    color: "#8b888f",
+    fontVariant: ["tabular-nums"],
+  },
+  separator: {
+    height: StyleSheet.hairlineWidth,
+    marginVertical: 5,
+    marginHorizontal: 10,
+    backgroundColor: palette.line,
   },
 });
