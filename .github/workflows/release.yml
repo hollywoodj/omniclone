@@ -1,0 +1,153 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Optional version tag (for example, v1.1.0). Leave blank to auto-bump patch."
+        required: false
+        type: string
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      skip: ${{ steps.version.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute release version
+        id: version
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          if git log -1 --pretty=%B | grep -q '\[skip release\]'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -z "$REQUESTED_VERSION" ]; then
+            existing_tag=$(git tag --points-at HEAD -l 'v*' --sort=-v:refname | head -1)
+            if [ -n "$existing_tag" ]; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          if [ -n "$REQUESTED_VERSION" ]; then
+            tag="$REQUESTED_VERSION"
+            [[ "$tag" == v* ]] || tag="v${tag}"
+            if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Version must use vMAJOR.MINOR.PATCH format."
+              exit 1
+            fi
+            version="${tag#v}"
+          else
+            latest=$(git tag -l 'v*' --sort=-v:refname | head -1)
+            if [ -z "$latest" ]; then
+              version=$(node -p "require('./package.json').version")
+              tag="v${version}"
+            else
+              current="${latest#v}"
+              IFS=. read -r major minor patch <<< "$current"
+              patch=$((patch + 1))
+              version="${major}.${minor}.${patch}"
+              tag="v${version}"
+            fi
+          fi
+
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Skip release
+        if: steps.version.outputs.skip == 'true'
+        run: echo "No release needed for this commit."
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.skip != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            command: npm run electron:build:win
+            artifact: omniclone-windows
+          - os: macos-latest
+            command: npm run electron:build:mac
+            artifact: omniclone-macos
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set release version
+        run: npm version "${{ needs.prepare.outputs.version }}" --no-git-tag-version --allow-same-version
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build installer
+        run: ${{ matrix.command }}
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            release/*.dmg
+            release/*.exe
+            release/*.blockmap
+          if-no-files-found: error
+
+  publish:
+    needs: [prepare, build]
+    if: needs.prepare.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: OmniClone ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          draft: false
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/**/*.dmg
+            artifacts/**/*.exe
+            artifacts/**/*.blockmap

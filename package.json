@@ -12,8 +12,10 @@
     "export:web": "expo export --platform web",
     "electron:dev": "concurrently -k -s first \"expo start --web --port 8099\" \"wait-on http://localhost:8099 && cross-env ELECTRON_START_URL=http://localhost:8099 electron ./electron/main.cjs\"",
     "electron:start": "electron ./electron/main.cjs",
-    "electron:pack": "npm run export:web && npm run electron:start",
-    "electron:build": "npm run export:web && electron-builder --win"
+    "electron:pack": "npm run export:web && electron-builder --dir --publish never",
+    "electron:build": "npm run export:web && electron-builder --publish never",
+    "electron:build:win": "npm run export:web && electron-builder --win --publish never",
+    "electron:build:mac": "npm run export:web && electron-builder --mac --publish never"
   },
   "dependencies": {
     "@expo/metro-runtime": "~57.0.10",
@@ -49,8 +51,13 @@
     "directories": {
       "output": "release"
     },
+    "icon": "assets/icon.png",
     "win": {
       "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.productivity"
     }
   }
 }
