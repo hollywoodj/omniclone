@@ -10,7 +10,9 @@ CREATE TABLE IF NOT EXISTS projects (
   color TEXT NOT NULL,
   note TEXT NOT NULL DEFAULT '',
   review_interval_days INTEGER NOT NULL DEFAULT 7,
-  last_reviewed_at TEXT
+  last_reviewed_at TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  type TEXT NOT NULL DEFAULT 'parallel'
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
@@ -24,6 +26,10 @@ CREATE TABLE IF NOT EXISTS tasks (
   flagged INTEGER NOT NULL DEFAULT 0,
   completed INTEGER NOT NULL DEFAULT 0,
   completed_at TEXT,
+  parent_id TEXT,
+  sort_order INTEGER,
+  estimated_minutes INTEGER,
+  repeat TEXT NOT NULL DEFAULT 'none',
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id);
@@ -70,6 +76,7 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
       await db.execAsync(SCHEMA);
       await migrateCustomPerspectives(db);
       await migrateTasks(db);
+      await migrateProjects(db);
       return db;
     });
   }
@@ -79,9 +86,23 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
 async function migrateTasks(db: SQLite.SQLiteDatabase) {
   const columns = await db.getAllAsync<{ name: string }>("PRAGMA table_info(tasks)");
   const names = new Set(columns.map((column) => column.name));
-  if (!names.has("completed_at")) {
-    await db.execAsync("ALTER TABLE tasks ADD COLUMN completed_at TEXT");
+  const add: Array<[string, string]> = [
+    ["completed_at", "TEXT"],
+    ["parent_id", "TEXT"],
+    ["sort_order", "INTEGER"],
+    ["estimated_minutes", "INTEGER"],
+    ["repeat", "TEXT NOT NULL DEFAULT 'none'"],
+  ];
+  for (const [name, definition] of add) {
+    if (!names.has(name)) await db.execAsync(`ALTER TABLE tasks ADD COLUMN ${name} ${definition}`);
   }
+}
+
+async function migrateProjects(db: SQLite.SQLiteDatabase) {
+  const columns = await db.getAllAsync<{ name: string }>("PRAGMA table_info(projects)");
+  const names = new Set(columns.map((column) => column.name));
+  if (!names.has("status")) await db.execAsync("ALTER TABLE projects ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
+  if (!names.has("type")) await db.execAsync("ALTER TABLE projects ADD COLUMN type TEXT NOT NULL DEFAULT 'parallel'");
 }
 
 async function migrateCustomPerspectives(db: SQLite.SQLiteDatabase) {

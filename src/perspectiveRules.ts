@@ -1,4 +1,5 @@
-import { dueDayKey, isActionAvailable, todayKey } from "./dates";
+import { dueDayKey, todayKey } from "./dates.ts";
+import { taskMatchesView } from "./outline.ts";
 import {
   createCustomPerspective,
   makeId,
@@ -8,6 +9,7 @@ import {
   type PerspectiveRule,
   type PerspectiveRuleKind,
   type PerspectiveSortBy,
+  type Project,
   type Task,
 } from "./model";
 
@@ -63,14 +65,11 @@ export function describeRule(rule: PerspectiveRule): string {
   return ruleKindLabels[rule.kind];
 }
 
-function matchRule(task: Task, rule: PerspectiveRule): boolean {
+function matchRule(task: Task, rule: PerspectiveRule, context?: { tasks: Task[]; projects: Project[] }): boolean {
   switch (rule.kind) {
     case "availability": {
       const availability = rule.availability ?? "remaining";
-      if (availability === "all") return true;
-      if (availability === "completed") return task.completed;
-      if (availability === "available") return isActionAvailable(task);
-      return !task.completed;
+      return taskMatchesView(task, availability, context ?? { tasks: [task], projects: [] });
     }
     case "flagged":
       return task.flagged;
@@ -105,10 +104,10 @@ function matchRule(task: Task, rule: PerspectiveRule): boolean {
   }
 }
 
-export function taskMatchesCustomPerspective(task: Task, perspective: CustomPerspective): boolean {
+export function taskMatchesCustomPerspective(task: Task, perspective: CustomPerspective, context?: { tasks: Task[]; projects: Project[] }): boolean {
   const rules = (perspective.rules ?? []).filter((rule) => rule.enabled !== false);
   if (!rules.length) return true;
-  const results = rules.map((rule) => matchRule(task, rule));
+  const results = rules.map((rule) => matchRule(task, rule, context));
   if (perspective.combinator === "any") return results.some(Boolean);
   if (perspective.combinator === "none") return !results.some(Boolean);
   return results.every(Boolean);

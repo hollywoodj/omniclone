@@ -98,12 +98,14 @@ function buildMenu(win, customPerspectives = []) {
     {
       label: "Edit",
       submenu: [
-        { role: "undo" },
-        { role: "redo" },
+        { label: "Undo", accelerator: "CommandOrControl+Z", click: () => send(win, { type: "undo" }) },
+        { label: "Redo", accelerator: "Shift+CommandOrControl+Z", click: () => send(win, { type: "redo" }) },
         { type: "separator" },
         { role: "cut" },
         { role: "copy" },
         { role: "paste" },
+        { type: "separator" },
+        { label: "Copy as TaskPaper", accelerator: "Shift+CommandOrControl+C", click: () => send(win, { type: "copyTaskPaper" }) },
         { role: "delete" },
         { type: "separator" },
         { label: "Select All", accelerator: "CommandOrControl+A", click: () => send(win, { type: "selectAll" }) },
@@ -134,6 +136,11 @@ function buildMenu(win, customPerspectives = []) {
       label: "Organize",
       submenu: [
         { label: "Clean Up", accelerator: "CommandOrControl+K", click: () => send(win, { type: "cleanUp" }) },
+        { type: "separator" },
+        { label: "Indent", click: () => send(win, { type: "indent" }) },
+        { label: "Outdent", click: () => send(win, { type: "outdent" }) },
+        { label: "Move Up", accelerator: "Alt+CommandOrControl+Up", click: () => send(win, { type: "moveRow", direction: "up" }) },
+        { label: "Move Down", accelerator: "Alt+CommandOrControl+Down", click: () => send(win, { type: "moveRow", direction: "down" }) },
         { type: "separator" },
         { label: "Expand All", accelerator: "Alt+CommandOrControl+9", click: () => send(win, { type: "expandAll" }) },
         { label: "Collapse All", accelerator: "Alt+CommandOrControl+0", click: () => send(win, { type: "collapseAll" }) },

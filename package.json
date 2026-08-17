@@ -9,7 +9,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test src/importOmniFocus.test.ts src/selection.test.ts src/dates.test.ts",
+    "test": "node --experimental-strip-types --test src/importOmniFocus.test.ts src/selection.test.ts src/dates.test.ts src/outline.test.ts",
     "export:web": "expo export --platform web",
     "electron:dev": "concurrently -k -s first \"expo start --web --port 8099\" \"wait-on http://localhost:8099 && cross-env ELECTRON_START_URL=http://localhost:8099 electron ./electron/main.cjs\"",
     "electron:start": "electron ./electron/main.cjs",

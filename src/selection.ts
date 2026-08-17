@@ -1,4 +1,5 @@
 import type { ActivePerspective, PerspectiveGroupBy, Project, Task } from "./model";
+import { flattenTasks } from "./outline.ts";
 
 export type SelectionModifiers = {
   shift?: boolean;
@@ -168,58 +169,59 @@ export function outlineTaskIds(options: {
   perspective: ActivePerspective;
   groupBy?: PerspectiveGroupBy | null;
   projectFilter: string | null;
+  collapsedIds?: Iterable<string>;
 }): string[] {
-  const { tasks, projects, perspective, groupBy = null, projectFilter } = options;
+  const { tasks, projects, perspective, groupBy = null, projectFilter, collapsedIds = [] } = options;
+  const collapsed = new Set(collapsedIds);
   const ids: string[] = [];
   const seen = new Set<string>();
   const push = (task: Task) => pushUnique(ids, seen, task);
+  const pushTree = (slice: Task[], projectId: string | null) => {
+    for (const task of flattenTasks(slice.filter((item) => item.projectId === projectId), collapsed)) push(task);
+  };
 
   if (groupBy === "project") {
-    for (const task of tasks.filter((item) => item.projectId === null)) push(task);
-    for (const project of projects) {
-      for (const task of tasks.filter((item) => item.projectId === project.id)) push(task);
-    }
+    pushTree(tasks, null);
+    for (const project of projects) pushTree(tasks, project.id);
     return ids;
   }
   if (groupBy === "tag") {
     const tags = [...new Set(tasks.flatMap((task) => task.tags))].sort();
     for (const tag of tags) {
-      for (const task of tasks.filter((item) => item.tags.includes(tag))) push(task);
+      for (const task of flattenTasks(tasks.filter((item) => item.tags.includes(tag)), collapsed)) push(task);
     }
     return ids;
   }
   if (groupBy === "flagged") {
     for (const flagged of [true, false]) {
-      for (const task of tasks.filter((item) => item.flagged === flagged)) push(task);
+      for (const task of flattenTasks(tasks.filter((item) => item.flagged === flagged), collapsed)) push(task);
     }
     return ids;
   }
   if (groupBy === "due") {
     const dues = [...new Set(tasks.map((task) => task.due ?? "No Due Date"))];
     for (const due of dues) {
-      for (const task of tasks.filter((item) => (item.due ?? "No Due Date") === due)) push(task);
+      for (const task of flattenTasks(tasks.filter((item) => (item.due ?? "No Due Date") === due), collapsed)) push(task);
     }
     return ids;
   }
   if (groupBy === "none") {
-    for (const task of tasks) push(task);
+    for (const task of flattenTasks(tasks, collapsed)) push(task);
     return ids;
   }
   if (perspective === "projects") {
     const visibleProjects = projects.filter((project) => !projectFilter || project.id === projectFilter);
-    for (const project of visibleProjects) {
-      for (const task of tasks.filter((item) => item.projectId === project.id)) push(task);
-    }
+    for (const project of visibleProjects) pushTree(tasks, project.id);
     return ids;
   }
   if (perspective === "tags") {
     const tags = [...new Set(tasks.flatMap((task) => task.tags))].sort();
     for (const tag of tags) {
-      for (const task of tasks.filter((item) => item.tags.includes(tag))) push(task);
+      for (const task of flattenTasks(tasks.filter((item) => item.tags.includes(tag)), collapsed)) push(task);
     }
     return ids;
   }
   if (perspective === "review") return ids;
-  for (const task of tasks) push(task);
+  for (const task of flattenTasks(tasks, collapsed)) push(task);
   return ids;
 }

@@ -13,6 +13,8 @@ type ProjectRow = {
   note: string;
   review_interval_days: number;
   last_reviewed_at: string | null;
+  status?: string | null;
+  type?: string | null;
 };
 
 type TaskRow = {
@@ -20,6 +22,8 @@ type TaskRow = {
   import_key: string | null;
   title: string;
   project_id: string | null;
+  parent_id?: string | null;
+  sort_order?: number | null;
   due: string | null;
   defer: string | null;
   note: string | null;
@@ -27,6 +31,8 @@ type TaskRow = {
   completed: number;
   completed_at: string | null;
   created_at: string;
+  estimated_minutes?: number | null;
+  repeat?: string | null;
 };
 
 type CustomPerspectiveRow = {
@@ -110,6 +116,8 @@ export async function loadDatabase(): Promise<PersistedState | null> {
     note: row.note,
     reviewIntervalDays: row.review_interval_days,
     lastReviewedAt: row.last_reviewed_at ?? undefined,
+    status: row.status === "onHold" || row.status === "dropped" ? row.status : "active",
+    type: row.type === "sequential" || row.type === "singleActions" ? row.type : "parallel",
   }));
 
   const tasks: Task[] = taskRows.map((row) => ({
@@ -125,6 +133,10 @@ export async function loadDatabase(): Promise<PersistedState | null> {
     completed: !!row.completed,
     completedAt: row.completed_at ?? undefined,
     createdAt: row.created_at,
+    parentId: row.parent_id ?? null,
+    sortOrder: row.sort_order ?? undefined,
+    estimatedMinutes: row.estimated_minutes ?? undefined,
+    repeat: row.repeat === "daily" || row.repeat === "weekly" || row.repeat === "monthly" ? row.repeat : "none",
   }));
 
   const customPerspectives: CustomPerspective[] = perspectiveRows.map((row) => normalizeCustomPerspective({
@@ -163,14 +175,16 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
 
     for (const project of state.projects) {
       await db.runAsync(
-        "INSERT INTO projects (id, import_key, name, color, note, review_interval_days, last_reviewed_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO projects (id, import_key, name, color, note, review_interval_days, last_reviewed_at, status, type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         project.id,
         project.importKey ?? null,
         project.name,
         project.color,
         project.note,
         project.reviewIntervalDays,
-        project.lastReviewedAt ?? null
+        project.lastReviewedAt ?? null,
+        project.status ?? "active",
+        project.type ?? "parallel"
       );
     }
 
@@ -185,18 +199,22 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
 
     for (const task of state.tasks) {
       await db.runAsync(
-        "INSERT INTO tasks (id, import_key, title, project_id, due, defer, note, flagged, completed, completed_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO tasks (id, import_key, title, project_id, parent_id, sort_order, due, defer, note, flagged, completed, completed_at, created_at, estimated_minutes, repeat) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         task.id,
         task.importKey ?? null,
         task.title,
         task.projectId,
+        task.parentId ?? null,
+        task.sortOrder ?? null,
         task.due ?? null,
         task.defer ?? null,
         task.note ?? null,
         task.flagged ? 1 : 0,
         task.completed ? 1 : 0,
         task.completedAt ?? null,
-        task.createdAt
+        task.createdAt,
+        task.estimatedMinutes ?? null,
+        task.repeat ?? "none"
       );
       for (const tagName of task.tags) {
         const tagId = await getTagId(tagName);
