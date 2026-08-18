@@ -30,7 +30,9 @@ export const nativeMenuCommandTypes = new Set<AppCommand["type"]>([
   "undo",
   "redo",
   "copyTaskPaper",
+  "pasteTaskPaper",
   "convertToProject",
+  "revealInProjects",
 ]);
 
 export type AppCommandHandlers = {
@@ -73,7 +75,9 @@ export type AppCommandHandlers = {
   undo: () => void;
   redo: () => void;
   copySelectedTaskPaper: () => void;
+  pasteTaskPaper: () => void;
   convertSelectedToProject: () => void;
+  revealInProjects: () => void;
   confirmPendingDelete: () => void;
   cancelTopOverlay: () => void;
 };
@@ -209,8 +213,14 @@ export function dispatchAppCommand(action: AppCommand, handlers: AppCommandHandl
     case "copyTaskPaper":
       handlers.copySelectedTaskPaper();
       break;
+    case "pasteTaskPaper":
+      handlers.pasteTaskPaper();
+      break;
     case "convertToProject":
       handlers.convertSelectedToProject();
+      break;
+    case "revealInProjects":
+      handlers.revealInProjects();
       break;
     case "confirmDelete":
       handlers.confirmPendingDelete();

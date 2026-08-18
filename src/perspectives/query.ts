@@ -6,11 +6,13 @@ import {
   type CustomPerspective,
   type PerspectiveId,
   type Project,
+  type TagRecord,
   type Task,
   perspectives,
 } from "../model.ts";
 import { projectInFolder, taskMatchesView, withLingeringTasks } from "../outline.ts";
 import { compareTasks, effectiveGroupBy, taskMatchesCustomPerspective } from "../perspectiveRules.ts";
+import { mergeTagRecords, taskHasTag } from "../tags.ts";
 
 export type VisibleTaskQuery = {
   tasks: Task[];
@@ -25,6 +27,7 @@ export type VisibleTaskQuery = {
   settings: Pick<AppSettings, "showCompleted" | "standardAvailability">;
   customPerspective: CustomPerspective | null;
   pendingCleanupIds: string[];
+  tagRecords?: TagRecord[];
 };
 
 export function filterVisibleTasks({
@@ -40,9 +43,12 @@ export function filterVisibleTasks({
   settings,
   customPerspective,
   pendingCleanupIds,
+  tagRecords,
 }: VisibleTaskQuery): Task[] {
   let result = [...tasks];
   const lingering = new Set(pendingCleanupIds);
+  const records = mergeTagRecords(tagRecords, tasks);
+  const matchesTag = (task: Task, tag: string) => taskHasTag(task, tag, records);
   if (customPerspective) {
     result = result.filter((task) => taskMatchesCustomPerspective(task, customPerspective, { tasks, projects }) || lingering.has(task.id));
     if (projectFilter) result = result.filter((task) => task.projectId === projectFilter);
@@ -50,7 +56,7 @@ export function filterVisibleTasks({
       const allowed = new Set(projects.filter((project) => projectInFolder(project, folderFilter)).map((project) => project.id));
       result = result.filter((task) => task.projectId && allowed.has(task.projectId));
     }
-    if (tagFilter) result = result.filter((task) => task.tags.includes(tagFilter));
+    if (tagFilter) result = result.filter((task) => matchesTag(task, tagFilter));
     result.sort((a, b) => compareTasks(a, b, customPerspective.sortBy));
   } else {
     if (perspective === "inbox") result = result.filter((task) => task.projectId === null || lingering.has(task.id));
@@ -63,9 +69,9 @@ export function filterVisibleTasks({
       const allowed = new Set(projects.filter((project) => projectInFolder(project, folderFilter)).map((project) => project.id));
       result = result.filter((task) => task.projectId && allowed.has(task.projectId));
     }
-    if (tagFilter) result = result.filter((task) => task.tags.includes(tagFilter));
+    if (tagFilter) result = result.filter((task) => matchesTag(task, tagFilter));
     const availability = settings.standardAvailability[perspective as PerspectiveId] ?? (settings.showCompleted ? "all" : "remaining");
-    result = result.filter((task) => taskMatchesView(task, availability, { tasks, projects }) || lingering.has(task.id));
+    result = result.filter((task) => taskMatchesView(task, availability, { tasks, projects, tagRecords: records }) || lingering.has(task.id));
   }
   if (focusedProjectId) result = result.filter((task) => task.projectId === focusedProjectId);
   if (query.trim()) {
@@ -119,6 +125,6 @@ export function defaultProjectIdFor(options: {
   return null;
 }
 
-export function knownTagsFrom(tasks: Task[]): string[] {
-  return [...new Set(tasks.flatMap((task) => task.tags))].sort();
+export function knownTagsFrom(tasks: Task[], records: TagRecord[] = []): string[] {
+  return mergeTagRecords(records, tasks).map((record) => record.name);
 }

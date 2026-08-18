@@ -1,7 +1,7 @@
-import { addDays, formatDateLabel, isActionAvailable, parseDueLabel, startOfLocalDay } from "./dates.ts";
-import { makeId, type PerspectiveAvailability, type Project, type Task } from "./model.ts";
+import { addDays, formatDueLabel, isActionAvailable, parseDueLabel, startOfLocalDay } from "./dates.ts";
+import { makeId, type PerspectiveAvailability, type Project, type RepeatRule, type RepeatSimple, type RepeatUnit, type TagRecord, type Task } from "./model.ts";
+import { taskHasOnHoldTag } from "./tags.ts";
 
-export type RepeatRule = "none" | "daily" | "weekly" | "monthly";
 export type ProjectStatus = "active" | "onHold" | "dropped";
 export type ProjectType = "parallel" | "sequential" | "singleActions";
 
@@ -216,7 +216,7 @@ export function isFirstAvailable(task: Task, tasks: Task[], projects: Project[],
 export function taskMatchesView(
   task: Task,
   availability: PerspectiveAvailability,
-  context: { tasks: Task[]; projects: Project[]; now?: Date },
+  context: { tasks: Task[]; projects: Project[]; now?: Date; tagRecords?: TagRecord[] },
 ): boolean {
   const project = task.projectId ? context.projects.find((item) => item.id === task.projectId) : undefined;
   const projectStatus = project?.status ?? "active";
@@ -225,7 +225,7 @@ export function taskMatchesView(
   if (availability === "completed") return task.completed || actionStatus === "dropped" || projectStatus === "dropped";
   if (task.completed || actionStatus === "dropped" || projectStatus === "dropped") return false;
   if (availability === "remaining") return true;
-  if (projectStatus === "onHold" || actionStatus === "onHold") return false;
+  if (projectStatus === "onHold" || actionStatus === "onHold" || taskHasOnHoldTag(task, context.tagRecords)) return false;
   if (!isActionAvailable(task, context.now)) return false;
   if (isBlockedSequential(task, context.tasks, context.projects)) return false;
   if (availability === "firstAvailable") return isFirstAvailable(task, context.tasks, context.projects, context.now);
@@ -240,31 +240,75 @@ export function formatEstimate(minutes?: number) {
   return rest ? `${hours}h ${rest}m` : `${hours}h`;
 }
 
-export function shiftDateLabel(label: string | undefined, days: number, now = new Date()) {
+export function addRepeatInterval(date: Date, every: number, unit: RepeatUnit) {
+  const next = new Date(date.getTime());
+  if (unit === "day") next.setDate(next.getDate() + every);
+  else if (unit === "week") next.setDate(next.getDate() + every * 7);
+  else if (unit === "month") next.setMonth(next.getMonth() + every);
+  else next.setFullYear(next.getFullYear() + every);
+  return next;
+}
+
+export function simpleRepeatRule(repeat: RepeatSimple | undefined, from: RepeatRule["from"] = "dueDate"): RepeatRule | undefined {
+  if (!repeat || repeat === "none") return undefined;
+  return {
+    every: 1,
+    unit: repeat === "daily" ? "day" : repeat === "weekly" ? "week" : "month",
+    from,
+    deferAnother: true,
+  };
+}
+
+export function resolvedRepeatRule(task: Pick<Task, "repeat" | "repeatRule">): RepeatRule | undefined {
+  if (task.repeatRule && task.repeatRule.every > 0) return task.repeatRule;
+  return simpleRepeatRule(task.repeat);
+}
+
+export function simpleFromRepeatRule(rule: RepeatRule | undefined): RepeatSimple {
+  if (!rule) return "none";
+  if (rule.every === 1 && rule.unit === "day") return "daily";
+  if (rule.every === 1 && rule.unit === "week") return "weekly";
+  if (rule.every === 1 && rule.unit === "month") return "monthly";
+  return rule.unit === "week" ? "weekly" : rule.unit === "month" ? "monthly" : "daily";
+}
+
+export function shiftDateByRule(label: string | undefined, rule: RepeatRule, now = new Date()) {
   if (!label) return undefined;
   const date = parseDueLabel(label, now);
   if (!date) return label;
-  const next = addDays(date, days);
-  const hasTime = date.getHours() !== 0 || date.getMinutes() !== 0;
-  const text = formatDateLabel(next, now);
-  if (!hasTime) return text;
-  const hours = date.getHours();
-  const minutes = date.getMinutes();
-  const period = hours >= 12 ? "PM" : "AM";
-  const hour12 = hours % 12 || 12;
-  const clock = minutes ? `${hour12}:${String(minutes).padStart(2, "0")} ${period}` : `${hour12}:00 ${period}`;
-  return `${text}, ${clock}`;
+  return formatDueLabel(addRepeatInterval(date, rule.every, rule.unit), now);
 }
 
 export function applyRepeat(task: Task, now = new Date()): Partial<Task> | null {
-  const repeat = task.repeat ?? "none";
-  if (repeat === "none") return null;
-  const days = repeat === "daily" ? 1 : repeat === "weekly" ? 7 : 30;
+  const rule = resolvedRepeatRule(task);
+  if (!rule) return null;
+  const dueDate = parseDueLabel(task.due, now);
+  const deferDate = parseDueLabel(task.defer, now);
+  const base = rule.from === "completionDate" ? now : (dueDate ?? now);
+  const nextDueDate = addRepeatInterval(new Date(
+    base.getFullYear(),
+    base.getMonth(),
+    base.getDate(),
+    dueDate?.getHours() ?? 0,
+    dueDate?.getMinutes() ?? 0,
+  ), rule.every, rule.unit);
+  const nextDue = task.due || rule.from === "completionDate" ? formatDueLabel(nextDueDate, now) : undefined;
+  let nextDefer: string | undefined;
+  if (rule.deferAnother !== false && dueDate && deferDate && nextDue) {
+    const gap = dueDate.getTime() - deferDate.getTime();
+    nextDefer = formatDueLabel(new Date(nextDueDate.getTime() - gap), now);
+  } else if (rule.deferAnother !== false && task.defer) {
+    nextDefer = shiftDateByRule(task.defer, rule, now);
+  } else {
+    nextDefer = undefined;
+  }
   return {
     completed: false,
     completedAt: undefined,
-    due: shiftDateLabel(task.due, days, now) ?? task.due,
-    defer: shiftDateLabel(task.defer, days, now),
+    due: nextDue ?? task.due,
+    defer: nextDefer,
+    repeat: simpleFromRepeatRule(rule),
+    repeatRule: rule,
   };
 }
 
@@ -276,7 +320,7 @@ function taskPaperLine(task: Task, depth: number) {
     task.completed ? "@done" : "",
     task.estimatedMinutes ? `@estimate(${formatEstimate(task.estimatedMinutes)})` : "",
     task.tags.length ? `@tags(${task.tags.join(", ")})` : "",
-    task.repeat && task.repeat !== "none" ? `@repeat(${task.repeat})` : "",
+    task.repeat && task.repeat !== "none" ? `@repeat(${task.repeatRule ? `${task.repeatRule.every} ${task.repeatRule.unit}${task.repeatRule.every === 1 ? "" : "s"}` : task.repeat})` : "",
   ].filter(Boolean);
   const indent = "\t".repeat(depth);
   const line = `${indent}- ${task.title}${tags.length ? ` ${tags.join(" ")}` : ""}`;
@@ -299,6 +343,186 @@ export function toTaskPaper(tasks: Task[], allTasks: Task[], projects: Project[]
     lines.push(taskPaperLine(task, taskDepth(task, byId) + (task.projectId ? 1 : 0)));
   }
   return lines.join("\n");
+}
+
+export type TaskPaperPasteItem = {
+  title: string;
+  depth: number;
+  projectName?: string;
+  tags: string[];
+  due?: string;
+  defer?: string;
+  flagged: boolean;
+  completed: boolean;
+  note?: string;
+  estimatedMinutes?: number;
+  repeat?: RepeatSimple;
+};
+
+function splitTagList(value: string) {
+  return [...new Set(value.replace(/^\(|\)$/g, "").split(/[,;]+/).map((tag) => tag.trim()).filter(Boolean))];
+}
+
+function parseEstimateTag(raw: string) {
+  const match = raw.trim().match(/^(\d+(?:\.\d+)?)\s*(m|h|min|mins|minute|minutes|hour|hours)?/i);
+  if (!match) return undefined;
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) return undefined;
+  const unit = (match[2] ?? "m").toLowerCase();
+  return unit.startsWith("h") ? Math.round(amount * 60) : Math.round(amount);
+}
+
+function parseRepeatTag(raw: string): RepeatSimple | undefined {
+  const value = raw.trim().toLowerCase();
+  if (value === "daily" || value === "day" || value === "1 day") return "daily";
+  if (value === "weekly" || value === "week" || value === "1 week") return "weekly";
+  if (value === "monthly" || value === "month" || value === "1 month") return "monthly";
+  if (/^\d+\s*days?/.test(value)) return "daily";
+  if (/^\d+\s*weeks?/.test(value)) return "weekly";
+  if (/^\d+\s*months?/.test(value)) return "monthly";
+  return undefined;
+}
+
+function extractTaskPaperTags(value: string) {
+  const parameters: Record<string, string | true> = {};
+  const title = value.replace(/\s+@([\w-]+)(?:\(([^)]*)\))?/g, (_match, rawName: string, rawValue: string | undefined) => {
+    parameters[rawName.toLowerCase()] = rawValue === undefined ? true : rawValue.trim();
+    return "";
+  }).trim();
+  return { title, parameters };
+}
+
+function normalizePastedDate(raw: string | undefined, now: Date) {
+  if (!raw) return undefined;
+  const parsed = parseDueLabel(raw, now);
+  return parsed ? formatDueLabel(parsed, now) : raw;
+}
+
+export function parseTaskPaperActions(text: string, now = new Date()): TaskPaperPasteItem[] {
+  const items: TaskPaperPasteItem[] = [];
+  let currentProject: string | undefined;
+  let lastItem: TaskPaperPasteItem | null = null;
+  for (const rawLine of text.replace(/\r\n?/g, "\n").split("\n")) {
+    if (!rawLine.trim()) continue;
+    const whitespace = rawLine.match(/^[\t ]*/)?.[0] ?? "";
+    const indent = [...whitespace].reduce((total, character) => total + (character === "\t" ? 4 : 1), 0);
+    const line = rawLine.trim();
+    if (line.startsWith("- ")) {
+      const parsed = extractTaskPaperTags(line.slice(2));
+      if (!parsed.title) continue;
+      const tagsParameter = typeof parsed.parameters.tags === "string" ? parsed.parameters.tags : "";
+      const contextParameter = typeof parsed.parameters.context === "string" ? parsed.parameters.context : "";
+      const estimate = typeof parsed.parameters.estimate === "string" ? parseEstimateTag(parsed.parameters.estimate) : undefined;
+      const duration = typeof parsed.parameters.duration === "string" ? parseEstimateTag(parsed.parameters.duration) : undefined;
+      const repeatRaw = typeof parsed.parameters.repeat === "string" ? parsed.parameters.repeat : undefined;
+      const item: TaskPaperPasteItem = {
+        title: parsed.title,
+        depth: indent,
+        projectName: currentProject,
+        tags: splitTagList(`${tagsParameter},${contextParameter}`),
+        due: typeof parsed.parameters.due === "string" ? normalizePastedDate(parsed.parameters.due, now) : undefined,
+        defer: typeof parsed.parameters.defer === "string" ? normalizePastedDate(parsed.parameters.defer, now) : undefined,
+        flagged: parsed.parameters.flagged === true || parsed.parameters.flagged === "true",
+        completed: "done" in parsed.parameters,
+        estimatedMinutes: estimate ?? duration,
+        repeat: repeatRaw ? parseRepeatTag(repeatRaw) : undefined,
+      };
+      items.push(item);
+      lastItem = item;
+      continue;
+    }
+    const parsed = extractTaskPaperTags(line);
+    if (parsed.title.endsWith(":")) {
+      const name = parsed.title.slice(0, -1).trim();
+      if (name) currentProject = name;
+      lastItem = null;
+      continue;
+    }
+    if (lastItem) lastItem.note = [lastItem.note, line].filter(Boolean).join("\n");
+  }
+  if (!items.length) return items;
+  const minDepth = Math.min(...items.map((item) => item.depth));
+  const uniqueDepths = [...new Set(items.map((item) => item.depth))].sort((a, b) => a - b);
+  return items.map((item) => ({
+    ...item,
+    depth: Math.max(0, uniqueDepths.indexOf(item.depth) === -1 ? item.depth - minDepth : uniqueDepths.indexOf(item.depth)),
+  }));
+}
+
+export function looksLikeTaskPaper(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  return /(?:^|\n)\s*-\s+\S/.test(trimmed) || /(?:^|\n).+:\s*(?:$|\n)/.test(trimmed);
+}
+
+function matchPastedProject(projects: Project[], name: string | undefined) {
+  if (!name) return undefined;
+  const needle = name.trim().toLowerCase();
+  return projects.find((project) => {
+    const display = projectDisplayName(project).toLowerCase();
+    const full = (project.folder ? `${project.folder} : ${project.name}` : project.name).toLowerCase();
+    return display === needle || full === needle || project.name.toLowerCase() === needle;
+  });
+}
+
+export function pasteTaskPaper(
+  tasks: Task[],
+  projects: Project[],
+  text: string,
+  options: {
+    afterId?: string | null;
+    fallbackProjectId: string | null;
+    idFactory?: (prefix: string) => string;
+    now?: Date;
+  },
+): { tasks: Task[]; created: Task[] } {
+  const now = options.now ?? new Date();
+  const idFactory = options.idFactory ?? makeId;
+  const items = parseTaskPaperActions(text, now);
+  if (!items.length) {
+    const title = text.trim();
+    if (!title) return { tasks, created: [] };
+    items.push({ title, depth: 0, tags: [], flagged: false, completed: false });
+  }
+  const after = options.afterId ? tasks.find((task) => task.id === options.afterId) : undefined;
+  const created: Task[] = [];
+  const stack: Array<{ depth: number; id: string }> = [];
+  const next = tasks.map((task) => ({ ...task }));
+  let sortBase = after ? (after.sortOrder ?? 0) : next.length;
+  for (const item of items) {
+    while (stack.length && (stack[stack.length - 1]?.depth ?? 0) >= item.depth) stack.pop();
+    const parent = stack[stack.length - 1];
+    const matchedProject = matchPastedProject(projects, item.projectName);
+    const projectId = parent
+      ? (created.find((task) => task.id === parent.id)?.projectId ?? after?.projectId ?? options.fallbackProjectId)
+      : (matchedProject?.id ?? after?.projectId ?? options.fallbackProjectId);
+    const task: Task = {
+      id: idFactory("task"),
+      title: item.title,
+      projectId,
+      parentId: parent?.id ?? (item.depth === 0 ? after?.parentId ?? null : null),
+      sortOrder: (sortBase += 0.5),
+      tags: item.tags,
+      due: item.due,
+      defer: item.defer,
+      note: item.note,
+      flagged: item.flagged,
+      completed: item.completed,
+      completedAt: item.completed ? now.toISOString() : undefined,
+      createdAt: now.toISOString(),
+      estimatedMinutes: item.estimatedMinutes,
+      repeat: item.repeat ?? "none",
+      repeatRule: simpleRepeatRule(item.repeat),
+    };
+    created.push(task);
+    next.push(task);
+    stack.push({ depth: item.depth, id: task.id });
+  }
+  return { tasks: reindexSiblings(next), created };
+}
+
+export function idsWithDescendants(tasks: Task[], ids: string[]) {
+  return [...new Set([...ids, ...ids.flatMap((id) => descendantsOf(id, tasks).map((task) => task.id))])];
 }
 
 export function projectIsStalled(project: Project, tasks: Task[]) {

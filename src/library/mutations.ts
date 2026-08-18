@@ -1,5 +1,5 @@
 import { makeId, type CustomPerspective, type Project, type Task } from "../model.ts";
-import { applyRepeat, descendantsOf } from "../outline.ts";
+import { applyRepeat, descendantsOf, idsWithDescendants, projectInFolder } from "../outline.ts";
 
 export function applyTaskPatch(tasks: Task[], id: string, patch: Partial<Task>, now = new Date()): Task[] {
   return tasks.map((task) => {
@@ -50,8 +50,33 @@ export function applyFlagToggle(tasks: Task[], ids: string[]): Task[] {
 }
 
 export function applyMoveToProject(tasks: Task[], ids: string[], projectId: string | null): Task[] {
-  const unique = new Set(ids);
+  const unique = new Set(idsWithDescendants(tasks, ids));
   return tasks.map((task) => unique.has(task.id) ? { ...task, projectId } : task);
+}
+
+export function applyAddTag(tasks: Task[], ids: string[], tag: string): Task[] {
+  const name = tag.trim();
+  if (!name) return tasks;
+  const unique = new Set(ids);
+  return tasks.map((task) => unique.has(task.id) && !task.tags.includes(name)
+    ? { ...task, tags: [...task.tags, name] }
+    : task);
+}
+
+export type SidebarDropTarget =
+  | { kind: "inbox" }
+  | { kind: "project"; projectId: string }
+  | { kind: "folder"; folder: string }
+  | { kind: "tag"; tag: string };
+
+export function applySidebarDrop(tasks: Task[], projects: Project[], ids: string[], target: SidebarDropTarget): Task[] {
+  if (target.kind === "inbox") return applyMoveToProject(tasks, ids, null);
+  if (target.kind === "project") return applyMoveToProject(tasks, ids, target.projectId);
+  if (target.kind === "folder") {
+    const project = projects.find((item) => projectInFolder(item, target.folder));
+    return project ? applyMoveToProject(tasks, ids, project.id) : tasks;
+  }
+  return applyAddTag(tasks, ids, target.tag);
 }
 
 export function duplicateTasksByIds(

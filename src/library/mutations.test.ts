@@ -4,6 +4,7 @@ import type { CustomPerspective, Project, Task } from "../model.ts";
 import {
   applyCompleteToggle,
   applyFlagToggle,
+  applySidebarDrop,
   applyTaskPatch,
   deleteTaskIds,
   duplicateTasksByIds,
@@ -125,6 +126,19 @@ test("pending delete copy describes projects and multi-select", () => {
     deletingProject: false,
   });
   assert.equal(multi.title, "2 actions");
+});
+
+test("dropping on a tag assigns it and folders take the first project", () => {
+  const tasks = [task({ id: "a", title: "Inbox", projectId: null })];
+  const tagged = applySidebarDrop(tasks, [ { id: "p1", name: "Site", color: "#000", note: "", reviewIntervalDays: 7 } ], ["a"], { kind: "tag", tag: "errand" });
+  assert.deepEqual(tagged[0]?.tags, ["errand"]);
+  const moved = applySidebarDrop(tagged, [
+    { id: "p2", name: "Home", folder: "Personal", color: "#000", note: "", reviewIntervalDays: 7 },
+    { id: "p1", name: "Site", color: "#000", note: "", reviewIntervalDays: 7 },
+  ], ["a"], { kind: "folder", folder: "Personal" });
+  assert.equal(moved[0]?.projectId, "p2");
+  const inbox = applySidebarDrop(moved, [], ["a"], { kind: "inbox" });
+  assert.equal(inbox[0]?.projectId, null);
 });
 
 test("pruning a missing project is a no-op for unrelated rules", () => {

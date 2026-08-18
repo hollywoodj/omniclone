@@ -77,6 +77,8 @@ export function Outline({
   onMoveRow,
   onCopyTaskPaper,
   onConvertToProject,
+  onReveal,
+  onChangeDates,
 }: {
   title: string;
   perspective: ActivePerspective;
@@ -127,6 +129,8 @@ export function Outline({
   onOutdent: (id: string) => void;
   onMoveRow: (id: string, direction: -1 | 1) => void;
   onCopyTaskPaper: (id: string) => void;
+  onReveal: (id: string) => void;
+  onChangeDates: (id: string, patch: Pick<Task, "due" | "defer">) => void;
 }) {
   const { openMenu } = useContextMenuTrigger();
   const containerRef = useRef<View>(null);
@@ -212,6 +216,8 @@ export function Outline({
         collapsed={collapsed.has(task.id)}
         hideProject={!customPerspective && (perspective === "projects" || perspective === "review")}
         blocked={isBlockedSequential(task, tasks, projects)}
+        compactDue={!customPerspective && perspective === "forecast"}
+        dragIds={selected && selectedTaskIds.length > 1 ? selectedTaskIds : [task.id]}
         registerRow={registerRow}
         onSelect={() => {
           if (suppressClickRef.current) return;
@@ -235,6 +241,8 @@ export function Outline({
         onStartEdit={() => onStartEdit(task.id)}
         onCommitTitle={(title) => onCommitTitle(task.id, title)}
         onConvertToProject={() => onConvertToProject(task.id)}
+        onReveal={() => onReveal(task.id)}
+        onChangeDates={(patch) => onChangeDates(task.id, patch)}
       />
     );
   };

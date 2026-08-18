@@ -90,6 +90,31 @@ export type Project = {
 };
 
 export type ActionStatus = "active" | "onHold" | "dropped";
+export type TagStatus = "active" | "onHold" | "dropped";
+export type RepeatUnit = "day" | "week" | "month" | "year";
+export type RepeatFrom = "dueDate" | "completionDate";
+export type RepeatSimple = "none" | "daily" | "weekly" | "monthly";
+export type NotificationWhen = "atEvent" | "startOfDay" | "15m" | "1h" | "1d" | "2d" | "1w";
+export type DueTimePreset = "none" | "morning" | "afternoon" | "evening";
+
+export type RepeatRule = {
+  every: number;
+  unit: RepeatUnit;
+  from: RepeatFrom;
+  deferAnother?: boolean;
+};
+
+export type TaskNotifications = {
+  due: NotificationWhen[];
+  defer: NotificationWhen[];
+};
+
+export type TagRecord = {
+  name: string;
+  parent?: string;
+  color?: string;
+  status?: TagStatus;
+};
 
 export type Task = {
   id: string;
@@ -107,7 +132,9 @@ export type Task = {
   completedAt?: string;
   createdAt: string;
   estimatedMinutes?: number;
-  repeat?: "none" | "daily" | "weekly" | "monthly";
+  repeat?: RepeatSimple;
+  repeatRule?: RepeatRule;
+  notifications?: TaskNotifications;
   status?: ActionStatus;
 };
 
@@ -116,7 +143,16 @@ export type PersistedState = {
   projects: Project[];
   tasks: Task[];
   customPerspectives: CustomPerspective[];
+  tagRecords?: TagRecord[];
 };
+
+export const dueTimeHours: Record<Exclude<DueTimePreset, "none">, { hours: number; minutes: number }> = {
+  morning: { hours: 9, minutes: 0 },
+  afternoon: { hours: 13, minutes: 0 },
+  evening: { hours: 17, minutes: 0 },
+};
+
+export const defaultTagColor = "#8e8e93";
 
 export const palette = {
   purple: "#8b4fc2",

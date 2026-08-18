@@ -1,4 +1,4 @@
-import type { ActivePerspective, PerspectiveAvailability, Project, Task } from "./model";
+import { dueTimeHours, type ActivePerspective, type DueTimePreset, type PerspectiveAvailability, type Project, type Task } from "./model.ts";
 
 const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const weekdayShort = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
@@ -62,12 +62,21 @@ export function parseOmniTimestamp(raw: string): Date | undefined {
   return undefined;
 }
 
-function formatClock(date: Date) {
+export function formatClock(date: Date) {
   const hours = date.getHours();
   const minutes = date.getMinutes();
   const period = hours >= 12 ? "PM" : "AM";
   const hour12 = hours % 12 || 12;
   return minutes ? `${hour12}:${pad(minutes)} ${period}` : `${hour12}:00 ${period}`;
+}
+
+export function dateHasTime(date: Date) {
+  return date.getHours() !== 0 || date.getMinutes() !== 0 || date.getSeconds() !== 0;
+}
+
+export function formatDueLabel(date: Date, now = new Date()) {
+  const label = relativeDayLabel(date, now);
+  return dateHasTime(date) ? `${label}, ${formatClock(date)}` : label;
 }
 
 function relativeDayLabel(date: Date, now: Date) {
@@ -86,9 +95,7 @@ export function formatOmniFocusDate(raw: string, now = new Date()): string | und
   if (!value) return undefined;
   const parsed = parseOmniTimestamp(value);
   if (!parsed) return value;
-  const hasTime = parsed.getHours() !== 0 || parsed.getMinutes() !== 0 || parsed.getSeconds() !== 0;
-  const label = relativeDayLabel(parsed, now);
-  return hasTime ? `${label}, ${formatClock(parsed)}` : label;
+  return formatDueLabel(parsed, now);
 }
 
 export function formatDateLabel(date: Date, now = new Date()) {
@@ -197,6 +204,72 @@ export function duePresetLabel(kind: "today" | "tomorrow" | "weekend" | "nextWee
   if (kind === "tomorrow") return formatDateLabel(addDays(now, 1), now);
   if (kind === "weekend") return formatDateLabel(weekendDate(now), now);
   return formatDateLabel(addDays(now, 7), now);
+}
+
+export type CalendarCell = {
+  key: string;
+  date: Date;
+  day: number;
+  inMonth: boolean;
+};
+
+export function calendarMonth(year: number, month: number): CalendarCell[] {
+  const first = new Date(year, month, 1);
+  const start = new Date(year, month, 1 - first.getDay());
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = addDays(start, index);
+    return {
+      key: dayKey(date),
+      date,
+      day: date.getDate(),
+      inMonth: date.getMonth() === month,
+    };
+  });
+}
+
+export function dueTimePreset(label: string | undefined, now = new Date()): DueTimePreset | "custom" {
+  const date = parseDueLabel(label, now);
+  if (!date || !dateHasTime(date)) return "none";
+  const hours = date.getHours();
+  const minutes = date.getMinutes();
+  if (hours === dueTimeHours.morning.hours && minutes === dueTimeHours.morning.minutes) return "morning";
+  if (hours === dueTimeHours.afternoon.hours && minutes === dueTimeHours.afternoon.minutes) return "afternoon";
+  if (hours === dueTimeHours.evening.hours && minutes === dueTimeHours.evening.minutes) return "evening";
+  return "custom";
+}
+
+export function withTimeOnLabel(label: string | undefined, hours: number, minutes: number, now = new Date()) {
+  const base = parseDueLabel(label, now) ?? startOfLocalDay(now);
+  return formatDueLabel(new Date(base.getFullYear(), base.getMonth(), base.getDate(), hours, minutes), now);
+}
+
+export function clearTimeOnLabel(label: string | undefined, now = new Date()) {
+  const date = parseDueLabel(label, now);
+  if (!date) return label;
+  return formatDateLabel(date, now);
+}
+
+export function applyDueTimePreset(label: string | undefined, preset: DueTimePreset, now = new Date()) {
+  if (preset === "none") return clearTimeOnLabel(label, now);
+  const clock = dueTimeHours[preset];
+  return withTimeOnLabel(label, clock.hours, clock.minutes, now);
+}
+
+export function setCalendarDate(label: string | undefined, next: Date, now = new Date()) {
+  const current = parseDueLabel(label, now);
+  const hours = current && dateHasTime(current) ? current.getHours() : 0;
+  const minutes = current && dateHasTime(current) ? current.getMinutes() : 0;
+  return formatDueLabel(new Date(next.getFullYear(), next.getMonth(), next.getDate(), hours, minutes), now);
+}
+
+export function outlineDueLabel(label: string | undefined, compact = false, now = new Date()) {
+  if (!label) return undefined;
+  const date = parseDueLabel(label, now);
+  if (!date) return label;
+  if (!compact || !dateHasTime(date)) return formatDueLabel(date, now);
+  const delta = dayDelta(date, now);
+  if (delta === 0) return formatClock(date);
+  return formatDueLabel(date, now);
 }
 
 export function forecastWeek(now = new Date(), count = 7): ForecastDay[] {

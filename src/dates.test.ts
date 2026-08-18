@@ -16,6 +16,11 @@ import {
   reviewStatusText,
   todayKey,
   completionGroupLabel,
+  applyDueTimePreset,
+  dueTimePreset,
+  setCalendarDate,
+  calendarMonth,
+  outlineDueLabel,
 } from "./dates.ts";
 import type { Project } from "./model.ts";
 
@@ -54,6 +59,20 @@ test("builds a live forecast week from today", () => {
   assert.equal(week[0]?.weekday, "MON");
   assert.equal(week[0]?.date, 17);
   assert.equal(week[6]?.key, "2026-08-23");
+});
+
+test("applies morning and calendar times onto due labels", () => {
+  assert.equal(applyDueTimePreset("Today", "morning", now), "Today, 9:00 AM");
+  assert.equal(applyDueTimePreset("Today, 9:00 AM", "evening", now), "Today, 5:00 PM");
+  assert.equal(applyDueTimePreset("Tomorrow, 5:00 PM", "none", now), "Tomorrow");
+  assert.equal(dueTimePreset("Today, 9:00 AM", now), "morning");
+  const picked = setCalendarDate("Today, 5:00 PM", new Date(2026, 7, 22), now);
+  assert.equal(picked, "Aug 22, 5:00 PM");
+  const month = calendarMonth(2026, 7);
+  assert.equal(month.length, 42);
+  assert.equal(month[0]?.day, 26);
+  assert.equal(month[6]?.day, 1);
+  assert.equal(outlineDueLabel("Today, 5:00 PM", true, now), "5:00 PM");
 });
 
 test("creates Today/Tomorrow/Weekend/Next Week presets", () => {

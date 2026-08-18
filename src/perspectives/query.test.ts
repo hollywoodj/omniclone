@@ -122,3 +122,18 @@ test("custom perspectives grouped by tag use the Tags sidebar", () => {
   assert.equal(sidebarPerspectiveFor("custom:c1", custom), "tags");
   assert.equal(sidebarPerspectiveFor("inbox", null), "inbox");
 });
+
+test("selecting a parent tag includes descendant-tagged actions", () => {
+  const tasks = [
+    task({ id: "a", title: "Reply", tags: ["Email"] }),
+    task({ id: "b", title: "Shop", tags: ["Errand"] }),
+  ];
+  const visible = filterVisibleTasks({
+    ...baseQuery,
+    tasks,
+    perspective: "tags",
+    tagFilter: "Work",
+    tagRecords: [{ name: "Work" }, { name: "Email", parent: "Work" }],
+  });
+  assert.deepEqual(visible.map((item) => item.id), ["a"]);
+});

@@ -1,14 +1,16 @@
 import React, { useEffect, useState } from "react";
-import { Pressable, Text, TextInput, View } from "react-native";
+import { Platform, Pressable, Text, TextInput, View } from "react-native";
 import { ContextMenuPressable, type ContextMenuItem } from "../../contextMenu";
-import { dueUrgency, formatAvailableLabel } from "../../dates";
+import { dueUrgency, formatAvailableLabel, outlineDueLabel } from "../../dates";
+import { setTaskDragData } from "../../lib/dnd";
 import { palette, type AppSettings, type Project, type Task } from "../../model";
 import { formatEstimate, projectDisplayName } from "../../outline";
 import { appStyles as styles } from "../../styles/appStyles";
+import { DateField } from "../inspector/DateField";
 import { Icon, type IconName } from "../ui/Icon";
 import { StatusRing } from "../ui/StatusRing";
 
-export function TaskRow({ task, project, projects, selected, editing, bulkCount, settings, depth = 0, hasChildren = false, collapsed = false, hideProject = false, blocked = false, registerRow, onSelect, onToggle, onInspect, onToggleSelected, onToggleFlag, onDelete, onCopy, onCopyLink, onCopyTaskPaper, onDuplicate, onMove, onIndent, onOutdent, onMoveRow, onToggleCollapse, onStartEdit, onCommitTitle, onConvertToProject }: {
+export function TaskRow({ task, project, projects, selected, editing, bulkCount, settings, depth = 0, hasChildren = false, collapsed = false, hideProject = false, blocked = false, compactDue = false, dragIds, registerRow, onSelect, onToggle, onInspect, onToggleSelected, onToggleFlag, onDelete, onCopy, onCopyLink, onCopyTaskPaper, onDuplicate, onMove, onIndent, onOutdent, onMoveRow, onToggleCollapse, onStartEdit, onCommitTitle, onConvertToProject, onReveal, onChangeDates }: {
   task: Task;
   project?: Project;
   projects: Project[];
@@ -21,6 +23,8 @@ export function TaskRow({ task, project, projects, selected, editing, bulkCount,
   collapsed?: boolean;
   hideProject?: boolean;
   blocked?: boolean;
+  compactDue?: boolean;
+  dragIds?: string[];
   registerRow: (id: string, node: View | null) => void;
   onSelect: () => void;
   onToggle: () => void;
@@ -40,16 +44,21 @@ export function TaskRow({ task, project, projects, selected, editing, bulkCount,
   onStartEdit: () => void;
   onCommitTitle: (title: string) => void;
   onConvertToProject: () => void;
+  onReveal: () => void;
+  onChangeDates: (patch: Pick<Task, "due" | "defer">) => void;
 }) {
   const urgency = dueUrgency(task.due);
   const bulk = bulkCount > 1;
   const availableLabel = formatAvailableLabel(task.defer);
   const [hovered, setHovered] = useState(false);
   const [draft, setDraft] = useState(task.title);
+  const [editingDate, setEditingDate] = useState<"due" | "defer" | null>(null);
   useEffect(() => setDraft(task.title), [task.id, task.title, editing]);
+  useEffect(() => setEditingDate(null), [task.id]);
   const commit = () => onCommitTitle(draft.trim() || task.title);
   const menuItems: ContextMenuItem[] = [
     { id: "inspect", label: "Inspect", icon: "information-outline", onPress: onInspect },
+    { id: "reveal", label: "Show in Projects", icon: "folder-arrow-right", onPress: onReveal },
     { id: "edit", label: "Edit", icon: "pencil-outline", shortcut: "↩", onPress: onStartEdit },
     { id: "toggle", label: `${task.completed ? "Mark Incomplete" : "Mark Complete"}${bulk ? ` (${bulkCount})` : ""}`, icon: task.completed ? "circle-outline" : "check-circle-outline", onPress: onToggleSelected },
     { id: "flag", label: `${task.flagged ? "Remove Flag" : "Flag"}${bulk ? ` (${bulkCount})` : ""}`, icon: task.flagged ? "flag-off-outline" : "flag-outline", shortcut: "⇧⌘L", onPress: onToggleFlag },
@@ -78,7 +87,16 @@ export function TaskRow({ task, project, projects, selected, editing, bulkCount,
     <View
       ref={(node) => registerRow(task.id, node)}
       collapsable={false}
-      {...({ dataSet: { taskId: task.id } } as object)}
+      style={editingDate ? { zIndex: 24, position: "relative" } : undefined}
+      {...({
+        dataSet: { taskId: task.id },
+        ...(Platform.OS === "web" && !editing ? {
+          draggable: true,
+          onDragStart: (event: { dataTransfer?: { setData: (type: string, value: string) => void; effectAllowed?: string } }) => {
+            setTaskDragData(event, dragIds?.length ? dragIds : [task.id]);
+          },
+        } : {}),
+      } as object)}
     >
       <ContextMenuPressable
         accessibilityRole="button"
@@ -155,13 +173,38 @@ export function TaskRow({ task, project, projects, selected, editing, bulkCount,
         </View>
         <View style={styles.taskTail}>
           {!!task.estimatedMinutes && <Text style={styles.estimateText}>{formatEstimate(task.estimatedMinutes)}</Text>}
-          {!!task.due && <Text style={[styles.dueText, settings.colorDueItems && urgency === "overdue" && styles.dueOverdue, settings.colorDueItems && urgency === "dueSoon" && styles.dueSoon]}>{task.due}</Text>}
-          {!task.due && !!availableLabel && <Text style={styles.deferText}>{availableLabel}</Text>}
+          <Pressable
+            onPress={() => setEditingDate(editingDate === "due" ? null : "due")}
+            hitSlop={6}
+            {...({ dataSet: { noMarquee: "true" } } as object)}
+          >
+            {task.due
+              ? <Text style={[styles.dueText, settings.colorDueItems && urgency === "overdue" && styles.dueOverdue, settings.colorDueItems && urgency === "dueSoon" && styles.dueSoon]}>{outlineDueLabel(task.due, compactDue) ?? task.due}</Text>
+              : (hovered || selected) ? <Text style={styles.deferText}>Due</Text> : null}
+          </Pressable>
+          {!task.due && !!availableLabel && (
+            <Pressable onPress={() => setEditingDate("defer")} hitSlop={6} {...({ dataSet: { noMarquee: "true" } } as object)}>
+              <Text style={styles.deferText}>{availableLabel}</Text>
+            </Pressable>
+          )}
           <Pressable accessibilityLabel={task.flagged ? "Remove flag" : "Flag"} onPress={onToggleFlag} hitSlop={8} {...({ dataSet: { noMarquee: "true" } } as object)}>
             <Icon name={task.flagged ? "flag" : hovered || selected ? "flag-outline" : "flag-outline"} size={16} color={task.flagged ? palette.flag : hovered || selected ? "#c5c1c8" : "transparent"} />
           </Pressable>
           <Pressable onPress={onInspect} hitSlop={8} style={styles.rowInfoButton} {...({ dataSet: { noMarquee: "true" } } as object)}><Icon name="information-outline" size={17} color="#8e8a91" /></Pressable>
         </View>
+        {editingDate && (
+          <View style={styles.inlineDatePopover} {...({ dataSet: { noMarquee: "true" } } as object)}>
+            <Text style={styles.inspectorSectionTitle}>{editingDate === "due" ? "DUE" : "DEFER UNTIL"}</Text>
+            <DateField
+              compact
+              value={editingDate === "due" ? task.due : task.defer}
+              onChange={(next) => onChangeDates(editingDate === "due" ? { due: next } : { defer: next })}
+            />
+            <Pressable onPress={() => setEditingDate(null)} style={styles.calendarClear}>
+              <Text style={[styles.datePresetText, { color: palette.purpleDark }]}>Done</Text>
+            </Pressable>
+          </View>
+        )}
       </ContextMenuPressable>
     </View>
   );

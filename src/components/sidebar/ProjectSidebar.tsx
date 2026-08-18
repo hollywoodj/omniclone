@@ -2,9 +2,11 @@ import React, { useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { ContextMenuPressable, useContextMenuTrigger, type ContextMenuItem } from "../../contextMenu";
 import { forecastWeek, todayKey, type ForecastDayKey } from "../../dates";
-import { palette, perspectives, type PerspectiveId, type Project, type Task } from "../../model";
+import { defaultTagColor, palette, perspectives, type PerspectiveId, type Project, type TagRecord, type Task } from "../../model";
 import { projectContextItems } from "../../perspectives/projectContextItems";
-import { buildFolderTree, projectDisplayName, projectInFolder, sidebarActionCounts } from "../../outline";
+import { buildFolderTree, projectDisplayName, sidebarActionCounts } from "../../outline";
+import { buildTagTree, remainingCountForTagTree } from "../../tags";
+import type { SidebarDropTarget } from "../../library/mutations";
 import { appStyles as styles } from "../../styles/appStyles";
 import { Icon } from "../ui/Icon";
 import { SidebarRow } from "../ui/SidebarRow";
@@ -29,6 +31,8 @@ export function ProjectSidebar({
   onFocusProject,
   onNewActionInProject,
   onDeleteProject,
+  tagRecords,
+  onDropOnSidebar,
 }: {
   perspective: PerspectiveId;
   projects: Project[];
@@ -49,8 +53,10 @@ export function ProjectSidebar({
   onFocusProject: (id: string) => void;
   onNewActionInProject: (id: string) => void;
   onDeleteProject: (id: string) => void;
+  tagRecords?: TagRecord[];
+  onDropOnSidebar?: (ids: string[], target: SidebarDropTarget) => void;
 }) {
-  const tags = useMemo(() => [...new Set(tasks.flatMap((task) => task.tags))].sort(), [tasks]);
+  const tags = useMemo(() => buildTagTree(tagRecords ?? []), [tagRecords]);
   const counts = useMemo(() => sidebarActionCounts(tasks), [tasks]);
   const title = perspectives.find((item) => item.id === perspective)?.label ?? "Projects";
   const { openMenu } = useContextMenuTrigger();
@@ -61,8 +67,12 @@ export function ProjectSidebar({
   const week = useMemo(() => forecastWeek(), []);
   const tree = useMemo(() => buildFolderTree(projects, extraFolders), [extraFolders, projects]);
   const [collapsedFolders, setCollapsedFolders] = useState<string[]>([]);
+  const [collapsedTags, setCollapsedTags] = useState<string[]>([]);
   const toggleFolder = (path: string) => {
     setCollapsedFolders((current) => current.includes(path) ? current.filter((item) => item !== path) : [...current, path]);
+  };
+  const toggleTag = (name: string) => {
+    setCollapsedTags((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name]);
   };
   const remainingIn = (projectId: string) => counts.remainingByProject.get(projectId) ?? 0;
   const projectRow = (project: Project, depth: number) => {
@@ -73,6 +83,8 @@ export function ProjectSidebar({
         selected={selectedProjectId === project.id}
         items={projectContextItems(project, { onFocusProject, onNewActionInProject, onDeleteProject })}
         onPress={() => onSelectProject(project.id)}
+        droppable
+        onDropTasks={(ids) => onDropOnSidebar?.(ids, { kind: "project", projectId: project.id })}
         style={{ paddingLeft: 8 + depth * 14 }}
       >
         <View style={[styles.projectDot, { borderColor: project.color }, project.status === "dropped" && styles.projectDotDropped, project.status === "onHold" && styles.projectDotHold, stalled && styles.projectDotStalled]} />
@@ -93,6 +105,8 @@ export function ProjectSidebar({
         <SidebarRow
           selected={selected}
           onPress={() => onSelectFolder(node.path)}
+          droppable
+          onDropTasks={(ids) => onDropOnSidebar?.(ids, { kind: "folder", folder: node.path })}
           style={{ paddingLeft: 8 + depth * 14 }}
         >
           <Pressable onPress={() => toggleFolder(node.path)} hitSlop={8} style={styles.collapseButton}>
@@ -104,6 +118,35 @@ export function ProjectSidebar({
         </SidebarRow>
         {!collapsed && node.projects.map((project) => projectRow(project, depth + 1))}
         {!collapsed && node.children.map((child) => renderFolder(child, depth + 1))}
+      </View>
+    );
+  };
+  const renderTag = (node: (typeof tags)[number], depth: number): React.ReactNode => {
+    const collapsed = collapsedTags.includes(node.name);
+    const status = node.record.status ?? "active";
+    const color = node.record.color ?? defaultTagColor;
+    const count = remainingCountForTagTree(tasks, node.name, tagRecords ?? []);
+    return (
+      <View key={node.name}>
+        <SidebarRow
+          selected={selectedTag === node.name}
+          onPress={() => onSelectTag(node.name)}
+          droppable
+          onDropTasks={(ids) => onDropOnSidebar?.(ids, { kind: "tag", tag: node.name })}
+          style={{ paddingLeft: 8 + depth * 14 }}
+        >
+          {node.children.length ? (
+            <Pressable onPress={() => toggleTag(node.name)} hitSlop={8} style={styles.collapseButton}>
+              <Icon name={collapsed ? "chevron-right" : "chevron-down"} size={16} color="#6e6c72" />
+            </Pressable>
+          ) : <View style={{ width: 16 }} />}
+          <Icon name="pound" size={16} color={color} />
+          <Text style={[styles.sidebarRowText, status === "dropped" && styles.taskTitleCompleted, status === "onHold" && styles.sidebarHoldText]}>{node.name}</Text>
+          {status === "onHold" && <Text style={styles.sidebarStatusTag}>On Hold</Text>}
+          {status === "dropped" && <Text style={styles.sidebarStatusTag}>Dropped</Text>}
+          {showCounts && <Text style={styles.sidebarCount}>{count}</Text>}
+        </SidebarRow>
+        {!collapsed && node.children.map((child) => renderTag(child, depth + 1))}
       </View>
     );
   };
@@ -146,13 +189,7 @@ export function ProjectSidebar({
             </SidebarRow>
             <Text style={styles.sidebarSectionLabel}>TAGS</Text>
             {!tags.length && <Text style={styles.sidebarEmptyText}>No tags yet. Add them in the inspector.</Text>}
-            {tags.map((tag) => (
-              <SidebarRow key={tag} selected={selectedTag === tag} onPress={() => onSelectTag(tag)}>
-                <Icon name="pound" size={16} color="#77747b" />
-                <Text style={styles.sidebarRowText}>{tag}</Text>
-                {showCounts && <Text style={styles.sidebarCount}>{counts.remainingByTag.get(tag) ?? 0}</Text>}
-              </SidebarRow>
-            ))}
+            {tags.map((node) => renderTag(node, 0))}
           </>
         )}
         {perspective === "forecast" && (

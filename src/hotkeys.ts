@@ -37,7 +37,9 @@ export type HotkeyAction =
   | { type: "undo" }
   | { type: "redo" }
   | { type: "copyTaskPaper" }
+  | { type: "pasteTaskPaper" }
   | { type: "convertToProject" }
+  | { type: "revealInProjects" }
   | { type: "confirmDelete" }
   | { type: "cancel" };
 

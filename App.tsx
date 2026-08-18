@@ -13,6 +13,7 @@ import {
   type PerspectiveAvailability,
   type PerspectiveId,
   type Project,
+  type TagRecord,
   type Task,
 } from "./src/model";
 import { applyOmniFocusImport, parseOmniFocusFile, type ImportMode, type OmniImportData } from "./src/importOmniFocus";
@@ -28,6 +29,7 @@ import {
   insertTaskAfter,
   moveSiblings,
   outdentTasks,
+  pasteTaskPaper,
   projectIsStalled,
   renameTag,
   skipReviewTimestamp,
@@ -72,6 +74,7 @@ import {
   applyCompleteToggle,
   applyFlagToggle,
   applyMoveToProject,
+  applySidebarDrop,
   applyTaskPatch,
   deleteTaskIds,
   duplicateTasksByIds,
@@ -89,7 +92,10 @@ import { useLocationHistory } from "./src/hooks/useLocationHistory";
 import { useUndoStack } from "./src/hooks/useUndoStack";
 import { useAppLayout } from "./src/hooks/useAppLayout";
 import { hasNativeMenu, useAppHotkeys } from "./src/hooks/useAppHotkeys";
-import { copyToClipboard } from "./src/lib/clipboard";
+import { copyToClipboard, readClipboard } from "./src/lib/clipboard";
+import { mergeTagRecords, renameTagRecord, upsertTagRecord } from "./src/tags";
+import { isTextInputTarget } from "./src/hotkeys";
+import type { SidebarDropTarget } from "./src/library/mutations";
 import "./src/desktopBridge";
 
 export default function App() {
@@ -120,6 +126,8 @@ export default function App() {
     setTasks,
     customPerspectives,
     setCustomPerspectives,
+    tagRecords,
+    setTagRecords,
     settings,
     setSettings,
     hydrated,
@@ -163,7 +171,8 @@ export default function App() {
   const inspectedProject = inspectedProjectId ? projects.find((project) => project.id === inspectedProjectId) : undefined;
   const activeCustomPerspective = perspective.startsWith("custom:") ? customPerspectives.find((item) => item.id === perspective.slice(7)) ?? null : null;
   const barItems = useMemo(() => favoritePerspectives(settings, customPerspectives), [customPerspectives, settings]);
-  const knownTags = useMemo(() => knownTagsFrom(tasks), [tasks]);
+  const knownTagRecords = useMemo(() => mergeTagRecords(tagRecords, tasks), [tagRecords, tasks]);
+  const knownTags = useMemo(() => knownTagsFrom(tasks, knownTagRecords), [knownTagRecords, tasks]);
   const focusedProject = focusedProjectId ? projects.find((project) => project.id === focusedProjectId) : undefined;
 
   const visibleTasks = useMemo(() => filterVisibleTasks({
@@ -179,7 +188,8 @@ export default function App() {
     settings,
     customPerspective: activeCustomPerspective,
     pendingCleanupIds,
-  }), [tasks, projects, perspective, projectFilter, tagFilter, folderFilter, forecastDay, focusedProjectId, settings, query, activeCustomPerspective, pendingCleanupIds]);
+    tagRecords: knownTagRecords,
+  }), [tasks, projects, perspective, projectFilter, tagFilter, folderFilter, forecastDay, focusedProjectId, settings, query, activeCustomPerspective, pendingCleanupIds, knownTagRecords]);
 
   const orderedTaskIds = useMemo(() => outlineTaskIds({
     tasks: visibleTasks,
@@ -264,6 +274,9 @@ export default function App() {
     const current = tasks.find((task) => task.id === id);
     if (patch.projectId !== undefined && current && current.projectId !== patch.projectId) {
       retainInspectionIds.current = new Set([...retainInspectionIds.current, id]);
+    }
+    if (patch.tags) {
+      setTagRecords((records) => patch.tags!.reduce((next, tag) => upsertTagRecord(next, { name: tag }), records));
     }
     if (!settings.cleanUpImmediately) {
       setPendingCleanupIds((ids) => lingeringIdsAfterPatch(ids, id, patch, current));
@@ -499,6 +512,59 @@ export default function App() {
     const ids = new Set(idsForRow(id));
     copyToClipboard(toTaskPaper(tasks.filter((task) => ids.has(task.id)), tasks, projects));
   };
+  const pasteTaskPaperText = (text: string) => {
+    if (!text.trim()) return;
+    pushUndo();
+    const result = pasteTaskPaper(tasks, projects, text, {
+      afterId: selectedTaskId,
+      fallbackProjectId: defaultProjectId,
+    });
+    setTasks(result.tasks);
+    if (result.created.length === 1) setSelection(singleSelection(result.created[0]?.id ?? null));
+    else if (result.created.length) {
+      setSelection({
+        ids: result.created.map((item) => item.id),
+        anchorId: result.created[0]?.id ?? null,
+        headId: result.created[result.created.length - 1]?.id ?? null,
+      });
+    }
+    const pastedTags = result.created.flatMap((item) => item.tags);
+    if (pastedTags.length) {
+      setTagRecords((current) => pastedTags.reduce((records, tag) => upsertTagRecord(records, { name: tag }), current));
+    }
+  };
+  const pasteFromClipboard = async () => {
+    const text = await readClipboard();
+    pasteTaskPaperText(text);
+  };
+  const revealInProjects = (id?: string) => {
+    const task = tasks.find((item) => item.id === (id ?? selectedTaskId));
+    if (!task) return;
+    if (!task.projectId) {
+      navigate({ perspective: "inbox", projectFilter: null, tagFilter: null, folderFilter: null, focusedProjectId: null });
+    } else {
+      const project = projects.find((item) => item.id === task.projectId);
+      navigate({
+        perspective: "projects",
+        projectFilter: task.projectId,
+        tagFilter: null,
+        folderFilter: project?.folder ?? null,
+        focusedProjectId: null,
+      });
+    }
+    setInspectedProjectId(null);
+    setSelection(singleSelection(task.id));
+    setInspectorOpen(true);
+  };
+  const dropOnSidebar = (ids: string[], target: SidebarDropTarget) => {
+    pushUndo();
+    setTasks(applySidebarDrop(tasks, projects, ids.length ? ids : selectedTaskIds, target));
+    if (target.kind === "tag") setTagRecords((current) => upsertTagRecord(current, { name: target.tag }));
+  };
+  const changeSelectedTag = (patch: Partial<TagRecord>) => {
+    if (!tagFilter) return;
+    setTagRecords((current) => upsertTagRecord(current, { ...(knownTagRecords.find((item) => item.name === tagFilter) ?? { name: tagFilter }), ...patch, name: tagFilter }));
+  };
   const undo = () => {
     const previous = takeUndo();
     if (!previous) return;
@@ -593,6 +659,7 @@ export default function App() {
     if (!tagFilter) return;
     pushUndo();
     setTasks((current) => renameTag(current, tagFilter, nextName));
+    setTagRecords((current) => renameTagRecord(current, tagFilter, nextName));
     navigate({ perspective: "tags", tagFilter: nextName, projectFilter: null, folderFilter: null });
   };
 
@@ -738,7 +805,12 @@ export default function App() {
     undo,
     redo,
     copySelectedTaskPaper: () => { if (selectedTaskId) copySelectedTaskPaper(selectedTaskId); },
+    pasteTaskPaper: () => {
+      if (typeof document !== "undefined" && isTextInputTarget(document.activeElement)) return;
+      void pasteFromClipboard();
+    },
     convertSelectedToProject: () => convertSelectedToProject(),
+    revealInProjects: () => revealInProjects(),
     confirmPendingDelete: () => {
       if (pendingDeleteProjectId) finalizeDeleteProject(pendingDeleteProjectId);
       else if (pendingDeleteTaskIds.length) finalizeDeleteTasks(pendingDeleteTaskIds, pendingDeleteDirection);
@@ -787,6 +859,19 @@ export default function App() {
     customPerspectives,
     onCommand: handleHotkeyAction,
   });
+
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof window === "undefined") return;
+    const onPaste = (event: ClipboardEvent) => {
+      if (modalOpen || isTextInputTarget(event.target)) return;
+      const text = event.clipboardData?.getData("text/plain") ?? "";
+      if (!text.trim()) return;
+      event.preventDefault();
+      pasteTaskPaperText(text);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [modalOpen, selectedTaskId, tasks, projects, defaultProjectId]);
 
   const sidebarProjects = focusedProjectId ? projects.filter((project) => project.id === focusedProjectId) : projects;
   const forecastCounts = useMemo(() => forecastCountsFor(tasks, focusedProjectId), [focusedProjectId, tasks]);
@@ -893,6 +978,7 @@ export default function App() {
               onOpenList={() => setPerspectivesListOpen(true)}
               onOpenSettings={() => setSettingsOpen(true)}
               onDelete={deleteCustomPerspective}
+              onDropInbox={(ids) => dropOnSidebar(ids, { kind: "inbox" })}
             />
             </View>
           )}
@@ -919,6 +1005,8 @@ export default function App() {
               onFocusProject={focusProject}
               onNewActionInProject={newActionInProject}
               onDeleteProject={deleteProject}
+              tagRecords={knownTagRecords}
+              onDropOnSidebar={dropOnSidebar}
             />
             </View>
             <PaneResizeHandle
@@ -968,6 +1056,8 @@ export default function App() {
             onReviewProject={(id) => setProjects((current) => current.map((project) => project.id === id ? { ...project, lastReviewedAt: new Date().toISOString() } : project))}
             onSkipReview={skipReview}
             onConvertToProject={convertSelectedToProject}
+            onReveal={revealInProjects}
+            onChangeDates={(id, patch) => updateTask(id, patch)}
             onOpenViewMenu={() => setViewMenuOpen(true)}
             onFocusProject={focusProject}
             onSelectProject={(id) => navigate({ perspective: "projects", projectFilter: id, tagFilter: null, folderFilter: null })}
@@ -1014,6 +1104,8 @@ export default function App() {
                 onDeleteProject={() => inspectedProject && deleteProject(inspectedProject.id)}
                 onFocusProject={() => inspectedProject && focusProject(inspectedProject.id)}
                 onRenameTag={renameSelectedTag}
+                onChangeTag={changeSelectedTag}
+                tagRecords={knownTagRecords}
               />
             </View>
             </>

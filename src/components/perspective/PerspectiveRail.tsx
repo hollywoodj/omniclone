@@ -1,14 +1,15 @@
-import React from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import React, { useState } from "react";
+import { Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { ContextMenuPressable, type ContextMenuItem } from "../../contextMenu";
 import { palette, type ActivePerspective } from "../../model";
 import { formatShortcut } from "../../shortcuts";
 import { copyToClipboard } from "../../lib/clipboard";
+import { allowTaskDrop, getTaskDragData } from "../../lib/dnd";
 import { appStyles as styles } from "../../styles/appStyles";
 import { Icon, type IconName } from "../ui/Icon";
 import type { RailPerspective } from "../../perspectives/rail";
 
-export function PerspectiveRail({ current, badges, items, showTitles, shortcuts, onSelect, onEdit, onUnfavorite, onOpenList, onOpenSettings, onDelete }: {
+export function PerspectiveRail({ current, badges, items, showTitles, shortcuts, onSelect, onEdit, onUnfavorite, onOpenList, onOpenSettings, onDelete, onDropInbox }: {
   current: ActivePerspective;
   badges: Record<string, { count: number; color?: string }>;
   items: RailPerspective[];
@@ -20,7 +21,9 @@ export function PerspectiveRail({ current, badges, items, showTitles, shortcuts,
   onOpenList: () => void;
   onOpenSettings: () => void;
   onDelete: (id: string) => void;
+  onDropInbox?: (ids: string[]) => void;
 }) {
+  const [inboxHover, setInboxHover] = useState(false);
   return (
     <View style={styles.perspectiveRail}>
       <ScrollView style={styles.perspectiveRailList} showsVerticalScrollIndicator={false} contentContainerStyle={styles.perspectiveRailScroll}>
@@ -46,7 +49,25 @@ export function PerspectiveRail({ current, badges, items, showTitles, shortcuts,
               accessibilityState={{ selected }}
               accessibilityHint={formatShortcut(shortcuts[item.id])}
               onPress={() => onSelect(item.id)}
-              style={({ pressed }) => [styles.perspectiveItem, selected && (item.custom ? { backgroundColor: `${accent}20` } : styles.perspectiveItemSelected), pressed && styles.pressed]}
+              style={({ pressed }) => [
+                styles.perspectiveItem,
+                selected && (item.custom ? { backgroundColor: `${accent}20` } : styles.perspectiveItemSelected),
+                item.id === "inbox" && inboxHover && styles.sidebarRowDrop,
+                pressed && styles.pressed,
+              ]}
+              {...(item.id === "inbox" && Platform.OS === "web" ? {
+                onDragOver: (event: { preventDefault?: () => void; dataTransfer?: { dropEffect?: string } }) => {
+                  allowTaskDrop(event);
+                  setInboxHover(true);
+                },
+                onDragLeave: () => setInboxHover(false),
+                onDrop: (event: { preventDefault?: () => void; dataTransfer?: { getData: (type: string) => string } }) => {
+                  event.preventDefault?.();
+                  setInboxHover(false);
+                  const ids = getTaskDragData(event);
+                  if (ids?.length) onDropInbox?.(ids);
+                },
+              } : {})}
             >
               <View>
                 <Icon name={item.icon as IconName} size={24} color={selected ? accent : "#656269"} />
