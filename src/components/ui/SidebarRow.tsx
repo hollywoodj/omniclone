@@ -1,6 +1,7 @@
 import React, { useState } from "react";
-import { Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import { ContextMenuPressable, type ContextMenuItem } from "../../contextMenu";
+import { allowTaskDrop, getTaskDragData } from "../../lib/dnd";
 import { appStyles as styles } from "../../styles/appStyles";
 
 export function SidebarRow({
@@ -8,13 +9,23 @@ export function SidebarRow({
   items,
   style,
   children,
+  droppable,
+  onDropTasks,
   ...rest
-}: Omit<React.ComponentProps<typeof Pressable>, "style"> & { selected?: boolean; items?: ContextMenuItem[]; style?: React.ComponentProps<typeof View>["style"] }) {
+}: Omit<React.ComponentProps<typeof Pressable>, "style"> & {
+  selected?: boolean;
+  items?: ContextMenuItem[];
+  style?: React.ComponentProps<typeof View>["style"];
+  droppable?: boolean;
+  onDropTasks?: (ids: string[]) => void;
+}) {
   const [hovered, setHovered] = useState(false);
+  const [dropHover, setDropHover] = useState(false);
   const rowStyle = ({ pressed }: { pressed: boolean }) => [
     styles.sidebarRow,
     selected && styles.sidebarRowSelected,
     hovered && !selected && styles.sidebarRowHover,
+    dropHover && styles.sidebarRowDrop,
     pressed && styles.pressed,
     style,
   ];
@@ -22,15 +33,28 @@ export function SidebarRow({
     onHoverIn: () => setHovered(true),
     onHoverOut: () => setHovered(false),
   };
+  const dropProps = droppable && Platform.OS === "web" ? {
+    onDragOver: (event: { preventDefault?: () => void; dataTransfer?: { dropEffect?: string } }) => {
+      allowTaskDrop(event);
+      setDropHover(true);
+    },
+    onDragLeave: () => setDropHover(false),
+    onDrop: (event: { preventDefault?: () => void; dataTransfer?: { getData: (type: string) => string; types?: ArrayLike<string> } }) => {
+      event.preventDefault?.();
+      setDropHover(false);
+      const ids = getTaskDragData(event);
+      if (ids?.length) onDropTasks?.(ids);
+    },
+  } : {};
   if (items?.length) {
     return (
-      <ContextMenuPressable items={items} {...hoverProps} {...rest} style={rowStyle}>
+      <ContextMenuPressable items={items} {...hoverProps} {...dropProps} {...rest} style={rowStyle}>
         {children}
       </ContextMenuPressable>
     );
   }
   return (
-    <Pressable {...hoverProps} {...rest} style={rowStyle}>
+    <Pressable {...hoverProps} {...dropProps} {...rest} style={rowStyle}>
       {children}
     </Pressable>
   );

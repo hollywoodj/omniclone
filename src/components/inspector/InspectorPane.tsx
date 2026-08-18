@@ -1,12 +1,13 @@
 import React from "react";
 import { projectIsStalled } from "../../outline";
 import { remainingCountForProject, remainingCountForTag } from "../../perspectives/counts";
-import type { Project, Task } from "../../model";
+import type { Project, TagRecord, Task } from "../../model";
 import { EmptyInspector } from "../inspector/EmptyInspector";
 import { Inspector } from "../inspector/Inspector";
 import { MultiSelectInspector } from "../inspector/MultiSelectInspector";
 import { ProjectInspector } from "../inspector/ProjectInspector";
 import { TagInspector } from "../inspector/TagInspector";
+import { findTagRecord, remainingCountForTagTree } from "../../tags";
 
 export function InspectorPane({
   selectedTaskIds,
@@ -28,6 +29,8 @@ export function InspectorPane({
   onDeleteProject,
   onFocusProject,
   onRenameTag,
+  onChangeTag,
+  tagRecords,
 }: {
   selectedTaskIds: string[];
   selectedTask: Task | null;
@@ -48,6 +51,8 @@ export function InspectorPane({
   onDeleteProject: () => void;
   onFocusProject: () => void;
   onRenameTag: (name: string) => void;
+  onChangeTag: (patch: Partial<TagRecord>) => void;
+  tagRecords: TagRecord[];
 }) {
   if (selectedTaskIds.length > 1) {
     return (
@@ -82,8 +87,11 @@ export function InspectorPane({
     return (
       <TagInspector
         tag={tagFilter}
-        count={remainingCountForTag(tasks, tagFilter)}
+        record={findTagRecord(tagRecords, tagFilter)}
+        count={remainingCountForTagTree(tasks, tagFilter, tagRecords) || remainingCountForTag(tasks, tagFilter)}
+        tags={tagRecords}
         onRename={onRenameTag}
+        onChange={onChangeTag}
       />
     );
   }

@@ -1,6 +1,6 @@
 import React from "react";
 import { Pressable } from "react-native";
-import type { ActivePerspective, AppSettings, CustomPerspective, PerspectiveAvailability, PerspectiveId, Project } from "../../model";
+import type { ActivePerspective, AppSettings, CustomPerspective, OutlineColumnId, PerspectiveAvailability, PerspectiveId, Project } from "../../model";
 import { appStyles as styles } from "../../styles/appStyles";
 import { ViewOptionsPanel } from "../../viewOptions";
 
@@ -14,6 +14,7 @@ export function ViewOptionsHost({
   settings,
   onChangeAvailability,
   onChangeShowNotes,
+  onChangeOutlineColumns,
   onChangeCustom,
   onClose,
 }: {
@@ -26,6 +27,7 @@ export function ViewOptionsHost({
   settings: AppSettings;
   onChangeAvailability: (availability: PerspectiveAvailability) => void;
   onChangeShowNotes: (showNotes: boolean) => void;
+  onChangeOutlineColumns: (columns: OutlineColumnId[]) => void;
   onChangeCustom: (patch: Partial<CustomPerspective>) => void;
   onClose: () => void;
 }) {
@@ -40,6 +42,8 @@ export function ViewOptionsHost({
       onChangeAvailability={onChangeAvailability}
       showNotes={settings.showNotesInOutline}
       onChangeShowNotes={onChangeShowNotes}
+      outlineColumns={settings.outlineColumns}
+      onChangeOutlineColumns={onChangeOutlineColumns}
       onChangeCustom={onChangeCustom}
       onClose={onClose}
     />

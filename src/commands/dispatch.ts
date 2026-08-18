@@ -30,7 +30,13 @@ export const nativeMenuCommandTypes = new Set<AppCommand["type"]>([
   "undo",
   "redo",
   "copyTaskPaper",
+  "pasteTaskPaper",
   "convertToProject",
+  "revealInProjects",
+  "awaitReply",
+  "findNext",
+  "findPrevious",
+  "customizeToolbar",
 ]);
 
 export type AppCommandHandlers = {
@@ -73,7 +79,14 @@ export type AppCommandHandlers = {
   undo: () => void;
   redo: () => void;
   copySelectedTaskPaper: () => void;
+  pasteTaskPaper: () => void;
   convertSelectedToProject: () => void;
+  revealInProjects: () => void;
+  awaitReply: () => void;
+  findNext: () => void;
+  findPrevious: () => void;
+  typeSelect: (key: string) => void;
+  customizeToolbar: () => void;
   confirmPendingDelete: () => void;
   cancelTopOverlay: () => void;
 };
@@ -209,8 +222,29 @@ export function dispatchAppCommand(action: AppCommand, handlers: AppCommandHandl
     case "copyTaskPaper":
       handlers.copySelectedTaskPaper();
       break;
+    case "pasteTaskPaper":
+      handlers.pasteTaskPaper();
+      break;
     case "convertToProject":
       handlers.convertSelectedToProject();
+      break;
+    case "revealInProjects":
+      handlers.revealInProjects();
+      break;
+    case "awaitReply":
+      handlers.awaitReply();
+      break;
+    case "findNext":
+      handlers.findNext();
+      break;
+    case "findPrevious":
+      handlers.findPrevious();
+      break;
+    case "typeSelect":
+      handlers.typeSelect(action.key);
+      break;
+    case "customizeToolbar":
+      handlers.customizeToolbar();
       break;
     case "confirmDelete":
       handlers.confirmPendingDelete();

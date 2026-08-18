@@ -12,6 +12,8 @@ import {
   isBlockedSequential,
   moveSiblings,
   outdentTasks,
+  parseTaskPaperActions,
+  pasteTaskPaper,
   projectDisplayName,
   projectIsStalled,
   sidebarActionCounts,
@@ -109,6 +111,40 @@ test("repeating a daily action bumps the due date instead of completing", () => 
   const next = applyRepeat(task({ id: "a", title: "Water", due: "Today", repeat: "daily" }), now);
   assert.equal(next?.completed, false);
   assert.equal(next?.due, "Tomorrow");
+});
+
+test("repeat from completion uses every-N rules and preserves defer gap", () => {
+  const now = new Date(2026, 7, 17, 15, 0, 0);
+  const fromCompletion = applyRepeat(task({
+    id: "a",
+    title: "Ping",
+    due: "Today",
+    repeatRule: { every: 2, unit: "week", from: "completionDate", deferAnother: false },
+  }), now);
+  assert.equal(fromCompletion?.due, "Aug 31");
+
+  const withDefer = applyRepeat(task({
+    id: "b",
+    title: "Invoice",
+    due: "Today",
+    defer: "Yesterday",
+    repeatRule: { every: 1, unit: "day", from: "dueDate", deferAnother: true },
+  }), now);
+  assert.equal(withDefer?.due, "Tomorrow");
+  assert.equal(withDefer?.defer, "Today");
+});
+
+test("pastes nested TaskPaper back into actions", () => {
+  const paper = `Website:\n\t- Launch @flagged\n\t\t- Write copy @due(Today) @tags(writing)\n\t\t\tDraft the homepage`;
+  const parsed = parseTaskPaperActions(paper, new Date(2026, 7, 17, 15, 0, 0));
+  assert.equal(parsed[0]?.title, "Launch");
+  assert.equal(parsed[1]?.title, "Write copy");
+  assert.equal(parsed[1]?.depth, 1);
+  assert.deepEqual(parsed[1]?.tags, ["writing"]);
+  const pasted = pasteTaskPaper([], [project({ name: "Website" })], paper, { fallbackProjectId: null, idFactory: (prefix) => `${prefix}-x`, now: new Date(2026, 7, 17, 15, 0, 0) });
+  assert.equal(pasted.created[0]?.projectId, "p1");
+  assert.equal(pasted.created[1]?.parentId, pasted.created[0]?.id);
+  assert.match(pasted.created[1]?.note ?? "", /Draft the homepage/);
 });
 
 test("copies nested actions as TaskPaper", () => {

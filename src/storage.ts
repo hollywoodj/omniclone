@@ -1,8 +1,9 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getDb } from "./db/client";
-import { type CustomPerspective, type PersistedState, type Project, type Task } from "./model";
+import { type CustomPerspective, type PersistedState, type Project, type RepeatRule, type TagRecord, type Task, type TaskNotifications } from "./model";
 import { normalizeCustomPerspective } from "./perspectiveRules";
 import { hydrateProjectFolder } from "./outline.ts";
+import { mergeTagRecords } from "./tags.ts";
 
 const LEGACY_STORAGE_KEY = "omniclone.database.v1";
 
@@ -35,6 +36,8 @@ type TaskRow = {
   created_at: string;
   estimated_minutes?: number | null;
   repeat?: string | null;
+  repeat_rule?: string | null;
+  notifications?: string | null;
   status?: string | null;
 };
 
@@ -95,12 +98,13 @@ export async function loadDatabase(): Promise<PersistedState | null> {
     return legacy;
   }
 
-  const [projectRows, taskRows, tagRows, perspectiveRows] = await Promise.all([
+  const [projectRows, taskRows, tagRows, tagMetaRows, perspectiveRows] = await Promise.all([
     db.getAllAsync<ProjectRow>("SELECT * FROM projects"),
     db.getAllAsync<TaskRow>("SELECT * FROM tasks ORDER BY created_at ASC"),
     db.getAllAsync<{ task_id: string; name: string }>(
       "SELECT task_tags.task_id as task_id, tags.name as name FROM task_tags JOIN tags ON tags.id = task_tags.tag_id"
     ),
+    db.getAllAsync<{ name: string; parent: string | null; color: string | null; status: string | null }>("SELECT name, parent, color, status FROM tags"),
     db.getAllAsync<CustomPerspectiveRow>("SELECT * FROM custom_perspectives"),
   ]);
 
@@ -141,6 +145,8 @@ export async function loadDatabase(): Promise<PersistedState | null> {
     sortOrder: row.sort_order ?? undefined,
     estimatedMinutes: row.estimated_minutes ?? undefined,
     repeat: row.repeat === "daily" || row.repeat === "weekly" || row.repeat === "monthly" ? row.repeat : "none",
+    repeatRule: parseRepeatRule(row.repeat_rule),
+    notifications: parseNotifications(row.notifications),
     status: row.status === "onHold" || row.status === "dropped" ? row.status : "active",
   }));
 
@@ -165,7 +171,14 @@ export async function loadDatabase(): Promise<PersistedState | null> {
     rules: parseRules(row.rules),
   }));
 
-  return { version: 2, projects, tasks, customPerspectives };
+  const tagRecords: TagRecord[] = tagMetaRows.map((row) => ({
+    name: row.name,
+    parent: row.parent || undefined,
+    color: row.color || undefined,
+    status: row.status === "onHold" || row.status === "dropped" ? row.status : "active",
+  }));
+
+  return { version: 2, projects, tasks, customPerspectives, tagRecords };
 }
 
 export async function saveDatabase(state: PersistedState): Promise<void> {
@@ -195,17 +208,28 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
     }
 
     const tagIds = new Map<string, number>();
-    const getTagId = async (name: string) => {
+    const getTagId = async (name: string, record?: TagRecord) => {
       const existing = tagIds.get(name);
       if (existing !== undefined) return existing;
-      const result = await db.runAsync("INSERT INTO tags (name) VALUES (?)", name);
+      const result = await db.runAsync(
+        "INSERT INTO tags (name, parent, color, status) VALUES (?, ?, ?, ?)",
+        name,
+        record?.parent ?? null,
+        record?.color ?? null,
+        record?.status ?? "active",
+      );
       tagIds.set(name, result.lastInsertRowId);
       return result.lastInsertRowId;
     };
 
+    const records = mergeTagRecords(state.tagRecords, state.tasks);
+    for (const record of records) {
+      await getTagId(record.name, record);
+    }
+
     for (const task of state.tasks) {
       await db.runAsync(
-        "INSERT INTO tasks (id, import_key, title, project_id, parent_id, sort_order, due, defer, note, flagged, completed, completed_at, created_at, estimated_minutes, repeat, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO tasks (id, import_key, title, project_id, parent_id, sort_order, due, defer, note, flagged, completed, completed_at, created_at, estimated_minutes, repeat, repeat_rule, notifications, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         task.id,
         task.importKey ?? null,
         task.title,
@@ -221,6 +245,8 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
         task.createdAt,
         task.estimatedMinutes ?? null,
         task.repeat ?? "none",
+        task.repeatRule ? JSON.stringify(task.repeatRule) : null,
+        task.notifications ? JSON.stringify(task.notifications) : null,
         task.status ?? "active"
       );
       for (const tagName of task.tags) {
@@ -254,6 +280,28 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
       );
     }
   });
+}
+
+function parseRepeatRule(raw: string | null | undefined): RepeatRule | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as RepeatRule;
+    if (!parsed || typeof parsed.every !== "number" || !parsed.unit || !parsed.from) return undefined;
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseNotifications(raw: string | null | undefined): TaskNotifications | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as TaskNotifications;
+    if (!parsed || !Array.isArray(parsed.due) || !Array.isArray(parsed.defer)) return undefined;
+    return parsed;
+  } catch {
+    return undefined;
+  }
 }
 
 function parseRules(raw: string | undefined): CustomPerspective["rules"] {

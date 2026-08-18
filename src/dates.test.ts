@@ -16,6 +16,17 @@ import {
   reviewStatusText,
   todayKey,
   completionGroupLabel,
+  applyDueTimePreset,
+  dueTimePreset,
+  setCalendarDate,
+  calendarMonth,
+  outlineDueLabel,
+  completionBucket,
+  nextReviewDate,
+  nextReviewLabel,
+  lastReviewedFromNextReview,
+  lastIntervalDays,
+  taskMatchesFocus,
 } from "./dates.ts";
 import type { Project } from "./model.ts";
 
@@ -54,6 +65,20 @@ test("builds a live forecast week from today", () => {
   assert.equal(week[0]?.weekday, "MON");
   assert.equal(week[0]?.date, 17);
   assert.equal(week[6]?.key, "2026-08-23");
+});
+
+test("applies morning and calendar times onto due labels", () => {
+  assert.equal(applyDueTimePreset("Today", "morning", now), "Today, 9:00 AM");
+  assert.equal(applyDueTimePreset("Today, 9:00 AM", "evening", now), "Today, 5:00 PM");
+  assert.equal(applyDueTimePreset("Tomorrow, 5:00 PM", "none", now), "Tomorrow");
+  assert.equal(dueTimePreset("Today, 9:00 AM", now), "morning");
+  const picked = setCalendarDate("Today, 5:00 PM", new Date(2026, 7, 22), now);
+  assert.equal(picked, "Aug 22, 5:00 PM");
+  const month = calendarMonth(2026, 7);
+  assert.equal(month.length, 42);
+  assert.equal(month[0]?.day, 26);
+  assert.equal(month[6]?.day, 1);
+  assert.equal(outlineDueLabel("Today, 5:00 PM", true, now), "5:00 PM");
 });
 
 test("creates Today/Tomorrow/Weekend/Next Week presets", () => {
@@ -110,4 +135,31 @@ test("Forecast Today includes flagged actions that have no due date", () => {
   assert.equal(isForecastItem(dated, todayKey(now), now), false);
   assert.equal(completionGroupLabel(now.toISOString(), now), "Today");
   assert.equal(completionGroupLabel(new Date(2026, 7, 16).toISOString(), now), "Yesterday");
+});
+
+test("dropped actions sit in their own Completed group", () => {
+  assert.equal(completionBucket({ completed: true, completedAt: now.toISOString(), status: "active" }, now), "Today");
+  assert.equal(completionBucket({ completed: false, status: "dropped" }, now), "Dropped");
+});
+
+test("next review date can be edited by backing out last reviewed", () => {
+  const project: Project = { id: "p1", name: "Site", color: "#000", note: "", reviewIntervalDays: 7, lastReviewedAt: new Date(2026, 7, 10).toISOString() };
+  assert.equal(nextReviewLabel(project, now), "Today");
+  const last = lastReviewedFromNextReview(project, "Aug 24", now);
+  assert.equal(nextReviewDate({ ...project, lastReviewedAt: last }, now).getDate(), 24);
+});
+
+test("last interval falls back when defer and due are missing", () => {
+  assert.equal(lastIntervalDays({ due: "Aug 20", defer: "Aug 17" }, 3, now), 3);
+  assert.equal(lastIntervalDays({}, 5, now), 5);
+});
+
+test("focus includes descendant folder projects", () => {
+  const projects: Project[] = [
+    { id: "p1", name: "Site", color: "#000", note: "", reviewIntervalDays: 7 },
+    { id: "p2", name: "Home", folder: "Personal", color: "#000", note: "", reviewIntervalDays: 7 },
+  ];
+  const focus = { focusedProjectIds: [], focusedFolderPaths: ["Personal"] };
+  assert.equal(taskMatchesFocus({ projectId: "p2" }, projects, focus), true);
+  assert.equal(taskMatchesFocus({ projectId: "p1" }, projects, focus), false);
 });

@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
-import { defaultSettings, palette, perspectives, type AppSettings, type PerspectiveId } from "../../model";
+import { defaultToolbarButtons, outlineColumnLabels, outlineColumnOrder, palette, perspectives, toolbarButtonLabels, type AppSettings, type PerspectiveId } from "../../model";
 import { appStyles as styles } from "../../styles/appStyles";
 import { Icon, type IconName } from "../ui/Icon";
 import { TrafficLights } from "../ui/TrafficLights";
@@ -144,6 +144,69 @@ export function SettingsModal({
                     <SettingsRow title="Show notes in outline" detail="Display action notes under titles, matching OmniFocus View Options.">
                       <Switch value={settings.showNotesInOutline} onValueChange={(showNotesInOutline) => onChange({ showNotesInOutline })} trackColor={{ true: palette.purple }} />
                     </SettingsRow>
+                  </View>
+                  <Text style={styles.settingsGroupLabel}>THEME</Text>
+                  <View style={styles.settingsGroup}>
+                    <View style={styles.settingsStackedRow}>
+                      <Text style={styles.settingsRowTitle}>Appearance</Text>
+                      <Text style={styles.settingsRowDetail}>Match OmniFocus 4 light, dark, or system appearance.</Text>
+                      <RuleChoices
+                        value={settings.appearance}
+                        onChange={(appearance) => onChange({ appearance: appearance as AppSettings["appearance"] })}
+                        options={[{ label: "System", value: "system" }, { label: "Light", value: "light" }, { label: "Dark", value: "dark" }]}
+                      />
+                    </View>
+                  </View>
+                  <Text style={styles.settingsGroupLabel}>OUTLINE COLUMNS</Text>
+                  <View style={styles.settingsGroup}>
+                    {outlineColumnOrder.map((column) => {
+                      const enabled = settings.outlineColumns.includes(column);
+                      return (
+                        <SettingsRow key={column} title={outlineColumnLabels[column]} detail={column === "project" ? "Hidden when the outline is grouped by project." : undefined}>
+                          <Switch
+                            value={enabled}
+                            onValueChange={(value) => onChange({
+                              outlineColumns: value
+                                ? outlineColumnOrder.filter((item) => item === column || settings.outlineColumns.includes(item))
+                                : settings.outlineColumns.filter((item) => item !== column),
+                            })}
+                            trackColor={{ true: palette.purple }}
+                          />
+                        </SettingsRow>
+                      );
+                    })}
+                  </View>
+                  <Text style={styles.settingsGroupLabel}>TOOLBAR</Text>
+                  <View style={styles.settingsGroup}>
+                    {defaultToolbarButtons.map((button) => {
+                      const enabled = settings.toolbarButtons.includes(button);
+                      return (
+                        <SettingsRow key={button} title={toolbarButtonLabels[button]}>
+                          <Switch
+                            value={enabled}
+                            onValueChange={(value) => {
+                              const next = value
+                                ? defaultToolbarButtons.filter((item) => item === button || settings.toolbarButtons.includes(item))
+                                : settings.toolbarButtons.filter((item) => item !== button);
+                              onChange({ toolbarButtons: next.length ? next : defaultToolbarButtons });
+                            }}
+                            trackColor={{ true: palette.purple }}
+                          />
+                        </SettingsRow>
+                      );
+                    })}
+                  </View>
+                  <Text style={styles.settingsGroupLabel}>COMPLETE</Text>
+                  <View style={styles.settingsGroup}>
+                    <View style={styles.settingsStackedRow}>
+                      <Text style={styles.settingsRowTitle}>Await reply interval</Text>
+                      <Text style={styles.settingsRowDetail}>Days to defer the follow-up when an action has no last interval.</Text>
+                      <RuleChoices
+                        value={String(settings.awaitReplyDays)}
+                        onChange={(value) => onChange({ awaitReplyDays: Number(value) })}
+                        options={[{ label: "1 day", value: "1" }, { label: "3 days", value: "3" }, { label: "7 days", value: "7" }]}
+                      />
+                    </View>
                   </View>
                   <Text style={styles.settingsGroupLabel}>SIDEBAR</Text>
                   <View style={styles.settingsGroup}>

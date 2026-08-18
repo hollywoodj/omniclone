@@ -41,7 +41,7 @@ test("perspective badges ignore completed inbox items and respect focus", () => 
     { id: "p1", name: "Site", color: "#000", note: "", reviewIntervalDays: 7 },
     { id: "p2", name: "Home", color: "#000", note: "", reviewIntervalDays: 7, lastReviewedAt: now.toISOString() },
   ];
-  const badges = perspectiveBadgesFor(tasks, projects, "p1", now);
+  const badges = perspectiveBadgesFor(tasks, projects, { focusedProjectIds: ["p1"], focusedFolderPaths: [] }, now);
   assert.equal(badges.inbox.count, 1);
   assert.equal(badges.flagged.count, 0);
   assert.equal(badges.forecast.count, 1);

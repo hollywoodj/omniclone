@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { Platform } from "react-native";
 import "../desktopBridge";
 import { nativeMenuCommandTypes, type AppCommand } from "../commands/dispatch";
-import { matchOmniFocusHotkey } from "../hotkeys";
+import { isTextInputTarget, matchOmniFocusHotkey } from "../hotkeys";
 import type { CustomPerspective } from "../model";
 import { toElectronAccelerator } from "../shortcuts";
 
@@ -29,7 +29,15 @@ export function useAppHotkeys(options: {
         perspectiveShortcuts: options.perspectiveShortcuts,
         shortcutCapture: !!options.shortcutRecordingId,
       });
-      if (!action) return;
+      if (!action) {
+        if (options.modalOpen || isTextInputTarget(event.target)) return;
+        const printable = event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey;
+        if (printable && event.key !== " " && event.key !== "f" && event.key !== "F") {
+          event.preventDefault();
+          options.onCommand({ type: "typeSelect", key: event.key });
+        }
+        return;
+      }
       if (nativeMenu && nativeMenuCommandTypes.has(action.type)) return;
       if (options.modalOpen && action.type !== "cancel" && action.type !== "confirmDelete") return;
       event.preventDefault();

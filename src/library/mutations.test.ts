@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { CustomPerspective, Project, Task } from "../model.ts";
 import {
+  applyCompleteAndAwaitReply,
   applyCompleteToggle,
   applyFlagToggle,
+  applySidebarDrop,
   applyTaskPatch,
   deleteTaskIds,
   duplicateTasksByIds,
@@ -127,6 +129,19 @@ test("pending delete copy describes projects and multi-select", () => {
   assert.equal(multi.title, "2 actions");
 });
 
+test("dropping on a tag assigns it and folders take the first project", () => {
+  const tasks = [task({ id: "a", title: "Inbox", projectId: null })];
+  const tagged = applySidebarDrop(tasks, [ { id: "p1", name: "Site", color: "#000", note: "", reviewIntervalDays: 7 } ], ["a"], { kind: "tag", tag: "errand" });
+  assert.deepEqual(tagged[0]?.tags, ["errand"]);
+  const moved = applySidebarDrop(tagged, [
+    { id: "p2", name: "Home", folder: "Personal", color: "#000", note: "", reviewIntervalDays: 7 },
+    { id: "p1", name: "Site", color: "#000", note: "", reviewIntervalDays: 7 },
+  ], ["a"], { kind: "folder", folder: "Personal" });
+  assert.equal(moved[0]?.projectId, "p2");
+  const inbox = applySidebarDrop(moved, [], ["a"], { kind: "inbox" });
+  assert.equal(inbox[0]?.projectId, null);
+});
+
 test("pruning a missing project is a no-op for unrelated rules", () => {
   const custom: CustomPerspective[] = [{
     id: "c1",
@@ -143,4 +158,16 @@ test("pruning a missing project is a no-op for unrelated rules", () => {
   }];
   const next = pruneProjectFromPerspectives(custom, "p1");
   assert.equal(next[0]?.rules[0]?.kind, "flagged");
+});
+
+test("complete and await reply checks off the original and defers a follow-up", () => {
+  const now = new Date(2026, 7, 17, 15, 0, 0);
+  const tasks = [task({ id: "a", title: "Email Sam", due: "Today", defer: "Yesterday" })];
+  const next = applyCompleteAndAwaitReply(tasks, ["a"], 3, now, () => "follow");
+  const original = next.find((item) => item.id === "a");
+  const follow = next.find((item) => item.id === "follow");
+  assert.equal(original?.completed, true);
+  assert.equal(follow?.title, "Await reply: Email Sam");
+  assert.equal(follow?.defer, "Tomorrow");
+  assert.equal(follow?.completed, false);
 });

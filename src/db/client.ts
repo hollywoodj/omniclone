@@ -29,8 +29,10 @@ CREATE TABLE IF NOT EXISTS tasks (
   completed_at TEXT,
   parent_id TEXT,
   sort_order INTEGER,
-  estimated_minutes INTEGER,
+      estimated_minutes INTEGER,
   repeat TEXT NOT NULL DEFAULT 'none',
+  repeat_rule TEXT,
+  notifications TEXT,
   status TEXT NOT NULL DEFAULT 'active',
   created_at TEXT NOT NULL
 );
@@ -38,7 +40,10 @@ CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id);
 
 CREATE TABLE IF NOT EXISTS tags (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL UNIQUE
+  name TEXT NOT NULL UNIQUE,
+  parent TEXT,
+  color TEXT,
+  status TEXT NOT NULL DEFAULT 'active'
 );
 
 CREATE TABLE IF NOT EXISTS task_tags (
@@ -79,6 +84,7 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
       await migrateCustomPerspectives(db);
       await migrateTasks(db);
       await migrateProjects(db);
+      await migrateTags(db);
       return db;
     });
   }
@@ -94,6 +100,8 @@ async function migrateTasks(db: SQLite.SQLiteDatabase) {
     ["sort_order", "INTEGER"],
     ["estimated_minutes", "INTEGER"],
     ["repeat", "TEXT NOT NULL DEFAULT 'none'"],
+    ["repeat_rule", "TEXT"],
+    ["notifications", "TEXT"],
     ["status", "TEXT NOT NULL DEFAULT 'active'"],
   ];
   for (const [name, definition] of add) {
@@ -107,6 +115,14 @@ async function migrateProjects(db: SQLite.SQLiteDatabase) {
   if (!names.has("status")) await db.execAsync("ALTER TABLE projects ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
   if (!names.has("type")) await db.execAsync("ALTER TABLE projects ADD COLUMN type TEXT NOT NULL DEFAULT 'parallel'");
   if (!names.has("folder")) await db.execAsync("ALTER TABLE projects ADD COLUMN folder TEXT");
+}
+
+async function migrateTags(db: SQLite.SQLiteDatabase) {
+  const columns = await db.getAllAsync<{ name: string }>("PRAGMA table_info(tags)");
+  const names = new Set(columns.map((column) => column.name));
+  if (!names.has("parent")) await db.execAsync("ALTER TABLE tags ADD COLUMN parent TEXT");
+  if (!names.has("color")) await db.execAsync("ALTER TABLE tags ADD COLUMN color TEXT");
+  if (!names.has("status")) await db.execAsync("ALTER TABLE tags ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
 }
 
 async function migrateCustomPerspectives(db: SQLite.SQLiteDatabase) {

@@ -1,4 +1,4 @@
-import type { ActivePerspective, PerspectiveAvailability, Project, Task } from "./model";
+import { dueTimeHours, type ActivePerspective, type DueTimePreset, type PerspectiveAvailability, type Project, type Task } from "./model.ts";
 
 const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const weekdayShort = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
@@ -62,12 +62,21 @@ export function parseOmniTimestamp(raw: string): Date | undefined {
   return undefined;
 }
 
-function formatClock(date: Date) {
+export function formatClock(date: Date) {
   const hours = date.getHours();
   const minutes = date.getMinutes();
   const period = hours >= 12 ? "PM" : "AM";
   const hour12 = hours % 12 || 12;
   return minutes ? `${hour12}:${pad(minutes)} ${period}` : `${hour12}:00 ${period}`;
+}
+
+export function dateHasTime(date: Date) {
+  return date.getHours() !== 0 || date.getMinutes() !== 0 || date.getSeconds() !== 0;
+}
+
+export function formatDueLabel(date: Date, now = new Date()) {
+  const label = relativeDayLabel(date, now);
+  return dateHasTime(date) ? `${label}, ${formatClock(date)}` : label;
 }
 
 function relativeDayLabel(date: Date, now: Date) {
@@ -86,13 +95,21 @@ export function formatOmniFocusDate(raw: string, now = new Date()): string | und
   if (!value) return undefined;
   const parsed = parseOmniTimestamp(value);
   if (!parsed) return value;
-  const hasTime = parsed.getHours() !== 0 || parsed.getMinutes() !== 0 || parsed.getSeconds() !== 0;
-  const label = relativeDayLabel(parsed, now);
-  return hasTime ? `${label}, ${formatClock(parsed)}` : label;
+  return formatDueLabel(parsed, now);
 }
 
 export function formatDateLabel(date: Date, now = new Date()) {
   return relativeDayLabel(date, now);
+}
+
+export function lastIntervalDays(task: Pick<Task, "due" | "defer">, fallback: number, now = new Date()) {
+  const due = parseDueLabel(task.due, now);
+  const defer = parseDueLabel(task.defer, now);
+  if (due && defer) {
+    const days = dayDelta(due, defer);
+    if (days > 0) return days;
+  }
+  return Math.max(1, fallback);
 }
 
 export function parseDueLabel(raw: string | undefined, now = new Date()): Date | undefined {
@@ -199,6 +216,72 @@ export function duePresetLabel(kind: "today" | "tomorrow" | "weekend" | "nextWee
   return formatDateLabel(addDays(now, 7), now);
 }
 
+export type CalendarCell = {
+  key: string;
+  date: Date;
+  day: number;
+  inMonth: boolean;
+};
+
+export function calendarMonth(year: number, month: number): CalendarCell[] {
+  const first = new Date(year, month, 1);
+  const start = new Date(year, month, 1 - first.getDay());
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = addDays(start, index);
+    return {
+      key: dayKey(date),
+      date,
+      day: date.getDate(),
+      inMonth: date.getMonth() === month,
+    };
+  });
+}
+
+export function dueTimePreset(label: string | undefined, now = new Date()): DueTimePreset | "custom" {
+  const date = parseDueLabel(label, now);
+  if (!date || !dateHasTime(date)) return "none";
+  const hours = date.getHours();
+  const minutes = date.getMinutes();
+  if (hours === dueTimeHours.morning.hours && minutes === dueTimeHours.morning.minutes) return "morning";
+  if (hours === dueTimeHours.afternoon.hours && minutes === dueTimeHours.afternoon.minutes) return "afternoon";
+  if (hours === dueTimeHours.evening.hours && minutes === dueTimeHours.evening.minutes) return "evening";
+  return "custom";
+}
+
+export function withTimeOnLabel(label: string | undefined, hours: number, minutes: number, now = new Date()) {
+  const base = parseDueLabel(label, now) ?? startOfLocalDay(now);
+  return formatDueLabel(new Date(base.getFullYear(), base.getMonth(), base.getDate(), hours, minutes), now);
+}
+
+export function clearTimeOnLabel(label: string | undefined, now = new Date()) {
+  const date = parseDueLabel(label, now);
+  if (!date) return label;
+  return formatDateLabel(date, now);
+}
+
+export function applyDueTimePreset(label: string | undefined, preset: DueTimePreset, now = new Date()) {
+  if (preset === "none") return clearTimeOnLabel(label, now);
+  const clock = dueTimeHours[preset];
+  return withTimeOnLabel(label, clock.hours, clock.minutes, now);
+}
+
+export function setCalendarDate(label: string | undefined, next: Date, now = new Date()) {
+  const current = parseDueLabel(label, now);
+  const hours = current && dateHasTime(current) ? current.getHours() : 0;
+  const minutes = current && dateHasTime(current) ? current.getMinutes() : 0;
+  return formatDueLabel(new Date(next.getFullYear(), next.getMonth(), next.getDate(), hours, minutes), now);
+}
+
+export function outlineDueLabel(label: string | undefined, compact = false, now = new Date()) {
+  if (!label) return undefined;
+  const date = parseDueLabel(label, now);
+  if (!date) return label;
+  if (!compact || !dateHasTime(date)) return formatDueLabel(date, now);
+  const delta = dayDelta(date, now);
+  if (delta === 0) return formatClock(date);
+  return formatDueLabel(date, now);
+}
+
 export function forecastWeek(now = new Date(), count = 7): ForecastDay[] {
   const start = startOfLocalDay(now);
   return Array.from({ length: count }, (_, index) => {
@@ -232,7 +315,7 @@ export function isForecastItem(task: Pick<Task, "flagged" | "due" | "completed">
   return isFlaggedOnForecastToday(task, day, now);
 }
 
-export const completionGroupOrder = ["Today", "Yesterday", "This Week", "Last Week", "Older", "Unknown"] as const;
+export const completionGroupOrder = ["Today", "Yesterday", "This Week", "Last Week", "Older", "Unknown", "Dropped"] as const;
 export type CompletionGroup = (typeof completionGroupOrder)[number];
 
 export function completionGroupLabel(iso: string | undefined, now = new Date()): CompletionGroup {
@@ -247,21 +330,84 @@ export function completionGroupLabel(iso: string | undefined, now = new Date()):
   return "Older";
 }
 
-export function projectDueForReview(project: Project, now = new Date()) {
-  if (!project.lastReviewedAt) return true;
+export function completionBucket(task: Pick<Task, "completed" | "completedAt" | "status">, now = new Date()): CompletionGroup {
+  if ((task.status ?? "active") === "dropped" && !task.completed) return "Dropped";
+  return completionGroupLabel(task.completedAt, now);
+}
+
+export function nextReviewDate(project: Project, now = new Date()) {
+  if (!project.lastReviewedAt) return startOfLocalDay(now);
   const last = new Date(project.lastReviewedAt);
-  if (Number.isNaN(last.getTime())) return true;
-  const next = addDays(startOfLocalDay(last), project.reviewIntervalDays);
-  return startOfLocalDay(now).getTime() >= next.getTime();
+  if (Number.isNaN(last.getTime())) return startOfLocalDay(now);
+  return addDays(startOfLocalDay(last), project.reviewIntervalDays);
+}
+
+export function nextReviewLabel(project: Project, now = new Date()) {
+  return formatDueLabel(nextReviewDate(project, now), now);
+}
+
+export function lastReviewedFromNextReview(project: Project, nextLabel: string | undefined, now = new Date()) {
+  const next = parseDueLabel(nextLabel, now);
+  if (!next) return project.lastReviewedAt;
+  return addDays(startOfLocalDay(next), -project.reviewIntervalDays).toISOString();
+}
+
+export function projectDueForReview(project: Project, now = new Date()) {
+  return startOfLocalDay(now).getTime() >= startOfLocalDay(nextReviewDate(project, now)).getTime();
 }
 
 export function reviewStatusText(project: Project, now = new Date()) {
-  if (!project.lastReviewedAt) return `Never reviewed · every ${project.reviewIntervalDays} days`;
+  if (!project.lastReviewedAt) return `Never reviewed · next ${nextReviewLabel(project, now)} · every ${project.reviewIntervalDays} days`;
   const last = new Date(project.lastReviewedAt);
   if (Number.isNaN(last.getTime())) return `Review every ${project.reviewIntervalDays} days`;
   const ago = Math.max(0, -dayDelta(last, now));
   const lastLabel = ago === 0 ? "today" : ago === 1 ? "yesterday" : `${ago} days ago`;
-  return `Last reviewed ${lastLabel} · every ${project.reviewIntervalDays} days`;
+  return `Last reviewed ${lastLabel} · next ${nextReviewLabel(project, now)} · every ${project.reviewIntervalDays} days`;
+}
+
+export type FocusState = {
+  focusedProjectIds: string[];
+  focusedFolderPaths: string[];
+};
+
+export const emptyFocus = (): FocusState => ({ focusedProjectIds: [], focusedFolderPaths: [] });
+
+export function isFocusActive(focus: FocusState) {
+  return focus.focusedProjectIds.length > 0 || focus.focusedFolderPaths.length > 0;
+}
+
+function sameIdSet(a: string[], b: string[]) {
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  return b.every((id) => set.has(id));
+}
+
+export function folderMatchesFocus(folder: string | undefined, paths: string[]) {
+  if (!folder || !paths.length) return false;
+  return paths.some((path) => folder === path || folder.startsWith(`${path} : `));
+}
+
+export function projectMatchesFocus(project: Project, focus: FocusState) {
+  if (!isFocusActive(focus)) return true;
+  if (focus.focusedProjectIds.includes(project.id)) return true;
+  return folderMatchesFocus(project.folder, focus.focusedFolderPaths);
+}
+
+export function taskMatchesFocus(task: Pick<Task, "projectId">, projects: Project[], focus: FocusState) {
+  if (!isFocusActive(focus)) return true;
+  if (task.projectId && focus.focusedProjectIds.includes(task.projectId)) return true;
+  const project = projects.find((item) => item.id === task.projectId);
+  return !!project && projectMatchesFocus(project, focus);
+}
+
+export function focusLabel(projects: Project[], focus: FocusState) {
+  const names = [
+    ...focus.focusedFolderPaths,
+    ...focus.focusedProjectIds.map((id) => projects.find((project) => project.id === id)?.name).filter((name): name is string => !!name),
+  ];
+  if (!names.length) return "";
+  if (names.length <= 2) return names.join(" & ");
+  return `${names.length} items`;
 }
 
 export type LocationState = {
@@ -270,7 +416,8 @@ export type LocationState = {
   tagFilter: string | null;
   folderFilter: string | null;
   forecastDay: ForecastDayKey;
-  focusedProjectId: string | null;
+  focusedProjectIds: string[];
+  focusedFolderPaths: string[];
 };
 
 export function sameLocation(a: LocationState, b: LocationState) {
@@ -279,5 +426,6 @@ export function sameLocation(a: LocationState, b: LocationState) {
     && a.tagFilter === b.tagFilter
     && a.folderFilter === b.folderFilter
     && a.forecastDay === b.forecastDay
-    && a.focusedProjectId === b.focusedProjectId;
+    && sameIdSet(a.focusedProjectIds, b.focusedProjectIds)
+    && sameIdSet(a.focusedFolderPaths, b.focusedFolderPaths);
 }

@@ -10,7 +10,7 @@ import {
 } from "./model";
 import { formatShortcut } from "./shortcuts";
 
-export type MenuCommand = HotkeyAction | { type: "importOmniFocus" } | { type: "toggleTitles" };
+export type MenuCommand = HotkeyAction | { type: "importOmniFocus" } | { type: "toggleTitles" } | { type: "customizeToolbar" };
 
 type MenuEntry = {
   id: string;
@@ -80,8 +80,11 @@ export function buildAppMenus(options: {
         { id: "redo", label: "Redo", shortcut: "⇧⌘Z", command: { type: "redo" } },
         { id: "sep-edit", separator: true },
         { id: "copy-paper", label: "Copy as TaskPaper", shortcut: "⇧⌘C", command: { type: "copyTaskPaper" } },
+        { id: "paste-paper", label: "Paste", shortcut: "⌘V", command: { type: "pasteTaskPaper" } },
         { id: "sep-find", separator: true },
         { id: "find", label: "Find", shortcut: "⌘F", command: { type: "toggleSearch" } },
+        { id: "find-next", label: "Find Next", shortcut: "⌘G", command: { type: "findNext" } },
+        { id: "find-prev", label: "Find Previous", shortcut: "⇧⌘G", command: { type: "findPrevious" } },
       ],
     },
     {
@@ -100,6 +103,8 @@ export function buildAppMenus(options: {
         { id: "sep-view-3", separator: true },
         { id: "expand", label: "Expand All", shortcut: "⌥⌘9", command: { type: "expandAll" } },
         { id: "collapse", label: "Collapse All", shortcut: "⌥⌘0", command: { type: "collapseAll" } },
+        { id: "sep-view-4", separator: true },
+        { id: "toolbar", label: "Customize Toolbar…", command: { type: "customizeToolbar" } },
       ],
     },
     {
@@ -111,6 +116,8 @@ export function buildAppMenus(options: {
         { id: "indent", label: "Indent", shortcut: "⇥", command: { type: "indent" } },
         { id: "outdent", label: "Outdent", shortcut: "⇧⇥", command: { type: "outdent" } },
         { id: "convert", label: "Convert to Project", command: { type: "convertToProject" } },
+        { id: "reveal", label: "Show in Projects", command: { type: "revealInProjects" } },
+        { id: "await", label: "Complete and Await Reply", command: { type: "awaitReply" } },
         { id: "move-up", label: "Move Up", shortcut: "⌥⌘↑", command: { type: "moveRow", direction: "up" } },
         { id: "move-down", label: "Move Down", shortcut: "⌥⌘↓", command: { type: "moveRow", direction: "down" } },
         { id: "sep-org-2", separator: true },
