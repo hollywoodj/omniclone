@@ -60,12 +60,18 @@ export function ProjectInspector({ project, remainingCount, stalled, onChange, o
           </View>
           <FieldLabel>Status</FieldLabel>
           <View style={styles.datePresets}>
-            {([{ id: "active", label: "Active" }, { id: "onHold", label: "On Hold" }, { id: "dropped", label: "Dropped" }] as const).map((item) => (
+            {([{ id: "active", label: "Active" }, { id: "onHold", label: "On Hold" }, { id: "done", label: "Done" }, { id: "dropped", label: "Dropped" }] as const).map((item) => (
               <Pressable key={item.id} onPress={() => onChange({ status: item.id })} style={[styles.datePreset, (project.status ?? "active") === item.id && styles.datePresetSelected]}>
                 <Text style={[styles.datePresetText, (project.status ?? "active") === item.id && styles.datePresetTextSelected]}>{item.label}</Text>
               </Pressable>
             ))}
           </View>
+          <Pressable onPress={() => onChange({ completeWithLastAction: !project.completeWithLastAction })} style={styles.toggleRow}>
+            <Text style={styles.infoLabel}>Complete with last action</Text>
+            <View style={[styles.toggleTrack, project.completeWithLastAction && styles.toggleTrackOn]}>
+              <View style={[styles.toggleThumb, project.completeWithLastAction && styles.toggleThumbOn]} />
+            </View>
+          </Pressable>
         </View>
         <View style={styles.inspectorSection}>
           <Text style={styles.inspectorSectionTitle}>NOTE</Text>

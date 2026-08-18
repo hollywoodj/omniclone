@@ -64,6 +64,7 @@ export function Outline({
   onInspectProject,
   onNewActionInProject,
   onDeleteProject,
+  onDuplicateProject,
   onImport,
   onMarqueeStart,
   onMarqueeSelect,
@@ -118,6 +119,7 @@ export function Outline({
   onInspectProject: (id: string) => void;
   onNewActionInProject: (id: string) => void;
   onDeleteProject: (id: string) => void;
+  onDuplicateProject?: (id: string) => void;
   onImport: () => void;
   onMarqueeStart: () => void;
   onMarqueeSelect: (ids: string[], additive: boolean) => void;
@@ -159,7 +161,7 @@ export function Outline({
     { id: "view-options", label: "View Options", icon: "tune-variant", shortcut: "⇧⌘V", onPress: onOpenViewMenu },
     { id: "new-action", label: "New Action", icon: "plus", shortcut: "⌘N", onPress: onNewTask },
   ];
-  const projectHandlers = { onFocusProject, onNewActionInProject, onDeleteProject, onInspectProject, onOpenProject: onSelectProject };
+  const projectHandlers = { onFocusProject, onNewActionInProject, onDeleteProject, onDuplicateProject, onInspectProject, onOpenProject: onSelectProject };
   const groupBy = customPerspective ? effectiveGroupBy(customPerspective) : null;
   const hideProjectColumn = groupBy === "project" || (!customPerspective && (perspective === "projects" || perspective === "review"));
   const columns = visibleOutlineColumns(settings.outlineColumns, hideProjectColumn);

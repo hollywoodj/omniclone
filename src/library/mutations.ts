@@ -148,6 +148,58 @@ export function duplicateTasksByIds(
   return { tasks: next, copies };
 }
 
+export function duplicateProjectById(
+  projects: Project[],
+  tasks: Task[],
+  projectId: string,
+  idFactory: (prefix: string) => string = makeId,
+  now = new Date(),
+): { projects: Project[]; tasks: Task[]; project: Project } | null {
+  const original = projects.find((project) => project.id === projectId);
+  if (!original) return null;
+  const project: Project = {
+    ...original,
+    id: idFactory("project"),
+    importKey: undefined,
+    name: `${original.name} Copy`,
+  };
+  const originals = tasks.filter((task) => task.projectId === projectId);
+  const idMap = new Map(originals.map((task) => [task.id, idFactory("task")]));
+  const copies: Task[] = originals.map((task) => ({
+    ...task,
+    id: idMap.get(task.id) ?? idFactory("task"),
+    importKey: undefined,
+    projectId: project.id,
+    parentId: task.parentId ? idMap.get(task.parentId) ?? null : task.parentId,
+    createdAt: now.toISOString(),
+    completed: false,
+    completedAt: undefined,
+    attachments: task.attachments?.map((item) => ({ ...item, id: idFactory("file") })),
+  }));
+  const index = projects.findIndex((item) => item.id === projectId);
+  const nextProjects = [...projects];
+  nextProjects.splice(index >= 0 ? index + 1 : nextProjects.length, 0, project);
+  return { projects: nextProjects, tasks: [...tasks, ...copies], project };
+}
+
+export function applyCompleteWithLastAction(projects: Project[], tasks: Task[]): Project[] {
+  let changed = false;
+  const next = projects.map((project) => {
+    if (!project.completeWithLastAction) return project;
+    const remaining = tasks.some((task) => task.projectId === project.id && !task.completed && (task.status ?? "active") !== "dropped");
+    if ((project.status ?? "active") === "active" && !remaining) {
+      changed = true;
+      return { ...project, status: "done" as const };
+    }
+    if (project.status === "done" && remaining) {
+      changed = true;
+      return { ...project, status: "active" as const };
+    }
+    return project;
+  });
+  return changed ? next : projects;
+}
+
 export function pruneProjectFromPerspectives(customPerspectives: CustomPerspective[], projectId: string): CustomPerspective[] {
   return customPerspectives.map((item) => ({
     ...item,

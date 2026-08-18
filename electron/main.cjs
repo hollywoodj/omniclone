@@ -95,6 +95,9 @@ function buildMenu(win, customPerspectives = []) {
         { type: "separator" },
         { label: "Quick Open…", accelerator: "CommandOrControl+O", click: () => send(win, { type: "quickOpen" }) },
         { label: "Import from OmniFocus…", click: () => send(win, { type: "importOmniFocus" }) },
+        { type: "separator" },
+        { label: "Export as TaskPaper…", click: () => send(win, { type: "exportTaskPaper" }) },
+        { label: "Print…", accelerator: "CommandOrControl+P", click: () => send(win, { type: "print" }) },
       ],
     },
     {
@@ -147,6 +150,7 @@ function buildMenu(win, customPerspectives = []) {
         { label: "Indent", click: () => send(win, { type: "indent" }) },
         { label: "Outdent", click: () => send(win, { type: "outdent" }) },
         { label: "Convert to Project", click: () => send(win, { type: "convertToProject" }) },
+        { label: "Duplicate Project", click: () => send(win, { type: "duplicateProject" }) },
         { label: "Show in Projects", click: () => send(win, { type: "revealInProjects" }) },
         { label: "Complete and Await Reply", click: () => send(win, { type: "awaitReply" }) },
         { label: "Move Up", accelerator: "Alt+CommandOrControl+Up", click: () => send(win, { type: "moveRow", direction: "up" }) },
@@ -171,6 +175,42 @@ function buildMenu(win, customPerspectives = []) {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+let mainWindow = null;
+let pendingOpenUrl = process.argv.find((item) => String(item).startsWith("omniclone:")) ?? null;
+
+function sendOpenUrl(url) {
+  if (mainWindow) mainWindow.webContents.send("open-url", url);
+  else pendingOpenUrl = url;
+}
+
+if (process.defaultApp) {
+  if (process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient("omniclone", process.execPath, [path.resolve(process.argv[1])]);
+  }
+} else {
+  app.setAsDefaultProtocolClient("omniclone");
+}
+
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on("second-instance", (_event, argv) => {
+    const url = argv.find((item) => String(item).startsWith("omniclone:"));
+    if (url) sendOpenUrl(url);
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+  app.whenReady().then(createWindow);
+}
+
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  sendOpenUrl(url);
+});
+
 async function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
@@ -182,9 +222,17 @@ async function createWindow() {
       nodeIntegration: false,
     },
   });
+  mainWindow = win;
+  win.on("closed", () => {
+    if (mainWindow === win) mainWindow = null;
+  });
   buildMenu(win);
   ipcMain.removeAllListeners("set-perspectives-menu");
   ipcMain.on("set-perspectives-menu", (_event, items) => buildMenu(win, items));
+  ipcMain.removeAllListeners("set-window-title");
+  ipcMain.on("set-window-title", (_event, title) => {
+    if (typeof title === "string" && title.trim()) win.setTitle(title);
+  });
 
   if (process.env.ELECTRON_START_URL) {
     await win.loadURL(process.env.ELECTRON_START_URL);
@@ -192,9 +240,12 @@ async function createWindow() {
     await startStaticServer(4321);
     await win.loadURL("http://127.0.0.1:4321");
   }
-}
 
-app.whenReady().then(createWindow);
+  if (pendingOpenUrl) {
+    sendOpenUrl(pendingOpenUrl);
+    pendingOpenUrl = null;
+  }
+}
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

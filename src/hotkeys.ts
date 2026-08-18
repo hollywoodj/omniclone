@@ -45,6 +45,9 @@ export type HotkeyAction =
   | { type: "findPrevious" }
   | { type: "typeSelect"; key: string }
   | { type: "customizeToolbar" }
+  | { type: "exportTaskPaper" }
+  | { type: "print" }
+  | { type: "duplicateProject" }
   | { type: "confirmDelete" }
   | { type: "cancel" };
 
@@ -132,6 +135,7 @@ export function matchOmniFocusHotkey(event: KeyboardEvent, options: {
     if (key === "d" || key === "D") return { type: "duplicate" };
     if (key === "z" || key === "Z") return { type: "undo" };
     if (key === "g" || key === "G") return { type: "findNext" };
+    if (key === "p" || key === "P") return { type: "print" };
   }
 
   if (meta && ctrl && !alt && !shift && (key === "p" || key === "P")) return { type: "showPerspectivesList" };

@@ -2,7 +2,7 @@ import { addDays, formatDueLabel, isActionAvailable, parseDueLabel, startOfLocal
 import { makeId, type PerspectiveAvailability, type Project, type RepeatRule, type RepeatSimple, type RepeatUnit, type TagRecord, type Task } from "./model.ts";
 import { taskHasOnHoldTag } from "./tags.ts";
 
-export type ProjectStatus = "active" | "onHold" | "dropped";
+export type ProjectStatus = "active" | "onHold" | "dropped" | "done";
 export type ProjectType = "parallel" | "sequential" | "singleActions";
 
 function originalIndex(tasks: Task[]) {
@@ -222,8 +222,8 @@ export function taskMatchesView(
   const projectStatus = project?.status ?? "active";
   const actionStatus = task.status ?? "active";
   if (availability === "all") return true;
-  if (availability === "completed") return task.completed || actionStatus === "dropped" || projectStatus === "dropped";
-  if (task.completed || actionStatus === "dropped" || projectStatus === "dropped") return false;
+  if (availability === "completed") return task.completed || actionStatus === "dropped" || projectStatus === "dropped" || projectStatus === "done";
+  if (task.completed || actionStatus === "dropped" || projectStatus === "dropped" || projectStatus === "done") return false;
   if (availability === "remaining") return true;
   if (projectStatus === "onHold" || actionStatus === "onHold" || taskHasOnHoldTag(task, context.tagRecords)) return false;
   if (!isActionAvailable(task, context.now)) return false;

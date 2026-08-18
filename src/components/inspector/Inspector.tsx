@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { dueUrgency, inspectorTimestamp } from "../../dates";
-import { palette, type NotificationWhen, type Project, type RepeatFrom, type RepeatUnit, type Task } from "../../model";
+import { makeId, palette, type NotificationWhen, type Project, type RepeatFrom, type RepeatUnit, type Task } from "../../model";
+import { attachmentLabelFromUrl, normalizeAttachmentUrl } from "../../links";
 import { projectDisplayName, resolvedRepeatRule, simpleFromRepeatRule, simpleRepeatRule } from "../../outline";
 import { appStyles as styles } from "../../styles/appStyles";
 import { Icon } from "../ui/Icon";
@@ -45,11 +46,13 @@ export function Inspector({ task, projects, onChange, onToggle, onDelete, onClos
   modal?: boolean;
 }) {
   const [tagDraft, setTagDraft] = useState("");
+  const [attachmentDraft, setAttachmentDraft] = useState("");
   const [tab, setTab] = useState<"action" | "notes" | "notify" | "attachments">("action");
   const rule = resolvedRepeatRule(task);
   const simple = simpleFromRepeatRule(rule);
 
   useEffect(() => setTagDraft(""), [task.id]);
+  useEffect(() => setAttachmentDraft(""), [task.id]);
   useEffect(() => setTab("action"), [task.id]);
 
   const commitTags = () => {
@@ -106,11 +109,66 @@ export function Inspector({ task, projects, onChange, onToggle, onDelete, onClos
         </View>
       )}
       {tab === "attachments" && (
-        <View style={styles.attachmentEmpty}>
-          <View style={styles.attachmentIcon}><Icon name="paperclip" size={26} color="#aaa7ad" /></View>
-          <Text style={styles.attachmentTitle}>No Attachments</Text>
-          <Text style={styles.attachmentText}>OmniFocus stores files on the Notes tab. OmniClone keeps notes with the action; file attachments are not imported from CSV.</Text>
-        </View>
+        <ScrollView style={styles.inspectorScroll} contentContainerStyle={styles.attachmentEmpty} keyboardShouldPersistTaps="handled">
+          {(task.attachments ?? []).length ? (
+            <View style={styles.attachmentList}>
+              {(task.attachments ?? []).map((item) => (
+                <View key={item.id} style={styles.attachmentRow}>
+                  <Icon name="paperclip" size={16} color={palette.purpleDark} />
+                  <Pressable
+                    style={styles.attachmentRowCopy}
+                    onPress={() => {
+                      if (typeof window !== "undefined") window.open(item.url, "_blank", "noopener");
+                    }}
+                  >
+                    <Text numberOfLines={1} style={styles.attachmentName}>{item.label}</Text>
+                    <Text numberOfLines={1} style={styles.attachmentUrl}>{item.url}</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityLabel="Remove attachment"
+                    onPress={() => onChange({ attachments: (task.attachments ?? []).filter((file) => file.id !== item.id) })}
+                    hitSlop={8}
+                  >
+                    <Icon name="close" size={16} color={palette.muted} />
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <>
+              <View style={styles.attachmentIcon}><Icon name="paperclip" size={26} color="#aaa7ad" /></View>
+              <Text style={styles.attachmentTitle}>No Attachments</Text>
+              <Text style={styles.attachmentText}>Add a URL or file link. OmniFocus file blobs are not imported from CSV.</Text>
+            </>
+          )}
+          <View style={styles.attachmentAddRow}>
+            <TextInput
+              value={attachmentDraft}
+              onChangeText={setAttachmentDraft}
+              placeholder="https:// or file path"
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={styles.attachmentInput}
+              onSubmitEditing={() => {
+                const url = normalizeAttachmentUrl(attachmentDraft);
+                if (!url) return;
+                onChange({ attachments: [...(task.attachments ?? []), { id: makeId("file"), label: attachmentLabelFromUrl(url), url }] });
+                setAttachmentDraft("");
+              }}
+            />
+            <Pressable
+              onPress={() => {
+                const url = normalizeAttachmentUrl(attachmentDraft);
+                if (!url) return;
+                onChange({ attachments: [...(task.attachments ?? []), { id: makeId("file"), label: attachmentLabelFromUrl(url), url }] });
+                setAttachmentDraft("");
+              }}
+              style={styles.datePreset}
+            >
+              <Text style={styles.datePresetText}>Add</Text>
+            </Pressable>
+          </View>
+        </ScrollView>
       )}
       {tab === "notify" && (
         <ScrollView style={styles.inspectorScroll} keyboardShouldPersistTaps="handled">

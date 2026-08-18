@@ -95,15 +95,22 @@ export type PerspectiveSortBy = "projects" | "title" | "due" | "flagged" | "adde
 export type PerspectiveRuleKind =
   | "availability"
   | "flagged"
+  | "unflagged"
   | "hasDueDate"
   | "dueToday"
   | "noDueDate"
   | "hasDeferDate"
+  | "hasDuration"
+  | "noDuration"
   | "untagged"
   | "taggedAny"
   | "taggedAll"
   | "inInbox"
   | "containedIn"
+  | "projectType"
+  | "stalled"
+  | "onHold"
+  | "dropped"
   | "matchesSearch";
 
 export type PerspectiveRule = {
@@ -114,6 +121,7 @@ export type PerspectiveRule = {
   tags?: string[];
   projectIds?: string[];
   search?: string;
+  projectType?: "parallel" | "sequential" | "singleActions";
 };
 
 export type CustomPerspective = {
@@ -146,8 +154,9 @@ export type Project = {
   note: string;
   reviewIntervalDays: number;
   lastReviewedAt?: string;
-  status?: "active" | "onHold" | "dropped";
+  status?: "active" | "onHold" | "dropped" | "done";
   type?: "parallel" | "sequential" | "singleActions";
+  completeWithLastAction?: boolean;
 };
 
 export type ActionStatus = "active" | "onHold" | "dropped";
@@ -177,6 +186,12 @@ export type TagRecord = {
   status?: TagStatus;
 };
 
+export type TaskAttachment = {
+  id: string;
+  label: string;
+  url: string;
+};
+
 export type Task = {
   id: string;
   importKey?: string;
@@ -196,6 +211,7 @@ export type Task = {
   repeat?: RepeatSimple;
   repeatRule?: RepeatRule;
   notifications?: TaskNotifications;
+  attachments?: TaskAttachment[];
   status?: ActionStatus;
 };
 

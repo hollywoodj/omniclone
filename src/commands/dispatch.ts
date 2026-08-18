@@ -37,6 +37,9 @@ export const nativeMenuCommandTypes = new Set<AppCommand["type"]>([
   "findNext",
   "findPrevious",
   "customizeToolbar",
+  "exportTaskPaper",
+  "print",
+  "duplicateProject",
 ]);
 
 export type AppCommandHandlers = {
@@ -87,6 +90,9 @@ export type AppCommandHandlers = {
   findPrevious: () => void;
   typeSelect: (key: string) => void;
   customizeToolbar: () => void;
+  exportTaskPaper: () => void;
+  print: () => void;
+  duplicateProject: () => void;
   confirmPendingDelete: () => void;
   cancelTopOverlay: () => void;
 };
@@ -245,6 +251,15 @@ export function dispatchAppCommand(action: AppCommand, handlers: AppCommandHandl
       break;
     case "customizeToolbar":
       handlers.customizeToolbar();
+      break;
+    case "exportTaskPaper":
+      handlers.exportTaskPaper();
+      break;
+    case "print":
+      handlers.print();
+      break;
+    case "duplicateProject":
+      handlers.duplicateProject();
       break;
     case "confirmDelete":
       handlers.confirmPendingDelete();

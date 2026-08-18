@@ -248,6 +248,17 @@ export function ViewOptionsPanel({
                       })}
                     </View>
                   )}
+                  {rule.kind === "projectType" && (
+                    <PopupSelect
+                      value={rule.projectType ?? "parallel"}
+                      onChange={(projectType) => updateRule(rule.id, { projectType: projectType as "parallel" | "sequential" | "singleActions" })}
+                      options={[
+                        { label: "Parallel", value: "parallel" },
+                        { label: "Sequential", value: "sequential" },
+                        { label: "Single Actions", value: "singleActions" },
+                      ]}
+                    />
+                  )}
                   {rule.kind === "matchesSearch" && (
                     <TextInput
                       value={rule.search ?? ""}

@@ -68,6 +68,9 @@ export function buildAppMenus(options: {
         { id: "sep-file", separator: true },
         { id: "quick-open", label: "Quick Open…", shortcut: "⌘O", command: { type: "quickOpen" } },
         { id: "import", label: "Import from OmniFocus…", command: { type: "importOmniFocus" } },
+        { id: "sep-export", separator: true },
+        { id: "export", label: "Export as TaskPaper…", command: { type: "exportTaskPaper" } },
+        { id: "print", label: "Print…", shortcut: "⌘P", command: { type: "print" } },
       ],
     },
     {
@@ -116,6 +119,7 @@ export function buildAppMenus(options: {
         { id: "indent", label: "Indent", shortcut: "⇥", command: { type: "indent" } },
         { id: "outdent", label: "Outdent", shortcut: "⇧⇥", command: { type: "outdent" } },
         { id: "convert", label: "Convert to Project", command: { type: "convertToProject" } },
+        { id: "duplicate-project", label: "Duplicate Project", command: { type: "duplicateProject" } },
         { id: "reveal", label: "Show in Projects", command: { type: "revealInProjects" } },
         { id: "await", label: "Complete and Await Reply", command: { type: "awaitReply" } },
         { id: "move-up", label: "Move Up", shortcut: "⌥⌘↑", command: { type: "moveRow", direction: "up" } },

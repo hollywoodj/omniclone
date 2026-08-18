@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getDb } from "./db/client";
-import { type CustomPerspective, type PersistedState, type Project, type RepeatRule, type TagRecord, type Task, type TaskNotifications } from "./model";
+import { type CustomPerspective, type PersistedState, type Project, type RepeatRule, type TagRecord, type Task, type TaskAttachment, type TaskNotifications } from "./model";
 import { normalizeCustomPerspective } from "./perspectiveRules";
 import { hydrateProjectFolder } from "./outline.ts";
 import { mergeTagRecords } from "./tags.ts";
@@ -18,6 +18,7 @@ type ProjectRow = {
   status?: string | null;
   type?: string | null;
   folder?: string | null;
+  complete_with_last_action?: number | null;
 };
 
 type TaskRow = {
@@ -38,6 +39,7 @@ type TaskRow = {
   repeat?: string | null;
   repeat_rule?: string | null;
   notifications?: string | null;
+  attachments?: string | null;
   status?: string | null;
 };
 
@@ -124,8 +126,9 @@ export async function loadDatabase(): Promise<PersistedState | null> {
     reviewIntervalDays: row.review_interval_days,
     lastReviewedAt: row.last_reviewed_at ?? undefined,
     folder: row.folder || undefined,
-    status: row.status === "onHold" || row.status === "dropped" ? row.status : "active",
+    status: row.status === "onHold" || row.status === "dropped" || row.status === "done" ? row.status : "active",
     type: row.type === "sequential" || row.type === "singleActions" ? row.type : "parallel",
+    completeWithLastAction: !!row.complete_with_last_action,
   }));
 
   const tasks: Task[] = taskRows.map((row) => ({
@@ -147,6 +150,7 @@ export async function loadDatabase(): Promise<PersistedState | null> {
     repeat: row.repeat === "daily" || row.repeat === "weekly" || row.repeat === "monthly" ? row.repeat : "none",
     repeatRule: parseRepeatRule(row.repeat_rule),
     notifications: parseNotifications(row.notifications),
+    attachments: parseAttachments(row.attachments),
     status: row.status === "onHold" || row.status === "dropped" ? row.status : "active",
   }));
 
@@ -193,7 +197,7 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
 
     for (const project of state.projects) {
       await db.runAsync(
-        "INSERT INTO projects (id, import_key, name, color, note, review_interval_days, last_reviewed_at, status, type, folder) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO projects (id, import_key, name, color, note, review_interval_days, last_reviewed_at, status, type, folder, complete_with_last_action) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         project.id,
         project.importKey ?? null,
         project.name,
@@ -203,7 +207,8 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
         project.lastReviewedAt ?? null,
         project.status ?? "active",
         project.type ?? "parallel",
-        project.folder ?? null
+        project.folder ?? null,
+        project.completeWithLastAction ? 1 : 0
       );
     }
 
@@ -229,7 +234,7 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
 
     for (const task of state.tasks) {
       await db.runAsync(
-        "INSERT INTO tasks (id, import_key, title, project_id, parent_id, sort_order, due, defer, note, flagged, completed, completed_at, created_at, estimated_minutes, repeat, repeat_rule, notifications, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO tasks (id, import_key, title, project_id, parent_id, sort_order, due, defer, note, flagged, completed, completed_at, created_at, estimated_minutes, repeat, repeat_rule, notifications, attachments, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         task.id,
         task.importKey ?? null,
         task.title,
@@ -247,6 +252,7 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
         task.repeat ?? "none",
         task.repeatRule ? JSON.stringify(task.repeatRule) : null,
         task.notifications ? JSON.stringify(task.notifications) : null,
+        task.attachments?.length ? JSON.stringify(task.attachments) : null,
         task.status ?? "active"
       );
       for (const tagName of task.tags) {
@@ -299,6 +305,22 @@ function parseNotifications(raw: string | null | undefined): TaskNotifications |
     const parsed = JSON.parse(raw) as TaskNotifications;
     if (!parsed || !Array.isArray(parsed.due) || !Array.isArray(parsed.defer)) return undefined;
     return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseAttachments(raw: string | null | undefined): TaskAttachment[] | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as TaskAttachment[];
+    if (!Array.isArray(parsed)) return undefined;
+    const attachments = parsed.filter((item) => item && typeof item.url === "string" && item.url.trim()).map((item) => ({
+      id: String(item.id || item.url),
+      label: String(item.label || item.url),
+      url: String(item.url).trim(),
+    }));
+    return attachments.length ? attachments : undefined;
   } catch {
     return undefined;
   }

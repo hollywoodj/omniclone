@@ -121,7 +121,15 @@ export function TaskRow({ task, project, projects, selected, editing, bulkCount,
         onHoverIn={() => setHovered(true)}
         onHoverOut={() => setHovered(false)}
         {...({ onDoubleClick: onStartEdit } as object)}
-        style={({ pressed }) => [styles.taskRow, settings.rowDensity === "compact" && styles.taskRowCompact, selected && styles.taskRowSelected, hovered && !selected && styles.taskRowHover, pressed && styles.taskRowPressed, { paddingLeft: 8 + depth * 18 }]}
+        style={({ pressed }) => [
+          styles.taskRow,
+          settings.rowDensity === "compact" && styles.taskRowCompact,
+          selected && styles.taskRowSelected,
+          hovered && !selected && styles.taskRowHover,
+          compactDue && task.flagged && !task.due && !selected && styles.flaggedForecastRow,
+          pressed && styles.taskRowPressed,
+          { paddingLeft: 8 + depth * 18 },
+        ]}
       >
         <Pressable
           accessibilityLabel={collapsed ? "Expand action group" : "Collapse action group"}
@@ -173,7 +181,11 @@ export function TaskRow({ task, project, projects, selected, editing, bulkCount,
                 {task.title}
               </Text>
             )}
-            {!!task.note && !settings.showNotesInOutline && <Icon name="note-outline" size={13} color="#99969c" />}
+            {!!task.note?.trim() && !settings.showNotesInOutline && (
+              <View style={styles.noteGlyph}>
+                <Icon name="note-text-outline" size={12} color="#9a969e" />
+              </View>
+            )}
           </View>
           {settings.showNotesInOutline && !!task.note?.trim() && (
             <Text numberOfLines={3} style={styles.outlineNote}>{task.note}</Text>

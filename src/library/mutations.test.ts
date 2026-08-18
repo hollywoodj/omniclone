@@ -12,6 +12,8 @@ import {
   pendingDeleteCopy,
   pruneProjectFromPerspectives,
   removeProjectFromLibrary,
+  applyCompleteWithLastAction,
+  duplicateProjectById,
 } from "./mutations.ts";
 
 function task(partial: Partial<Task> & { id: string; title: string }): Task {
@@ -170,4 +172,49 @@ test("complete and await reply checks off the original and defers a follow-up", 
   assert.equal(follow?.title, "Await reply: Email Sam");
   assert.equal(follow?.defer, "Tomorrow");
   assert.equal(follow?.completed, false);
+});
+
+function project(partial: Partial<Project> = {}): Project {
+  return {
+    id: "p1",
+    name: "Site",
+    color: "#000",
+    note: "",
+    reviewIntervalDays: 7,
+    ...partial,
+  };
+}
+
+test("duplicating a project copies nested actions onto a new project", () => {
+  const projects = [project({ completeWithLastAction: true })];
+  const tasks = [
+    task({ id: "a", title: "Parent", attachments: [{ id: "file-1", label: "spec", url: "https://example.com/spec" }] }),
+    task({ id: "b", title: "Child", parentId: "a", completed: true, completedAt: "2026-08-01T00:00:00.000Z" }),
+  ];
+  let n = 0;
+  const next = duplicateProjectById(projects, tasks, "p1", (prefix) => `${prefix}-${++n}`, new Date("2026-08-18T12:00:00"));
+  assert.equal(next?.project.name, "Site Copy");
+  assert.equal(next?.project.id, "project-1");
+  assert.equal(next?.project.completeWithLastAction, true);
+  assert.equal(next?.projects.length, 2);
+  const copies = next?.tasks.filter((item) => item.projectId === "project-1") ?? [];
+  assert.equal(copies.length, 2);
+  const parent = copies.find((item) => item.title === "Parent");
+  const child = copies.find((item) => item.title === "Child");
+  assert.equal(parent?.id, "task-2");
+  assert.equal(child?.parentId, parent?.id);
+  assert.equal(child?.completed, false);
+  assert.equal(child?.completedAt, undefined);
+  assert.equal(parent?.attachments?.[0]?.id, "file-4");
+  assert.equal(parent?.attachments?.[0]?.url, "https://example.com/spec");
+});
+
+test("complete with last action marks the project done and reopens it when work returns", () => {
+  const projects = [project({ completeWithLastAction: true })];
+  const remaining = [task({ id: "a", title: "Open" })];
+  assert.equal(applyCompleteWithLastAction(projects, remaining), projects);
+  const done = applyCompleteWithLastAction(projects, [task({ id: "a", title: "Open", completed: true })]);
+  assert.equal(done[0]?.status, "done");
+  const reopened = applyCompleteWithLastAction(done, remaining);
+  assert.equal(reopened[0]?.status, "active");
 });
