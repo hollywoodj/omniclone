@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS projects (
   last_reviewed_at TEXT,
   status TEXT NOT NULL DEFAULT 'active',
   type TEXT NOT NULL DEFAULT 'parallel',
-  folder TEXT
+  folder TEXT,
+  complete_with_last_action INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
@@ -33,6 +34,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   repeat TEXT NOT NULL DEFAULT 'none',
   repeat_rule TEXT,
   notifications TEXT,
+  attachments TEXT,
   status TEXT NOT NULL DEFAULT 'active',
   created_at TEXT NOT NULL
 );
@@ -102,6 +104,7 @@ async function migrateTasks(db: SQLite.SQLiteDatabase) {
     ["repeat", "TEXT NOT NULL DEFAULT 'none'"],
     ["repeat_rule", "TEXT"],
     ["notifications", "TEXT"],
+    ["attachments", "TEXT"],
     ["status", "TEXT NOT NULL DEFAULT 'active'"],
   ];
   for (const [name, definition] of add) {
@@ -115,6 +118,7 @@ async function migrateProjects(db: SQLite.SQLiteDatabase) {
   if (!names.has("status")) await db.execAsync("ALTER TABLE projects ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
   if (!names.has("type")) await db.execAsync("ALTER TABLE projects ADD COLUMN type TEXT NOT NULL DEFAULT 'parallel'");
   if (!names.has("folder")) await db.execAsync("ALTER TABLE projects ADD COLUMN folder TEXT");
+  if (!names.has("complete_with_last_action")) await db.execAsync("ALTER TABLE projects ADD COLUMN complete_with_last_action INTEGER NOT NULL DEFAULT 0");
 }
 
 async function migrateTags(db: SQLite.SQLiteDatabase) {

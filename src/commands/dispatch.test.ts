@@ -56,6 +56,9 @@ function handlers(overrides: Partial<AppCommandHandlers> = {}): AppCommandHandle
     findPrevious: record("findPrevious"),
     typeSelect: record("typeSelect") as AppCommandHandlers["typeSelect"],
     customizeToolbar: record("customizeToolbar"),
+    exportTaskPaper: record("exportTaskPaper"),
+    print: record("print"),
+    duplicateProject: record("duplicateProject"),
     confirmPendingDelete: record("confirmPendingDelete"),
     cancelTopOverlay: record("cancelTopOverlay"),
     ...overrides,
@@ -69,12 +72,18 @@ test("menu and hotkey commands reach the matching handler", () => {
   dispatchAppCommand({ type: "toggleComplete" }, next);
   dispatchAppCommand({ type: "moveRow", direction: "up" }, next);
   dispatchAppCommand({ type: "importOmniFocus" }, next);
+  dispatchAppCommand({ type: "exportTaskPaper" }, next);
+  dispatchAppCommand({ type: "print" }, next);
+  dispatchAppCommand({ type: "duplicateProject" }, next);
   assert.deepEqual(next.calls, [
     "selectPerspective:[\"inbox\"]",
     "insertAction",
     "toggleTasks:[[\"a\"]]",
     "moveSelected:[-1]",
     "openOmniFocusImport",
+    "exportTaskPaper",
+    "print",
+    "duplicateProject",
   ]);
 });
 

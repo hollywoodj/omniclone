@@ -34,6 +34,7 @@ export function ProjectSidebar({
   onFocusProject,
   onNewActionInProject,
   onDeleteProject,
+  onDuplicateProject,
   tagRecords,
   onDropOnSidebar,
 }: {
@@ -58,6 +59,7 @@ export function ProjectSidebar({
   onFocusProject: (id: string) => void;
   onNewActionInProject: (id: string) => void;
   onDeleteProject: (id: string) => void;
+  onDuplicateProject?: (id: string) => void;
   tagRecords?: TagRecord[];
   onDropOnSidebar?: (ids: string[], target: SidebarDropTarget) => void;
 }) {
@@ -72,8 +74,17 @@ export function ProjectSidebar({
     { id: "new-project", label: "New Project", icon: "plus", onPress: onNewProject },
     { id: "new-folder", label: "New Folder", icon: "folder-plus-outline", onPress: onNewFolder },
   ];
+  const remainingProjects = useMemo(
+    () => projects.filter((project) => {
+      const status = project.status ?? "active";
+      return status === "active" || status === "onHold";
+    }),
+    [projects],
+  );
+  const droppedProjects = useMemo(() => projects.filter((project) => project.status === "dropped"), [projects]);
+  const doneProjects = useMemo(() => projects.filter((project) => project.status === "done"), [projects]);
   const week = useMemo(() => forecastWeek(), []);
-  const tree = useMemo(() => buildFolderTree(projects, extraFolders), [extraFolders, projects]);
+  const tree = useMemo(() => buildFolderTree(remainingProjects, extraFolders), [extraFolders, remainingProjects]);
   const [collapsedFolders, setCollapsedFolders] = useState<string[]>([]);
   const [collapsedTags, setCollapsedTags] = useState<string[]>([]);
   const toggleFolder = (path: string) => {
@@ -89,7 +100,7 @@ export function ProjectSidebar({
       <SidebarRow
         key={project.id}
         selected={selectedProjects.has(project.id)}
-        items={projectContextItems(project, { onFocusProject, onNewActionInProject, onDeleteProject })}
+        items={projectContextItems(project, { onFocusProject, onNewActionInProject, onDeleteProject, onDuplicateProject })}
         onPress={() => onSelectProject(project.id, modifiersRef.current)}
         droppable
         onDropTasks={(ids) => onDropOnSidebar?.(ids, { kind: "project", projectId: project.id })}
@@ -100,6 +111,7 @@ export function ProjectSidebar({
         {stalled && <Text style={styles.sidebarStatusTag}>Stalled</Text>}
         {project.status === "onHold" && <Text style={styles.sidebarStatusTag}>On Hold</Text>}
         {project.status === "dropped" && <Text style={styles.sidebarStatusTag}>Dropped</Text>}
+        {project.status === "done" && <Text style={styles.sidebarStatusTag}>Done</Text>}
         {project.type === "sequential" && <Icon name="arrow-down-bold" size={12} color="#8b888f" />}
         {showCounts && <Text style={styles.sidebarCount}>{remainingIn(project.id)}</Text>}
       </SidebarRow>
@@ -181,11 +193,23 @@ export function ProjectSidebar({
               {showCounts && <Text style={styles.sidebarCount}>{counts.remainingInProjects}</Text>}
             </SidebarRow>
             <Text style={styles.sidebarSectionLabel}>PROJECTS</Text>
-            {!projects.length && !extraFolders.length && (
+            {!remainingProjects.length && !extraFolders.length && !droppedProjects.length && !doneProjects.length && (
               <Text style={styles.sidebarEmptyText}>No projects yet. Import from OmniFocus or use New Project.</Text>
             )}
             {tree.roots.map((node) => renderFolder(node, 0))}
             {tree.ungrouped.map((project) => projectRow(project, 0))}
+            {!!doneProjects.length && (
+              <>
+                <Text style={styles.sidebarSectionLabel}>COMPLETED</Text>
+                {doneProjects.map((project) => projectRow(project, 0))}
+              </>
+            )}
+            {!!droppedProjects.length && (
+              <>
+                <Text style={styles.sidebarSectionLabel}>DROPPED</Text>
+                {droppedProjects.map((project) => projectRow(project, 0))}
+              </>
+            )}
           </>
         )}
         {perspective === "tags" && (

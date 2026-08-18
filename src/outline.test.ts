@@ -106,6 +106,13 @@ test("on-hold and dropped projects leave Available", () => {
   assert.equal(taskMatchesView(item, "remaining", { tasks: [item], projects: [project({ status: "dropped" })] }), false);
 });
 
+test("done projects hide from Remaining and appear in Completed", () => {
+  const item = task({ id: "a", title: "Wrap" });
+  const done = [project({ status: "done" })];
+  assert.equal(taskMatchesView(item, "remaining", { tasks: [item], projects: done }), false);
+  assert.equal(taskMatchesView(item, "completed", { tasks: [item], projects: done }), true);
+});
+
 test("repeating a daily action bumps the due date instead of completing", () => {
   const now = new Date(2026, 7, 17, 15, 0, 0);
   const next = applyRepeat(task({ id: "a", title: "Water", due: "Today", repeat: "daily" }), now);

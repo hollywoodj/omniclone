@@ -9,4 +9,12 @@ contextBridge.exposeInMainWorld("omniclone", {
   setPerspectivesMenu: (items) => {
     ipcRenderer.send("set-perspectives-menu", items);
   },
+  setWindowTitle: (title) => {
+    ipcRenderer.send("set-window-title", title);
+  },
+  onOpenUrl: (callback) => {
+    const listener = (_event, url) => callback(url);
+    ipcRenderer.on("open-url", listener);
+    return () => ipcRenderer.removeListener("open-url", listener);
+  },
 });

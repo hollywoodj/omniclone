@@ -73,11 +73,13 @@ import { forecastCountsFor, perspectiveBadgesFor, remainingCountForProject } fro
 import {
   applyCompleteAndAwaitReply,
   applyCompleteToggle,
+  applyCompleteWithLastAction,
   applyFlagToggle,
   applyMoveToProject,
   applySidebarDrop,
   applyTaskPatch,
   deleteTaskIds,
+  duplicateProjectById,
   duplicateTasksByIds,
   extraFoldersAfterCreate,
   lingeringIdsAfterCompletion,
@@ -94,6 +96,8 @@ import { useUndoStack } from "./src/hooks/useUndoStack";
 import { useAppLayout } from "./src/hooks/useAppLayout";
 import { hasNativeMenu, useAppHotkeys } from "./src/hooks/useAppHotkeys";
 import { copyToClipboard, readClipboard } from "./src/lib/clipboard";
+import { downloadTextFile } from "./src/lib/download";
+import { documentTitle, parseOmniCloneUrl, resolveOmniCloneOpen } from "./src/links";
 import { mergeTagRecords, renameTagRecord, upsertTagRecord } from "./src/tags";
 import { isTextInputTarget } from "./src/hotkeys";
 import { findTypeSelectMatch, nextTypeSelectQuery } from "./src/typeSelect";
@@ -187,6 +191,11 @@ export default function App() {
     applyDocumentTheme(colorScheme);
   }, [colorScheme]);
 
+  useEffect(() => {
+    if (!hydrated) return;
+    setProjects((current) => applyCompleteWithLastAction(current, tasks));
+  }, [hydrated, setProjects, tasks]);
+
   const visibleTasks = useMemo(() => filterVisibleTasks({
     tasks,
     projects,
@@ -233,6 +242,12 @@ export default function App() {
     folderFilter,
     tagFilter,
   });
+
+  useEffect(() => {
+    const next = documentTitle(title, focusedName);
+    if (typeof document !== "undefined") document.title = next;
+    if (typeof window !== "undefined") window.omniclone?.setWindowTitle?.(next);
+  }, [focusedName, title]);
 
   const selectPerspective = (id: ActivePerspective) => {
     navigate({
@@ -675,6 +690,51 @@ export default function App() {
     else if (copies.length) setSelection({ ids: copies.map((item) => item.id), anchorId: copies[0]?.id ?? null, headId: copies[copies.length - 1]?.id ?? null });
   };
 
+  const duplicateProject = (projectId?: string) => {
+    const targetId = projectId ?? projectFilter ?? inspectedProjectId ?? selectedTask?.projectId;
+    if (!targetId) return;
+    const result = duplicateProjectById(projects, tasks, targetId);
+    if (!result) return;
+    pushUndo();
+    setProjects(result.projects);
+    setTasks(result.tasks);
+    navigate({ perspective: "projects", projectFilter: result.project.id, tagFilter: null, folderFilter: null });
+    setInspectedProjectId(result.project.id);
+    setSelection(emptySelection);
+  };
+
+  const exportTaskPaper = () => {
+    const paper = toTaskPaper(tasks, tasks, projects);
+    const slug = (focusedName || title || "OmniClone").replace(/[\\/:*?"<>|]+/g, "-");
+    downloadTextFile(`${slug}.taskpaper`, paper);
+  };
+
+  const printDocument = () => {
+    if (typeof window !== "undefined") window.print();
+  };
+
+  const openOmniCloneUrl = useCallback((raw: string) => {
+    const resolved = resolveOmniCloneOpen(raw, tasks);
+    if (!resolved) return;
+    if (resolved.kind === "perspective") {
+      selectPerspective(resolved.id as ActivePerspective);
+      return;
+    }
+    retainInspectionIds.current = new Set([...retainInspectionIds.current, resolved.id]);
+    navigate({
+      perspective: resolved.projectId ? "projects" : "inbox",
+      projectFilter: resolved.projectId,
+      tagFilter: null,
+      folderFilter: null,
+      ...emptyFocus(),
+    });
+    setSelection(singleSelection(resolved.id));
+    setInspectedProjectId(null);
+    setInspectorOpen(true);
+  }, [navigate, selectPerspective, setInspectorOpen, tasks]);
+  const openOmniCloneUrlRef = useRef(openOmniCloneUrl);
+  openOmniCloneUrlRef.current = openOmniCloneUrl;
+
   const moveTasks = (id: string, projectId: string | null) => {
     const ids = idsForRow(id);
     const fromInbox = tasks.filter((task) => ids.includes(task.id) && task.projectId === null);
@@ -829,7 +889,7 @@ export default function App() {
     deletingProject: !!pendingDeleteProjectId,
   });
   const sidebarPerspective = sidebarPerspectiveFor(perspective, activeCustomPerspective);
-  const showSidebar = !isPhone && canShowSidebar && sidebarOpen && perspective !== "inbox" && perspective !== "completed" && !activeCustomPerspective?.keepSidebarHidden;
+  const showSidebar = !isPhone && canShowSidebar && sidebarOpen && perspective !== "inbox" && perspective !== "completed" && perspective !== "flagged" && !activeCustomPerspective?.keepSidebarHidden;
   const showInspector = !isPhone && canShowInspector && inspectorOpen;
   const modalOpen = quickKind !== null || settingsOpen || perspectivesListOpen || quickOpenOpen || importGuideOpen || !!importPreview || !!importError || !!importSummary;
 
@@ -870,6 +930,7 @@ export default function App() {
     cleanUp,
     duplicateSelected: () => {
       if (selectedTaskIds.length) duplicateTasks(selectedTaskIds[0] ?? "");
+      else duplicateProject();
     },
     startEditTitle: () => startEditTitle(),
     expandAll,
@@ -894,6 +955,9 @@ export default function App() {
       setSettingsOpen(true);
       setViewMenuOpen(false);
     },
+    exportTaskPaper,
+    print: printDocument,
+    duplicateProject: () => duplicateProject(),
     confirmPendingDelete: () => {
       if (pendingDeleteProjectId) finalizeDeleteProject(pendingDeleteProjectId);
       else if (pendingDeleteTaskIds.length) finalizeDeleteTasks(pendingDeleteTaskIds, pendingDeleteDirection);
@@ -955,6 +1019,29 @@ export default function App() {
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
   }, [modalOpen, selectedTaskId, tasks, projects, defaultProjectId]);
+
+  useEffect(() => {
+    if (!hydrated || Platform.OS !== "web" || typeof window === "undefined") return;
+    const open = (raw: string) => openOmniCloneUrlRef.current(raw);
+    const onHash = () => {
+      if (window.location.hash) open(window.location.hash);
+    };
+    const onClick = (event: MouseEvent) => {
+      const href = (event.target as HTMLElement | null)?.closest?.("a")?.getAttribute("href");
+      if (!href || !parseOmniCloneUrl(href)) return;
+      event.preventDefault();
+      open(href);
+    };
+    if (window.location.hash) open(window.location.hash);
+    window.addEventListener("hashchange", onHash);
+    window.addEventListener("click", onClick);
+    const unsub = window.omniclone?.onOpenUrl?.(open);
+    return () => {
+      window.removeEventListener("hashchange", onHash);
+      window.removeEventListener("click", onClick);
+      unsub?.();
+    };
+  }, [hydrated]);
 
   const sidebarProjects = isFocusActive(focused) ? projects.filter((project) => projectMatchesFocus(project, focused)) : projects;
   const forecastCounts = useMemo(() => forecastCountsFor(tasks, focused, undefined, projects), [focused, projects, tasks]);
@@ -1092,6 +1179,7 @@ export default function App() {
               onFocusProject={focusProject}
               onNewActionInProject={newActionInProject}
               onDeleteProject={deleteProject}
+              onDuplicateProject={duplicateProject}
               tagRecords={knownTagRecords}
               onDropOnSidebar={dropOnSidebar}
             />
@@ -1152,6 +1240,7 @@ export default function App() {
             onInspectProject={inspectProject}
             onNewActionInProject={newActionInProject}
             onDeleteProject={deleteProject}
+            onDuplicateProject={duplicateProject}
             onImport={openOmniFocusImport}
             onMarqueeStart={() => { marqueeBaseRef.current = selection; }}
             onMarqueeSelect={(ids, additive) => setSelection(applyMarquee(additive ? marqueeBaseRef.current : emptySelection, ids, additive))}

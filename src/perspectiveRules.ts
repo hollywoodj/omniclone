@@ -1,5 +1,5 @@
 import { dueDayKey, todayKey } from "./dates.ts";
-import { taskMatchesView } from "./outline.ts";
+import { taskMatchesView, projectIsStalled } from "./outline.ts";
 import {
   createCustomPerspective,
   makeId,
@@ -16,30 +16,44 @@ import {
 export const ruleKindLabels: Record<PerspectiveRuleKind, string> = {
   availability: "Availability",
   flagged: "Status: Flagged",
+  unflagged: "Status: Unflagged",
   hasDueDate: "Has a due date",
   dueToday: "Has a due date of: Today",
   noDueDate: "Has no due date",
   hasDeferDate: "Has a defer date",
+  hasDuration: "Has an estimated duration",
+  noDuration: "Has no estimated duration",
   untagged: "Is untagged",
   taggedAny: "Is tagged with any of…",
   taggedAll: "Is tagged with all of…",
   inInbox: "Is in the Inbox",
   containedIn: "Is contained within project…",
+  projectType: "Is contained in a project of type…",
+  stalled: "Is in a stalled project",
+  onHold: "Status: On Hold",
+  dropped: "Status: Dropped",
   matchesSearch: "Matches search terms:",
 };
 
 export const addableRuleKinds: PerspectiveRuleKind[] = [
   "availability",
   "flagged",
+  "unflagged",
   "hasDueDate",
   "dueToday",
   "noDueDate",
   "hasDeferDate",
+  "hasDuration",
+  "noDuration",
   "untagged",
   "taggedAny",
   "taggedAll",
   "inInbox",
   "containedIn",
+  "projectType",
+  "stalled",
+  "onHold",
+  "dropped",
   "matchesSearch",
 ];
 
@@ -48,6 +62,7 @@ export function createRule(kind: PerspectiveRuleKind): PerspectiveRule {
   if (kind === "availability") rule.availability = "remaining";
   if (kind === "taggedAny" || kind === "taggedAll") rule.tags = [];
   if (kind === "containedIn") rule.projectIds = [];
+  if (kind === "projectType") rule.projectType = "parallel";
   if (kind === "matchesSearch") rule.search = "";
   return rule;
 }
@@ -63,6 +78,10 @@ export function describeRule(rule: PerspectiveRule): string {
     };
     return `Availability: ${labels[rule.availability ?? "remaining"]}`;
   }
+  if (rule.kind === "projectType") {
+    const labels = { parallel: "Parallel", sequential: "Sequential", singleActions: "Single Actions" };
+    return `Project type: ${labels[rule.projectType ?? "parallel"]}`;
+  }
   return ruleKindLabels[rule.kind];
 }
 
@@ -74,6 +93,8 @@ function matchRule(task: Task, rule: PerspectiveRule, context?: { tasks: Task[];
     }
     case "flagged":
       return task.flagged;
+    case "unflagged":
+      return !task.flagged;
     case "hasDueDate":
       return !!task.due;
     case "dueToday":
@@ -82,6 +103,10 @@ function matchRule(task: Task, rule: PerspectiveRule, context?: { tasks: Task[];
       return !task.due;
     case "hasDeferDate":
       return !!task.defer;
+    case "hasDuration":
+      return !!task.estimatedMinutes;
+    case "noDuration":
+      return !task.estimatedMinutes;
     case "untagged":
       return task.tags.length === 0;
     case "taggedAny":
@@ -95,6 +120,22 @@ function matchRule(task: Task, rule: PerspectiveRule, context?: { tasks: Task[];
     case "containedIn":
       if (!rule.projectIds?.length) return true;
       return !!task.projectId && rule.projectIds.includes(task.projectId);
+    case "projectType": {
+      const project = task.projectId ? context?.projects.find((item) => item.id === task.projectId) : undefined;
+      return (project?.type ?? "parallel") === (rule.projectType ?? "parallel");
+    }
+    case "stalled": {
+      const project = task.projectId ? context?.projects.find((item) => item.id === task.projectId) : undefined;
+      return !!project && !!context && projectIsStalled(project, context.tasks);
+    }
+    case "onHold": {
+      const project = task.projectId ? context?.projects.find((item) => item.id === task.projectId) : undefined;
+      return (task.status ?? "active") === "onHold" || (project?.status ?? "active") === "onHold";
+    }
+    case "dropped": {
+      const project = task.projectId ? context?.projects.find((item) => item.id === task.projectId) : undefined;
+      return (task.status ?? "active") === "dropped" || (project?.status ?? "active") === "dropped";
+    }
     case "matchesSearch": {
       const needle = rule.search?.trim().toLowerCase() ?? "";
       if (!needle) return true;
@@ -161,6 +202,7 @@ function migrateLegacyRules(input: Partial<CustomPerspective>): PerspectiveRule[
   const status = input.status ?? "remaining";
   rules.push({ id: makeId("rule"), kind: "availability", availability: status === "all" ? "all" : status === "completed" ? "completed" : "remaining" });
   if (input.flagged === "flagged") rules.push({ id: makeId("rule"), kind: "flagged" });
+  if (input.flagged === "unflagged") rules.push({ id: makeId("rule"), kind: "unflagged" });
   if (input.due === "today") rules.push({ id: makeId("rule"), kind: "dueToday" });
   if (input.due === "has-date") rules.push({ id: makeId("rule"), kind: "hasDueDate" });
   if (input.due === "no-date") rules.push({ id: makeId("rule"), kind: "noDueDate" });
