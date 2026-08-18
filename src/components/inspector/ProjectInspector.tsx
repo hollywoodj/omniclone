@@ -1,10 +1,11 @@
 import React from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { reviewStatusText } from "../../dates";
+import { lastReviewedFromNextReview, nextReviewLabel, reviewStatusText } from "../../dates";
 import { palette, type Project } from "../../model";
 import { projectColors } from "../../perspectives/rail";
 import { appStyles as styles } from "../../styles/appStyles";
 import { Icon } from "../ui/Icon";
+import { DateField } from "./DateField";
 import { FieldLabel } from "./FieldLabel";
 
 export function ProjectInspector({ project, remainingCount, stalled, onChange, onReview, onSkip, onDelete, onFocus, onClose, modal = false }: {
@@ -80,6 +81,11 @@ export function ProjectInspector({ project, remainingCount, stalled, onChange, o
               </Pressable>
             ))}
           </View>
+          <FieldLabel>Next Review</FieldLabel>
+          <DateField
+            value={nextReviewLabel(project)}
+            onChange={(value) => onChange({ lastReviewedAt: lastReviewedFromNextReview(project, value) })}
+          />
           <Text style={styles.projectHeadingNote}>{reviewStatusText(project)}</Text>
           <Text style={[styles.projectHeadingNote, { marginTop: 4 }]}>{stalled ? "Stalled · " : ""}{remainingCount} remaining action{remainingCount === 1 ? "" : "s"}</Text>
           <View style={styles.reviewActionRow}>

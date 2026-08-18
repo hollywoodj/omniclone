@@ -1,5 +1,6 @@
+import { formatDateLabel, lastIntervalDays, startOfLocalDay, addDays } from "../dates.ts";
 import { makeId, type CustomPerspective, type Project, type Task } from "../model.ts";
-import { applyRepeat, descendantsOf, idsWithDescendants, projectInFolder } from "../outline.ts";
+import { applyRepeat, descendantsOf, idsWithDescendants, insertTaskAfter, projectInFolder } from "../outline.ts";
 
 export function applyTaskPatch(tasks: Task[], id: string, patch: Partial<Task>, now = new Date()): Task[] {
   return tasks.map((task) => {
@@ -47,6 +48,48 @@ export function applyFlagToggle(tasks: Task[], ids: string[]): Task[] {
   if (!targets.length) return tasks;
   const nextFlagged = !targets.every((task) => task.flagged);
   return tasks.map((task) => unique.includes(task.id) ? { ...task, flagged: nextFlagged } : task);
+}
+
+export function awaitReplyFollowUp(
+  task: Task,
+  days: number,
+  now = new Date(),
+  idFactory: (prefix: string) => string = makeId,
+): Task {
+  const deferDate = addDays(startOfLocalDay(now), Math.max(1, days));
+  return {
+    id: idFactory("task"),
+    title: task.title.toLowerCase().startsWith("await reply:") ? task.title : `Await reply: ${task.title}`,
+    projectId: task.projectId,
+    parentId: task.parentId ?? null,
+    tags: [...task.tags],
+    flagged: false,
+    completed: false,
+    createdAt: now.toISOString(),
+    defer: formatDateLabel(deferDate, now),
+  };
+}
+
+export function applyCompleteAndAwaitReply(
+  tasks: Task[],
+  ids: string[],
+  fallbackDays: number,
+  now = new Date(),
+  idFactory: (prefix: string) => string = makeId,
+): Task[] {
+  const unique = [...new Set(ids)];
+  const originals = unique
+    .map((id) => tasks.find((task) => task.id === id))
+    .filter((task): task is Task => !!task && !task.completed);
+  if (!originals.length) return tasks;
+  let next = applyCompleteToggle(tasks, originals.map((task) => task.id), now);
+  for (const original of originals) {
+    const after = next.find((task) => task.id === original.id);
+    if (after && !after.completed) continue;
+    const follow = awaitReplyFollowUp(original, lastIntervalDays(original, fallbackDays, now), now, idFactory);
+    next = insertTaskAfter(next, original.id, follow, original.projectId).tasks;
+  }
+  return next;
 }
 
 export function applyMoveToProject(tasks: Task[], ids: string[], projectId: string | null): Task[] {

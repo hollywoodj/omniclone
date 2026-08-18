@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { CustomPerspective, Project, Task } from "../model.ts";
 import {
+  applyCompleteAndAwaitReply,
   applyCompleteToggle,
   applyFlagToggle,
   applySidebarDrop,
@@ -157,4 +158,16 @@ test("pruning a missing project is a no-op for unrelated rules", () => {
   }];
   const next = pruneProjectFromPerspectives(custom, "p1");
   assert.equal(next[0]?.rules[0]?.kind, "flagged");
+});
+
+test("complete and await reply checks off the original and defers a follow-up", () => {
+  const now = new Date(2026, 7, 17, 15, 0, 0);
+  const tasks = [task({ id: "a", title: "Email Sam", due: "Today", defer: "Yesterday" })];
+  const next = applyCompleteAndAwaitReply(tasks, ["a"], 3, now, () => "follow");
+  const original = next.find((item) => item.id === "a");
+  const follow = next.find((item) => item.id === "follow");
+  assert.equal(original?.completed, true);
+  assert.equal(follow?.title, "Await reply: Email Sam");
+  assert.equal(follow?.defer, "Tomorrow");
+  assert.equal(follow?.completed, false);
 });

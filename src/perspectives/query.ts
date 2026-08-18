@@ -1,5 +1,5 @@
 import type { ForecastDayKey } from "../dates.ts";
-import { isForecastItem } from "../dates.ts";
+import { isForecastItem, taskMatchesFocus } from "../dates.ts";
 import {
   type ActivePerspective,
   type AppSettings,
@@ -22,7 +22,8 @@ export type VisibleTaskQuery = {
   tagFilter: string | null;
   folderFilter: string | null;
   forecastDay: ForecastDayKey;
-  focusedProjectId: string | null;
+  focusedProjectIds: string[];
+  focusedFolderPaths: string[];
   query: string;
   settings: Pick<AppSettings, "showCompleted" | "standardAvailability">;
   customPerspective: CustomPerspective | null;
@@ -38,7 +39,8 @@ export function filterVisibleTasks({
   tagFilter,
   folderFilter,
   forecastDay,
-  focusedProjectId,
+  focusedProjectIds,
+  focusedFolderPaths,
   query,
   settings,
   customPerspective,
@@ -73,7 +75,9 @@ export function filterVisibleTasks({
     const availability = settings.standardAvailability[perspective as PerspectiveId] ?? (settings.showCompleted ? "all" : "remaining");
     result = result.filter((task) => taskMatchesView(task, availability, { tasks, projects, tagRecords: records }) || lingering.has(task.id));
   }
-  if (focusedProjectId) result = result.filter((task) => task.projectId === focusedProjectId);
+  if (focusedProjectIds.length || focusedFolderPaths.length) {
+    result = result.filter((task) => taskMatchesFocus(task, projects, { focusedProjectIds, focusedFolderPaths }));
+  }
   if (query.trim()) {
     const needle = query.trim().toLowerCase();
     result = result.filter((task) => `${task.title} ${task.note ?? ""} ${task.tags.join(" ")}`.toLowerCase().includes(needle));

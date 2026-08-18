@@ -1,5 +1,6 @@
 import React from "react";
 import { View } from "react-native";
+import { defaultToolbarButtons, type ToolbarButtonId } from "../../model";
 import { appStyles as styles } from "../../styles/appStyles";
 import { ToolbarButton } from "../ui/ToolbarButton";
 import { TrafficLights } from "../ui/TrafficLights";
@@ -14,6 +15,7 @@ export function DesktopToolbar({
   searchOpen,
   focused,
   canFocus,
+  visibleButtons,
   onToggleSidebar,
   onBack,
   onForward,
@@ -35,6 +37,7 @@ export function DesktopToolbar({
   searchOpen: boolean;
   focused: boolean;
   canFocus: boolean;
+  visibleButtons?: ToolbarButtonId[];
   onToggleSidebar: () => void;
   onBack: () => void;
   onForward: () => void;
@@ -47,25 +50,27 @@ export function DesktopToolbar({
   onToggleSearch: () => void;
   onToggleInspector: () => void;
 }) {
+  const visible = new Set(visibleButtons?.length ? visibleButtons : defaultToolbarButtons);
+  const show = (id: ToolbarButtonId) => visible.has(id);
   return (
     <View style={styles.toolbar}>
       <TrafficLights />
       <View style={styles.toolbarLeading}>
-        <ToolbarButton icon="page-layout-sidebar-left" label="Sidebar" active={showSidebar} onPress={onToggleSidebar} />
-        <ToolbarButton icon="chevron-left" label="Back" disabled={!canGoBack} onPress={onBack} />
-        <ToolbarButton icon="chevron-right" label="Forward" disabled={!canGoForward} onPress={onForward} />
-        <ToolbarButton icon="eye-outline" label="View" active={viewMenuOpen} onPress={onToggleView} />
+        {show("sidebar") && <ToolbarButton icon="page-layout-sidebar-left" label="Sidebar" active={showSidebar} onPress={onToggleSidebar} />}
+        {show("back") && <ToolbarButton icon="chevron-left" label="Back" disabled={!canGoBack} onPress={onBack} />}
+        {show("forward") && <ToolbarButton icon="chevron-right" label="Forward" disabled={!canGoForward} onPress={onForward} />}
+        {show("view") && <ToolbarButton icon="eye-outline" label="View" active={viewMenuOpen} onPress={onToggleView} />}
       </View>
       <View style={styles.toolbarCenter}>
-        <ToolbarButton icon="plus" label="New Action" onPress={onNewAction} />
-        <ToolbarButton icon="tray-arrow-down" label="Quick Entry" onPress={onQuickEntry} />
-        <ToolbarButton icon="file-find-outline" label="Quick Open" onPress={onQuickOpen} />
-        <ToolbarButton icon="bullseye-arrow" label="Focus" active={focused} disabled={!canFocus} onPress={onFocus} />
+        {show("newAction") && <ToolbarButton icon="plus" label="New Action" onPress={onNewAction} />}
+        {show("quickEntry") && <ToolbarButton icon="tray-arrow-down" label="Quick Entry" onPress={onQuickEntry} />}
+        {show("quickOpen") && <ToolbarButton icon="file-find-outline" label="Quick Open" onPress={onQuickOpen} />}
+        {show("focus") && <ToolbarButton icon="bullseye-arrow" label="Focus" active={focused} disabled={!canFocus} onPress={onFocus} />}
       </View>
       <View style={styles.toolbarTrailing}>
-        <ToolbarButton icon="cog-outline" label="Settings" active={settingsOpen} onPress={onSettings} />
-        <ToolbarButton icon="magnify" label="Search" active={searchOpen} onPress={onToggleSearch} />
-        <ToolbarButton icon="information-outline" label="Inspect" active={showInspector} onPress={onToggleInspector} />
+        {show("settings") && <ToolbarButton icon="cog-outline" label="Settings" active={settingsOpen} onPress={onSettings} />}
+        {show("search") && <ToolbarButton icon="magnify" label="Search" active={searchOpen} onPress={onToggleSearch} />}
+        {show("inspect") && <ToolbarButton icon="information-outline" label="Inspect" active={showInspector} onPress={onToggleInspector} />}
       </View>
     </View>
   );

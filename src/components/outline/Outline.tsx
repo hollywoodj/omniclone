@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { ContextMenuPressable, useContextMenuTrigger, type ContextMenuItem } from "../../contextMenu";
 import {
-  completionGroupLabel,
+  completionBucket,
   completionGroupOrder,
   forecastSubtitle,
   projectDueForReview,
@@ -10,7 +10,7 @@ import {
   type ForecastDayKey,
 } from "../../dates";
 import { useMarqueeSelection, useModifierKeys } from "../../marquee";
-import { palette, type ActivePerspective, type AppSettings, type CustomPerspective, type Project, type Task } from "../../model";
+import { palette, visibleOutlineColumns, type ActivePerspective, type AppSettings, type CustomPerspective, type Project, type Task } from "../../model";
 import { effectiveGroupBy } from "../../perspectiveRules";
 import { projectContextItems } from "../../perspectives/projectContextItems";
 import {
@@ -79,6 +79,7 @@ export function Outline({
   onConvertToProject,
   onReveal,
   onChangeDates,
+  onAwaitReply,
 }: {
   title: string;
   perspective: ActivePerspective;
@@ -131,6 +132,7 @@ export function Outline({
   onCopyTaskPaper: (id: string) => void;
   onReveal: (id: string) => void;
   onChangeDates: (id: string, patch: Pick<Task, "due" | "defer">) => void;
+  onAwaitReply: (id: string) => void;
 }) {
   const { openMenu } = useContextMenuTrigger();
   const containerRef = useRef<View>(null);
@@ -158,6 +160,9 @@ export function Outline({
     { id: "new-action", label: "New Action", icon: "plus", shortcut: "⌘N", onPress: onNewTask },
   ];
   const projectHandlers = { onFocusProject, onNewActionInProject, onDeleteProject, onInspectProject, onOpenProject: onSelectProject };
+  const groupBy = customPerspective ? effectiveGroupBy(customPerspective) : null;
+  const hideProjectColumn = groupBy === "project" || (!customPerspective && (perspective === "projects" || perspective === "review"));
+  const columns = visibleOutlineColumns(settings.outlineColumns, hideProjectColumn);
   const collapsed = useMemo(() => new Set(collapsedIds), [collapsedIds]);
   const toggleCollapsed = (id: string) => {
     setCollapsedIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
@@ -214,7 +219,7 @@ export function Outline({
         depth={taskDepth(task, byId)}
         hasChildren={!!children.get(task.id)?.length}
         collapsed={collapsed.has(task.id)}
-        hideProject={!customPerspective && (perspective === "projects" || perspective === "review")}
+        hideProject={hideProjectColumn}
         blocked={isBlockedSequential(task, tasks, projects)}
         compactDue={!customPerspective && perspective === "forecast"}
         dragIds={selected && selectedTaskIds.length > 1 ? selectedTaskIds : [task.id]}
@@ -243,12 +248,12 @@ export function Outline({
         onConvertToProject={() => onConvertToProject(task.id)}
         onReveal={() => onReveal(task.id)}
         onChangeDates={(patch) => onChangeDates(task.id, patch)}
+        onAwaitReply={() => onAwaitReply(task.id)}
       />
     );
   };
 
   const tags = [...new Set(tasks.flatMap((task) => task.tags))].sort();
-  const groupBy = customPerspective ? effectiveGroupBy(customPerspective) : null;
   const visibleProjects = projects.filter((project) => {
     if (projectFilter) return project.id === projectFilter;
     if (folderFilter) return projectInFolder(project, folderFilter);
@@ -289,6 +294,25 @@ export function Outline({
         style={[styles.outlineBody, Platform.OS === "web" ? { userSelect: "none" } as object : null]}
       >
       <ScrollView style={styles.outlineScroll} contentContainerStyle={styles.outlineContent} keyboardShouldPersistTaps="handled">
+        {!!columns.length && (
+          <View style={styles.outlineColumnsHeader}>
+            {columns.map((column) => (
+              <Text
+                key={column}
+                style={[
+                  styles.outlineColumnHeader,
+                  column === "project" && styles.outlineColumnProject,
+                  column === "tags" && styles.outlineColumnTags,
+                  column === "duration" && styles.outlineColumnDuration,
+                  column === "defer" && styles.outlineColumnDefer,
+                  column === "due" && styles.outlineColumnDue,
+                ]}
+              >
+                {column === "project" ? "Project" : column === "tags" ? "Tags" : column === "duration" ? "Duration" : column === "defer" ? "Defer" : "Due"}
+              </Text>
+            ))}
+          </View>
+        )}
         {groupBy === "project" && [{ project: null as Project | null, groupTasks: tasks.filter((task) => task.projectId === null) }, ...projects.map((project) => ({ project, groupTasks: tasks.filter((task) => task.projectId === project.id) }))].map(({ project, groupTasks }) => {
           if (!groupTasks.length && !project) return null;
           return (
@@ -396,15 +420,16 @@ export function Outline({
           );
         })}
         {!customPerspective && perspective === "completed" && completionGroupOrder.map((label) => {
-          const groupTasks = tasks.filter((task) => completionGroupLabel(task.completedAt) === label);
+          const groupTasks = tasks.filter((task) => completionBucket(task) === label);
           if (!groupTasks.length) return null;
           const groupId = `done:${label}`;
+          const dropped = label === "Dropped";
           return (
             <View key={label} style={styles.projectGroup}>
               <Pressable onPress={() => toggleCollapsed(groupId)} style={styles.tagHeading}>
                 <Icon name={collapsed.has(groupId) ? "chevron-right" : "chevron-down"} size={18} color="#6e6c72" />
-                <Icon name="check-circle-outline" size={20} color={palette.purple} />
-                <View><Text style={styles.projectHeadingTitle}>{label}</Text><Text style={styles.projectHeadingNote}>{groupTasks.length} completed</Text></View>
+                <Icon name={dropped ? "close-circle-outline" : "check-circle-outline"} size={20} color={dropped ? palette.muted : palette.purple} />
+                <View><Text style={styles.projectHeadingTitle}>{label}</Text><Text style={styles.projectHeadingNote}>{groupTasks.length} {dropped ? "dropped" : "completed"}</Text></View>
               </Pressable>
               {renderGroupTasks(groupId, groupTasks)}
             </View>
@@ -430,9 +455,23 @@ export function Outline({
           </View>
         ) : !tasks.length && (perspective !== "projects" || !visibleProjects.length) && perspective !== "review" ? (
           <View style={styles.emptyState}>
-            <View style={styles.emptyCheck}><Icon name="check" size={26} color="#aaa7ad" /></View>
-            <Text style={styles.emptyTitle}>All clear</Text>
-            <Text style={styles.emptyText}>There are no remaining actions in this view.</Text>
+            <View style={styles.emptyCheck}>
+              <Icon
+                name={!customPerspective && perspective === "inbox" ? "inbox-arrow-down-outline" : !customPerspective && perspective === "flagged" ? "flag-outline" : "check"}
+                size={26}
+                color="#aaa7ad"
+              />
+            </View>
+            <Text style={styles.emptyTitle}>
+              {!customPerspective && perspective === "inbox" ? "Inbox Zero" : !customPerspective && perspective === "flagged" ? "Nothing flagged" : "All clear"}
+            </Text>
+            <Text style={styles.emptyText}>
+              {!customPerspective && perspective === "inbox"
+                ? "New actions land here until you assign a project."
+                : !customPerspective && perspective === "flagged"
+                  ? "Flag actions to keep them in this list."
+                  : "There are no remaining actions in this view."}
+            </Text>
           </View>
         ) : null}
       </ScrollView>

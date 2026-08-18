@@ -1,5 +1,15 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { defaultPerspectiveBarIds, defaultSettings, legacyPerspectiveBarIds, type AppSettings } from "./model";
+import {
+  defaultOutlineColumns,
+  defaultPerspectiveBarIds,
+  defaultSettings,
+  defaultToolbarButtons,
+  legacyPerspectiveBarIds,
+  outlineColumnOrder,
+  type AppSettings,
+  type OutlineColumnId,
+  type ToolbarButtonId,
+} from "./model";
 
 const SETTINGS_STORAGE_KEY = "omniclone.settings.v1";
 
@@ -7,6 +17,20 @@ function migratePerspectiveBarIds(ids: string[] | undefined) {
   if (!ids?.length) return defaultPerspectiveBarIds;
   if (ids.join() === legacyPerspectiveBarIds.join()) return defaultPerspectiveBarIds;
   return ids;
+}
+
+function migrateOutlineColumns(columns: OutlineColumnId[] | undefined) {
+  if (!columns?.length) return defaultOutlineColumns;
+  const allowed = new Set(outlineColumnOrder);
+  const next = columns.filter((column) => allowed.has(column));
+  return next.length ? next : defaultOutlineColumns;
+}
+
+function migrateToolbarButtons(buttons: ToolbarButtonId[] | undefined) {
+  if (!buttons?.length) return defaultToolbarButtons;
+  const allowed = new Set(defaultToolbarButtons);
+  const next = buttons.filter((button) => allowed.has(button));
+  return next.length ? next : defaultToolbarButtons;
 }
 
 export async function loadSettings(): Promise<AppSettings> {
@@ -26,6 +50,14 @@ export async function loadSettings(): Promise<AppSettings> {
       perspectiveBarIds: migratePerspectiveBarIds(parsed.perspectiveBarIds),
       perspectiveShortcuts: { ...defaultSettings.perspectiveShortcuts, ...parsed.perspectiveShortcuts },
       standardAvailability: { ...defaultSettings.standardAvailability, ...parsed.standardAvailability },
+      outlineColumns: migrateOutlineColumns(parsed.outlineColumns),
+      toolbarButtons: migrateToolbarButtons(parsed.toolbarButtons),
+      appearance: parsed.appearance === "light" || parsed.appearance === "dark" || parsed.appearance === "system"
+        ? parsed.appearance
+        : defaultSettings.appearance,
+      awaitReplyDays: typeof parsed.awaitReplyDays === "number" && parsed.awaitReplyDays > 0
+        ? Math.round(parsed.awaitReplyDays)
+        : defaultSettings.awaitReplyDays,
     };
   } catch {
     return defaultSettings;
