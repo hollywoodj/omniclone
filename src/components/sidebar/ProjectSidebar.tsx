@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { ContextMenuPressable, useContextMenuTrigger, type ContextMenuItem } from "../../contextMenu";
 import { forecastWeek, todayKey, type ForecastDayKey } from "../../dates";
+import { useModifierKeys } from "../../marquee";
 import { defaultTagColor, palette, perspectives, type PerspectiveId, type Project, type TagRecord, type Task } from "../../model";
 import { projectContextItems } from "../../perspectives/projectContextItems";
 import { buildFolderTree, projectDisplayName, sidebarActionCounts } from "../../outline";
@@ -17,8 +18,10 @@ export function ProjectSidebar({
   tasks,
   extraFolders,
   selectedProjectId,
+  selectedProjectIds,
   selectedTag,
   selectedFolder,
+  selectedFolderPaths,
   forecastDay,
   forecastCounts,
   showCounts,
@@ -39,14 +42,16 @@ export function ProjectSidebar({
   tasks: Task[];
   extraFolders: string[];
   selectedProjectId: string | null;
+  selectedProjectIds?: string[];
   selectedTag: string | null;
   selectedFolder: string | null;
+  selectedFolderPaths?: string[];
   forecastDay: ForecastDayKey;
   forecastCounts: Record<string, number>;
   showCounts: boolean;
-  onSelectProject: (id: string | null) => void;
+  onSelectProject: (id: string | null, modifiers?: { toggle?: boolean }) => void;
   onSelectTag: (tag: string | null) => void;
-  onSelectFolder: (folder: string | null) => void;
+  onSelectFolder: (folder: string | null, modifiers?: { toggle?: boolean }) => void;
   onSelectForecastDay: (day: ForecastDayKey) => void;
   onNewProject: () => void;
   onNewFolder: () => void;
@@ -56,6 +61,9 @@ export function ProjectSidebar({
   tagRecords?: TagRecord[];
   onDropOnSidebar?: (ids: string[], target: SidebarDropTarget) => void;
 }) {
+  const modifiersRef = useModifierKeys();
+  const selectedProjects = new Set(selectedProjectIds?.length ? selectedProjectIds : (selectedProjectId ? [selectedProjectId] : []));
+  const selectedFolders = new Set(selectedFolderPaths?.length ? selectedFolderPaths : (selectedFolder ? [selectedFolder] : []));
   const tags = useMemo(() => buildTagTree(tagRecords ?? []), [tagRecords]);
   const counts = useMemo(() => sidebarActionCounts(tasks), [tasks]);
   const title = perspectives.find((item) => item.id === perspective)?.label ?? "Projects";
@@ -80,9 +88,9 @@ export function ProjectSidebar({
     return (
       <SidebarRow
         key={project.id}
-        selected={selectedProjectId === project.id}
+        selected={selectedProjects.has(project.id)}
         items={projectContextItems(project, { onFocusProject, onNewActionInProject, onDeleteProject })}
-        onPress={() => onSelectProject(project.id)}
+        onPress={() => onSelectProject(project.id, modifiersRef.current)}
         droppable
         onDropTasks={(ids) => onDropOnSidebar?.(ids, { kind: "project", projectId: project.id })}
         style={{ paddingLeft: 8 + depth * 14 }}
@@ -99,12 +107,12 @@ export function ProjectSidebar({
   };
   const renderFolder = (node: ReturnType<typeof buildFolderTree>["roots"][number], depth: number): React.ReactNode => {
     const collapsed = collapsedFolders.includes(node.path);
-    const selected = selectedFolder === node.path && !selectedProjectId;
+    const selected = selectedFolders.has(node.path);
     return (
       <View key={node.path}>
         <SidebarRow
           selected={selected}
-          onPress={() => onSelectFolder(node.path)}
+          onPress={() => onSelectFolder(node.path, modifiersRef.current)}
           droppable
           onDropTasks={(ids) => onDropOnSidebar?.(ids, { kind: "folder", folder: node.path })}
           style={{ paddingLeft: 8 + depth * 14 }}

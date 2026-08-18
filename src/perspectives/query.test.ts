@@ -25,7 +25,8 @@ const baseQuery = {
   tagFilter: null as string | null,
   folderFilter: null as string | null,
   forecastDay: "2026-08-17",
-  focusedProjectId: null as string | null,
+  focusedProjectIds: [] as string[],
+  focusedFolderPaths: [] as string[],
   query: "",
   settings: defaultSettings,
   customPerspective: null as CustomPerspective | null,
@@ -136,4 +137,18 @@ test("selecting a parent tag includes descendant-tagged actions", () => {
     tagRecords: [{ name: "Work" }, { name: "Email", parent: "Work" }],
   });
   assert.deepEqual(visible.map((item) => item.id), ["a"]);
+});
+
+test("focus can include a folder of projects", () => {
+  const flagged = [
+    task({ id: "a", title: "Site", projectId: "p1", flagged: true }),
+    task({ id: "b", title: "Home", projectId: "p2", flagged: true }),
+  ];
+  const focused = filterVisibleTasks({
+    ...baseQuery,
+    tasks: flagged,
+    perspective: "flagged",
+    focusedFolderPaths: ["Personal"],
+  });
+  assert.deepEqual(focused.map((item) => item.id), ["b"]);
 });

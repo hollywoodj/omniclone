@@ -41,7 +41,8 @@ export function usePersistedLibrary(onHydrated?: (initial: LocationState, settin
         tagFilter: null,
         folderFilter: null,
         forecastDay: todayKey(),
-        focusedProjectId: null,
+        focusedProjectIds: [],
+    focusedFolderPaths: [],
       };
       onHydratedRef.current?.(initial, nextSettings);
       setHydrated(true);

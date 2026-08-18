@@ -1,5 +1,57 @@
+import { palette as themePalette, type AppearanceMode } from "./theme.ts";
+
 export type PerspectiveId = "inbox" | "projects" | "tags" | "forecast" | "flagged" | "completed" | "review";
 export type ActivePerspective = PerspectiveId | `custom:${string}`;
+
+export type OutlineColumnId = "project" | "tags" | "duration" | "defer" | "due";
+export type ToolbarButtonId =
+  | "sidebar"
+  | "back"
+  | "forward"
+  | "view"
+  | "newAction"
+  | "quickEntry"
+  | "quickOpen"
+  | "focus"
+  | "settings"
+  | "search"
+  | "inspect";
+
+export const outlineColumnOrder: OutlineColumnId[] = ["project", "tags", "duration", "defer", "due"];
+export const outlineColumnLabels: Record<OutlineColumnId, string> = {
+  project: "Project",
+  tags: "Tags",
+  duration: "Duration",
+  defer: "Defer",
+  due: "Due",
+};
+export const defaultOutlineColumns: OutlineColumnId[] = ["project", "due"];
+export const defaultToolbarButtons: ToolbarButtonId[] = [
+  "sidebar",
+  "back",
+  "forward",
+  "view",
+  "newAction",
+  "quickEntry",
+  "quickOpen",
+  "focus",
+  "settings",
+  "search",
+  "inspect",
+];
+export const toolbarButtonLabels: Record<ToolbarButtonId, string> = {
+  sidebar: "Sidebar",
+  back: "Back",
+  forward: "Forward",
+  view: "View",
+  newAction: "New Action",
+  quickEntry: "Quick Entry",
+  quickOpen: "Quick Open",
+  focus: "Focus",
+  settings: "Settings",
+  search: "Search",
+  inspect: "Inspect",
+};
 
 export type AppSettings = {
   version: 1;
@@ -22,7 +74,16 @@ export type AppSettings = {
   perspectiveBarIds: string[];
   perspectiveShortcuts: Record<string, string>;
   standardAvailability: Record<PerspectiveId, PerspectiveAvailability>;
+  outlineColumns: OutlineColumnId[];
+  toolbarButtons: ToolbarButtonId[];
+  appearance: AppearanceMode;
+  awaitReplyDays: number;
 };
+
+export function visibleOutlineColumns(columns: OutlineColumnId[] | undefined, hideProject: boolean): OutlineColumnId[] {
+  const enabled = new Set(columns?.length ? columns : defaultOutlineColumns);
+  return outlineColumnOrder.filter((column) => enabled.has(column) && !(hideProject && column === "project"));
+}
 
 export type PerspectiveAvailability = "firstAvailable" | "available" | "remaining" | "completed" | "all";
 export type PerspectiveCombinator = "all" | "any" | "none";
@@ -154,24 +215,7 @@ export const dueTimeHours: Record<Exclude<DueTimePreset, "none">, { hours: numbe
 
 export const defaultTagColor = "#8e8e93";
 
-export const palette = {
-  purple: "#8b4fc2",
-  purpleDark: "#7836b4",
-  purpleSoft: "#e4d5ef",
-  purpleSelection: "#ded0eb",
-  text: "#232126",
-  muted: "#77747c",
-  line: "#d9d7dc",
-  chrome: "#e8e6ea",
-  rail: "#f3f1f4",
-  sidebar: "#efeff2",
-  inspector: "#f6f5f7",
-  canvas: "#ffffff",
-  danger: "#d94b4b",
-  flag: "#e2a13b",
-  dueSoon: "#d4a017",
-  overdue: "#d94b4b",
-};
+export const palette = themePalette;
 
 export const defaultPerspectiveShortcuts: Record<string, string> = {
   inbox: "meta+1",
@@ -206,6 +250,10 @@ export const defaultSettings: AppSettings = {
   inspectorWidth: 316,
   perspectiveBarIds: defaultPerspectiveBarIds,
   perspectiveShortcuts: defaultPerspectiveShortcuts,
+  outlineColumns: defaultOutlineColumns,
+  toolbarButtons: defaultToolbarButtons,
+  appearance: "system",
+  awaitReplyDays: 3,
   standardAvailability: {
     inbox: "remaining",
     projects: "remaining",

@@ -2,7 +2,7 @@ import * as DocumentPicker from "expo-document-picker";
 import { File as ExpoFile } from "expo-file-system";
 import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { Alert, Modal, Platform, SafeAreaView, View } from "react-native";
+import { Alert, Modal, Platform, SafeAreaView, useColorScheme, View } from "react-native";
 import {
   createCustomPerspective,
   defaultSettings,
@@ -35,7 +35,7 @@ import {
   skipReviewTimestamp,
   toTaskPaper,
 } from "./src/outline";
-import { todayKey, type ForecastDayKey } from "./src/dates";
+import { todayKey, emptyFocus, focusLabel, isFocusActive, projectMatchesFocus, taskMatchesFocus, type ForecastDayKey } from "./src/dates";
 import {
   applyClick,
   applyMarquee,
@@ -71,6 +71,7 @@ import { favoritePerspectives, projectColors } from "./src/perspectives/rail";
 import { defaultProjectIdFor, filterVisibleTasks, knownTagsFrom, perspectiveTitle, sidebarPerspectiveFor } from "./src/perspectives/query";
 import { forecastCountsFor, perspectiveBadgesFor, remainingCountForProject } from "./src/perspectives/counts";
 import {
+  applyCompleteAndAwaitReply,
   applyCompleteToggle,
   applyFlagToggle,
   applyMoveToProject,
@@ -95,6 +96,8 @@ import { hasNativeMenu, useAppHotkeys } from "./src/hooks/useAppHotkeys";
 import { copyToClipboard, readClipboard } from "./src/lib/clipboard";
 import { mergeTagRecords, renameTagRecord, upsertTagRecord } from "./src/tags";
 import { isTextInputTarget } from "./src/hotkeys";
+import { findTypeSelectMatch, nextTypeSelectQuery } from "./src/typeSelect";
+import { applyDocumentTheme, resolvedScheme } from "./src/theme";
 import type { SidebarDropTarget } from "./src/library/mutations";
 import "./src/desktopBridge";
 
@@ -107,7 +110,8 @@ export default function App() {
     tagFilter,
     folderFilter,
     forecastDay,
-    focusedProjectId,
+    focusedProjectIds,
+    focusedFolderPaths,
     canGoBack,
     canGoForward,
     locationRef,
@@ -154,6 +158,8 @@ export default function App() {
   const [importError, setImportError] = useState<string | null>(null);
   const [importSummary, setImportSummary] = useState<string | null>(null);
   const [importGuideOpen, setImportGuideOpen] = useState(false);
+  const [sidebarSelection, setSidebarSelection] = useState<{ projectIds: string[]; folderPaths: string[] }>({ projectIds: [], folderPaths: [] });
+  const typeSelectRef = useRef({ query: "", at: 0 });
   const nativeMenu = hasNativeMenu();
   const marqueeBaseRef = useRef<SelectionState>(emptySelection);
 
@@ -173,7 +179,13 @@ export default function App() {
   const barItems = useMemo(() => favoritePerspectives(settings, customPerspectives), [customPerspectives, settings]);
   const knownTagRecords = useMemo(() => mergeTagRecords(tagRecords, tasks), [tagRecords, tasks]);
   const knownTags = useMemo(() => knownTagsFrom(tasks, knownTagRecords), [knownTagRecords, tasks]);
-  const focusedProject = focusedProjectId ? projects.find((project) => project.id === focusedProjectId) : undefined;
+  const focused = { focusedProjectIds, focusedFolderPaths };
+  const focusedName = focusLabel(projects, focused);
+  const systemScheme = useColorScheme();
+  const colorScheme = resolvedScheme(settings.appearance, systemScheme === "dark" ? "dark" : "light");
+  useEffect(() => {
+    applyDocumentTheme(colorScheme);
+  }, [colorScheme]);
 
   const visibleTasks = useMemo(() => filterVisibleTasks({
     tasks,
@@ -183,13 +195,14 @@ export default function App() {
     tagFilter,
     folderFilter,
     forecastDay,
-    focusedProjectId,
+    focusedProjectIds,
+    focusedFolderPaths,
     query,
     settings,
     customPerspective: activeCustomPerspective,
     pendingCleanupIds,
     tagRecords: knownTagRecords,
-  }), [tasks, projects, perspective, projectFilter, tagFilter, folderFilter, forecastDay, focusedProjectId, settings, query, activeCustomPerspective, pendingCleanupIds, knownTagRecords]);
+  }), [tasks, projects, perspective, projectFilter, tagFilter, folderFilter, forecastDay, focusedProjectIds, focusedFolderPaths, settings, query, activeCustomPerspective, pendingCleanupIds, knownTagRecords]);
 
   const orderedTaskIds = useMemo(() => outlineTaskIds({
     tasks: visibleTasks,
@@ -300,6 +313,34 @@ export default function App() {
     if (!settings.cleanUpImmediately) {
       setPendingCleanupIds((current) => lingeringIdsAfterCompletion(current, ids, nextCompleted));
     }
+  };
+
+  const completeAndAwaitReply = (ids: string[]) => {
+    if (!ids.length) return;
+    const targets = tasks.filter((task) => ids.includes(task.id) && !task.completed);
+    if (!targets.length) return;
+    pushUndo();
+    setTasks((current) => applyCompleteAndAwaitReply(current, ids, settings.awaitReplyDays));
+    if (!settings.cleanUpImmediately) {
+      setPendingCleanupIds((current) => lingeringIdsAfterCompletion(current, ids, true));
+    }
+  };
+
+  const typeSelect = (key: string) => {
+    const next = nextTypeSelectQuery(typeSelectRef.current, key, Date.now());
+    typeSelectRef.current = next;
+    const from = orderedTaskIds.indexOf(selectedTaskId ?? "") + 1;
+    const match = findTypeSelectMatch(visibleTasks, next.query, orderedTaskIds, from);
+    if (match) setSelection(singleSelection(match));
+  };
+
+  const findTypeSelect = (direction: 1 | -1) => {
+    const query = typeSelectRef.current.query;
+    if (!query) return;
+    const current = orderedTaskIds.indexOf(selectedTaskId ?? "");
+    const from = current + direction;
+    const match = findTypeSelectMatch(visibleTasks, query, orderedTaskIds, from, direction);
+    if (match) setSelection(singleSelection(match));
   };
 
   const toggleTaskFlags = (ids: string[]) => {
@@ -426,30 +467,64 @@ export default function App() {
   }, [isPhone, orderedTaskIds, setInspectorOpen, settings.openInspectorOnSelection]);
 
   const focusSelected = () => {
-    const projectId = selectedTask?.projectId ?? projectFilter;
-    if (!projectId) return;
-    if (focusedProjectId === projectId) {
-      navigate({ focusedProjectId: null });
+    const projectIds = sidebarSelection.projectIds.length
+      ? sidebarSelection.projectIds
+      : [selectedTask?.projectId ?? projectFilter].filter((id): id is string => !!id);
+    const folderPaths = sidebarSelection.folderPaths.length
+      ? sidebarSelection.folderPaths
+      : folderFilter ? [folderFilter] : [];
+    if (!projectIds.length && !folderPaths.length) return;
+    const already = isFocusActive(focused)
+      && projectIds.length === focusedProjectIds.length
+      && projectIds.every((id) => focusedProjectIds.includes(id))
+      && folderPaths.length === focusedFolderPaths.length
+      && folderPaths.every((path) => focusedFolderPaths.includes(path));
+    if (already) {
+      navigate(emptyFocus());
       return;
     }
-    navigate({ perspective: "projects", projectFilter: projectId, tagFilter: null, focusedProjectId: projectId });
+    navigate({
+      perspective: "projects",
+      projectFilter: projectIds.length === 1 ? projectIds[0] ?? null : null,
+      folderFilter: folderPaths.length === 1 && !projectIds.length ? folderPaths[0] ?? null : null,
+      tagFilter: null,
+      focusedProjectIds: projectIds,
+      focusedFolderPaths: folderPaths,
+    });
   };
 
   const unfocus = () => {
-    navigate({ focusedProjectId: null });
+    navigate(emptyFocus());
   };
 
   const focusProject = (projectId: string) => {
-    navigate({ perspective: "projects", projectFilter: projectId, tagFilter: null, focusedProjectId: projectId });
+    setSidebarSelection({ projectIds: [projectId], folderPaths: [] });
+    navigate({ perspective: "projects", projectFilter: projectId, tagFilter: null, focusedProjectIds: [projectId], focusedFolderPaths: [] });
   };
 
-  const selectProject = (id: string | null) => {
+  const selectProject = (id: string | null, modifiers?: { toggle?: boolean }) => {
+    if (modifiers?.toggle && id) {
+      setSidebarSelection((current) => ({
+        projectIds: current.projectIds.includes(id) ? current.projectIds.filter((item) => item !== id) : [...current.projectIds, id],
+        folderPaths: current.folderPaths,
+      }));
+      return;
+    }
+    setSidebarSelection({ projectIds: id ? [id] : [], folderPaths: [] });
     startSidebarTransition(() => {
       navigate({ perspective: "projects", projectFilter: id, tagFilter: null, folderFilter: null });
     });
   };
 
-  const selectFolder = (folder: string | null) => {
+  const selectFolder = (folder: string | null, modifiers?: { toggle?: boolean }) => {
+    if (modifiers?.toggle && folder) {
+      setSidebarSelection((current) => ({
+        projectIds: current.projectIds,
+        folderPaths: current.folderPaths.includes(folder) ? current.folderPaths.filter((item) => item !== folder) : [...current.folderPaths, folder],
+      }));
+      return;
+    }
+    setSidebarSelection({ projectIds: [], folderPaths: folder ? [folder] : [] });
     startSidebarTransition(() => {
       navigate({ perspective: "projects", folderFilter: folder, projectFilter: null, tagFilter: null });
     });
@@ -541,7 +616,7 @@ export default function App() {
     const task = tasks.find((item) => item.id === (id ?? selectedTaskId));
     if (!task) return;
     if (!task.projectId) {
-      navigate({ perspective: "inbox", projectFilter: null, tagFilter: null, folderFilter: null, focusedProjectId: null });
+      navigate({ perspective: "inbox", projectFilter: null, tagFilter: null, folderFilter: null, ...emptyFocus() });
     } else {
       const project = projects.find((item) => item.id === task.projectId);
       navigate({
@@ -549,7 +624,7 @@ export default function App() {
         projectFilter: task.projectId,
         tagFilter: null,
         folderFilter: project?.folder ?? null,
-        focusedProjectId: null,
+        ...emptyFocus(),
       });
     }
     setInspectedProjectId(null);
@@ -737,7 +812,7 @@ export default function App() {
       setCustomPerspectives((current) => retainProjectsInPerspectives(current, retainedProjectIds));
     }
     setSelection(singleSelection(result.tasks[0]?.id ?? null));
-    navigate({ perspective: "projects", projectFilter: null, tagFilter: null, focusedProjectId: null });
+    navigate({ perspective: "projects", projectFilter: null, tagFilter: null, ...emptyFocus() });
     setInspectorOpen(false);
     setImportPreview(null);
     const duplicateNote = result.duplicateTasks ? ` ${result.duplicateTasks} duplicate${result.duplicateTasks === 1 ? " was" : "s were"} ignored.` : "";
@@ -811,6 +886,14 @@ export default function App() {
     },
     convertSelectedToProject: () => convertSelectedToProject(),
     revealInProjects: () => revealInProjects(),
+    awaitReply: () => { if (selectedTaskIds.length) completeAndAwaitReply(selectedTaskIds); },
+    findNext: () => findTypeSelect(1),
+    findPrevious: () => findTypeSelect(-1),
+    typeSelect: (key) => typeSelect(key),
+    customizeToolbar: () => {
+      setSettingsOpen(true);
+      setViewMenuOpen(false);
+    },
     confirmPendingDelete: () => {
       if (pendingDeleteProjectId) finalizeDeleteProject(pendingDeleteProjectId);
       else if (pendingDeleteTaskIds.length) finalizeDeleteTasks(pendingDeleteTaskIds, pendingDeleteDirection);
@@ -873,9 +956,9 @@ export default function App() {
     return () => window.removeEventListener("paste", onPaste);
   }, [modalOpen, selectedTaskId, tasks, projects, defaultProjectId]);
 
-  const sidebarProjects = focusedProjectId ? projects.filter((project) => project.id === focusedProjectId) : projects;
-  const forecastCounts = useMemo(() => forecastCountsFor(tasks, focusedProjectId), [focusedProjectId, tasks]);
-  const perspectiveBadges = useMemo(() => perspectiveBadgesFor(tasks, projects, focusedProjectId), [focusedProjectId, projects, tasks]);
+  const sidebarProjects = isFocusActive(focused) ? projects.filter((project) => projectMatchesFocus(project, focused)) : projects;
+  const forecastCounts = useMemo(() => forecastCountsFor(tasks, focused, undefined, projects), [focused, projects, tasks]);
+  const perspectiveBadges = useMemo(() => perspectiveBadgesFor(tasks, projects, focused), [focused, projects, tasks]);
 
   const changeAvailability = (availability: PerspectiveAvailability) => {
     if (perspective.startsWith("custom:")) return;
@@ -889,7 +972,7 @@ export default function App() {
   return (
     <ContextMenuProvider>
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="dark" />
+      <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
       <View style={styles.appShell}>
         {!isPhone && (
           <MenuBar
@@ -912,8 +995,9 @@ export default function App() {
             viewMenuOpen={viewMenuOpen}
             settingsOpen={settingsOpen}
             searchOpen={searchOpen}
-            focused={!!focusedProjectId}
-            canFocus={!!focusedProjectId || !!selectedTask?.projectId || !!projectFilter}
+            focused={isFocusActive(focused)}
+            canFocus={isFocusActive(focused) || !!selectedTask?.projectId || !!projectFilter || !!folderFilter || !!sidebarSelection.projectIds.length || !!sidebarSelection.folderPaths.length}
+            visibleButtons={settings.toolbarButtons}
             onToggleSidebar={() => setSidebarOpen((value) => !value)}
             onBack={goBack}
             onForward={goForward}
@@ -936,7 +1020,7 @@ export default function App() {
           />
         )}
 
-        {focusedProject && <FocusBar name={focusedProject.name} onUnfocus={unfocus} />}
+        {isFocusActive(focused) && <FocusBar name={focusedName} onUnfocus={unfocus} />}
         {searchOpen && (
           <SearchBar
             query={query}
@@ -956,6 +1040,7 @@ export default function App() {
             settings={settings}
             onChangeAvailability={changeAvailability}
             onChangeShowNotes={(showNotesInOutline) => setSettings((current) => ({ ...current, showNotesInOutline }))}
+            onChangeOutlineColumns={(outlineColumns) => setSettings((current) => ({ ...current, outlineColumns }))}
             onChangeCustom={(patch) => {
               if (activeCustomPerspective) patchCustomPerspective(activeCustomPerspective.id, patch);
             }}
@@ -988,11 +1073,13 @@ export default function App() {
             <ProjectSidebar
               perspective={sidebarPerspective}
               projects={sidebarProjects}
-              tasks={tasks.filter((task) => !focusedProjectId || task.projectId === focusedProjectId)}
+              tasks={tasks.filter((task) => taskMatchesFocus(task, projects, focused))}
               extraFolders={settings.extraFolders}
               selectedProjectId={projectFilter}
+              selectedProjectIds={sidebarSelection.projectIds}
               selectedTag={tagFilter}
               selectedFolder={folderFilter}
+              selectedFolderPaths={sidebarSelection.folderPaths}
               forecastDay={forecastDay}
               forecastCounts={forecastCounts}
               showCounts={settings.showSidebarCounts}
@@ -1058,6 +1145,7 @@ export default function App() {
             onConvertToProject={convertSelectedToProject}
             onReveal={revealInProjects}
             onChangeDates={(id, patch) => updateTask(id, patch)}
+            onAwaitReply={(id) => completeAndAwaitReply(idsForRow(id))}
             onOpenViewMenu={() => setViewMenuOpen(true)}
             onFocusProject={focusProject}
             onSelectProject={(id) => navigate({ perspective: "projects", projectFilter: id, tagFilter: null, folderFilter: null })}

@@ -21,6 +21,12 @@ import {
   setCalendarDate,
   calendarMonth,
   outlineDueLabel,
+  completionBucket,
+  nextReviewDate,
+  nextReviewLabel,
+  lastReviewedFromNextReview,
+  lastIntervalDays,
+  taskMatchesFocus,
 } from "./dates.ts";
 import type { Project } from "./model.ts";
 
@@ -129,4 +135,31 @@ test("Forecast Today includes flagged actions that have no due date", () => {
   assert.equal(isForecastItem(dated, todayKey(now), now), false);
   assert.equal(completionGroupLabel(now.toISOString(), now), "Today");
   assert.equal(completionGroupLabel(new Date(2026, 7, 16).toISOString(), now), "Yesterday");
+});
+
+test("dropped actions sit in their own Completed group", () => {
+  assert.equal(completionBucket({ completed: true, completedAt: now.toISOString(), status: "active" }, now), "Today");
+  assert.equal(completionBucket({ completed: false, status: "dropped" }, now), "Dropped");
+});
+
+test("next review date can be edited by backing out last reviewed", () => {
+  const project: Project = { id: "p1", name: "Site", color: "#000", note: "", reviewIntervalDays: 7, lastReviewedAt: new Date(2026, 7, 10).toISOString() };
+  assert.equal(nextReviewLabel(project, now), "Today");
+  const last = lastReviewedFromNextReview(project, "Aug 24", now);
+  assert.equal(nextReviewDate({ ...project, lastReviewedAt: last }, now).getDate(), 24);
+});
+
+test("last interval falls back when defer and due are missing", () => {
+  assert.equal(lastIntervalDays({ due: "Aug 20", defer: "Aug 17" }, 3, now), 3);
+  assert.equal(lastIntervalDays({}, 5, now), 5);
+});
+
+test("focus includes descendant folder projects", () => {
+  const projects: Project[] = [
+    { id: "p1", name: "Site", color: "#000", note: "", reviewIntervalDays: 7 },
+    { id: "p2", name: "Home", folder: "Personal", color: "#000", note: "", reviewIntervalDays: 7 },
+  ];
+  const focus = { focusedProjectIds: [], focusedFolderPaths: ["Personal"] };
+  assert.equal(taskMatchesFocus({ projectId: "p2" }, projects, focus), true);
+  assert.equal(taskMatchesFocus({ projectId: "p1" }, projects, focus), false);
 });

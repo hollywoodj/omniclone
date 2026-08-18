@@ -10,7 +10,8 @@ function loc(perspective: LocationState["perspective"]): LocationState {
     tagFilter: null,
     folderFilter: null,
     forecastDay: "2026-08-17",
-    focusedProjectId: null,
+    focusedProjectIds: [],
+    focusedFolderPaths: [],
   };
 }
 

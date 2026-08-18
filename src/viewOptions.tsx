@@ -2,12 +2,15 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import React, { useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import {
+  outlineColumnLabels,
+  outlineColumnOrder,
   palette,
   perspectiveColorChoices,
   perspectiveIconChoices,
   perspectives,
   type ActivePerspective,
   type CustomPerspective,
+  type OutlineColumnId,
   type PerspectiveAvailability,
   type PerspectiveCombinator,
   type PerspectiveGroupBy,
@@ -88,6 +91,8 @@ export function ViewOptionsPanel({
   onChangeAvailability,
   showNotes,
   onChangeShowNotes,
+  outlineColumns,
+  onChangeOutlineColumns,
   onChangeCustom,
   onClose,
 }: {
@@ -100,6 +105,8 @@ export function ViewOptionsPanel({
   onChangeAvailability: (value: PerspectiveAvailability) => void;
   showNotes: boolean;
   onChangeShowNotes: (value: boolean) => void;
+  outlineColumns: OutlineColumnId[];
+  onChangeOutlineColumns: (columns: OutlineColumnId[]) => void;
   onChangeCustom: (patch: Partial<CustomPerspective>) => void;
   onClose: () => void;
 }) {
@@ -337,6 +344,18 @@ export function ViewOptionsPanel({
             <Text style={styles.layoutText}>Show notes in outline</Text>
             <Switch value={showNotes} onValueChange={onChangeShowNotes} trackColor={{ true: custom.color }} />
           </View>
+          {outlineColumnOrder.map((column) => (
+            <View key={column} style={styles.layoutRow}>
+              <Text style={styles.layoutText}>{outlineColumnLabels[column]} column</Text>
+              <Switch
+                value={outlineColumns.includes(column)}
+                onValueChange={(value) => onChangeOutlineColumns(value
+                  ? outlineColumnOrder.filter((item) => item === column || outlineColumns.includes(item))
+                  : outlineColumns.filter((item) => item !== column))}
+                trackColor={{ true: custom.color }}
+              />
+            </View>
+          ))}
         </>
       ) : (
         <>
@@ -357,6 +376,18 @@ export function ViewOptionsPanel({
             <Text style={styles.layoutText}>Show notes in outline</Text>
             <Switch value={showNotes} onValueChange={onChangeShowNotes} trackColor={{ true: palette.purple }} />
           </View>
+          {outlineColumnOrder.map((column) => (
+            <View key={column} style={styles.layoutRow}>
+              <Text style={styles.layoutText}>{outlineColumnLabels[column]} column</Text>
+              <Switch
+                value={outlineColumns.includes(column)}
+                onValueChange={(value) => onChangeOutlineColumns(value
+                  ? outlineColumnOrder.filter((item) => item === column || outlineColumns.includes(item))
+                  : outlineColumns.filter((item) => item !== column))}
+                trackColor={{ true: palette.purple }}
+              />
+            </View>
+          ))}
           <Text style={styles.hint}>Availability settings have global scope, matching OmniFocus View Options.</Text>
         </>
       )}

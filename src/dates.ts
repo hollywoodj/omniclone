@@ -102,6 +102,16 @@ export function formatDateLabel(date: Date, now = new Date()) {
   return relativeDayLabel(date, now);
 }
 
+export function lastIntervalDays(task: Pick<Task, "due" | "defer">, fallback: number, now = new Date()) {
+  const due = parseDueLabel(task.due, now);
+  const defer = parseDueLabel(task.defer, now);
+  if (due && defer) {
+    const days = dayDelta(due, defer);
+    if (days > 0) return days;
+  }
+  return Math.max(1, fallback);
+}
+
 export function parseDueLabel(raw: string | undefined, now = new Date()): Date | undefined {
   if (!raw) return undefined;
   const value = clean(raw);
@@ -305,7 +315,7 @@ export function isForecastItem(task: Pick<Task, "flagged" | "due" | "completed">
   return isFlaggedOnForecastToday(task, day, now);
 }
 
-export const completionGroupOrder = ["Today", "Yesterday", "This Week", "Last Week", "Older", "Unknown"] as const;
+export const completionGroupOrder = ["Today", "Yesterday", "This Week", "Last Week", "Older", "Unknown", "Dropped"] as const;
 export type CompletionGroup = (typeof completionGroupOrder)[number];
 
 export function completionGroupLabel(iso: string | undefined, now = new Date()): CompletionGroup {
@@ -320,21 +330,84 @@ export function completionGroupLabel(iso: string | undefined, now = new Date()):
   return "Older";
 }
 
-export function projectDueForReview(project: Project, now = new Date()) {
-  if (!project.lastReviewedAt) return true;
+export function completionBucket(task: Pick<Task, "completed" | "completedAt" | "status">, now = new Date()): CompletionGroup {
+  if ((task.status ?? "active") === "dropped" && !task.completed) return "Dropped";
+  return completionGroupLabel(task.completedAt, now);
+}
+
+export function nextReviewDate(project: Project, now = new Date()) {
+  if (!project.lastReviewedAt) return startOfLocalDay(now);
   const last = new Date(project.lastReviewedAt);
-  if (Number.isNaN(last.getTime())) return true;
-  const next = addDays(startOfLocalDay(last), project.reviewIntervalDays);
-  return startOfLocalDay(now).getTime() >= next.getTime();
+  if (Number.isNaN(last.getTime())) return startOfLocalDay(now);
+  return addDays(startOfLocalDay(last), project.reviewIntervalDays);
+}
+
+export function nextReviewLabel(project: Project, now = new Date()) {
+  return formatDueLabel(nextReviewDate(project, now), now);
+}
+
+export function lastReviewedFromNextReview(project: Project, nextLabel: string | undefined, now = new Date()) {
+  const next = parseDueLabel(nextLabel, now);
+  if (!next) return project.lastReviewedAt;
+  return addDays(startOfLocalDay(next), -project.reviewIntervalDays).toISOString();
+}
+
+export function projectDueForReview(project: Project, now = new Date()) {
+  return startOfLocalDay(now).getTime() >= startOfLocalDay(nextReviewDate(project, now)).getTime();
 }
 
 export function reviewStatusText(project: Project, now = new Date()) {
-  if (!project.lastReviewedAt) return `Never reviewed · every ${project.reviewIntervalDays} days`;
+  if (!project.lastReviewedAt) return `Never reviewed · next ${nextReviewLabel(project, now)} · every ${project.reviewIntervalDays} days`;
   const last = new Date(project.lastReviewedAt);
   if (Number.isNaN(last.getTime())) return `Review every ${project.reviewIntervalDays} days`;
   const ago = Math.max(0, -dayDelta(last, now));
   const lastLabel = ago === 0 ? "today" : ago === 1 ? "yesterday" : `${ago} days ago`;
-  return `Last reviewed ${lastLabel} · every ${project.reviewIntervalDays} days`;
+  return `Last reviewed ${lastLabel} · next ${nextReviewLabel(project, now)} · every ${project.reviewIntervalDays} days`;
+}
+
+export type FocusState = {
+  focusedProjectIds: string[];
+  focusedFolderPaths: string[];
+};
+
+export const emptyFocus = (): FocusState => ({ focusedProjectIds: [], focusedFolderPaths: [] });
+
+export function isFocusActive(focus: FocusState) {
+  return focus.focusedProjectIds.length > 0 || focus.focusedFolderPaths.length > 0;
+}
+
+function sameIdSet(a: string[], b: string[]) {
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  return b.every((id) => set.has(id));
+}
+
+export function folderMatchesFocus(folder: string | undefined, paths: string[]) {
+  if (!folder || !paths.length) return false;
+  return paths.some((path) => folder === path || folder.startsWith(`${path} : `));
+}
+
+export function projectMatchesFocus(project: Project, focus: FocusState) {
+  if (!isFocusActive(focus)) return true;
+  if (focus.focusedProjectIds.includes(project.id)) return true;
+  return folderMatchesFocus(project.folder, focus.focusedFolderPaths);
+}
+
+export function taskMatchesFocus(task: Pick<Task, "projectId">, projects: Project[], focus: FocusState) {
+  if (!isFocusActive(focus)) return true;
+  if (task.projectId && focus.focusedProjectIds.includes(task.projectId)) return true;
+  const project = projects.find((item) => item.id === task.projectId);
+  return !!project && projectMatchesFocus(project, focus);
+}
+
+export function focusLabel(projects: Project[], focus: FocusState) {
+  const names = [
+    ...focus.focusedFolderPaths,
+    ...focus.focusedProjectIds.map((id) => projects.find((project) => project.id === id)?.name).filter((name): name is string => !!name),
+  ];
+  if (!names.length) return "";
+  if (names.length <= 2) return names.join(" & ");
+  return `${names.length} items`;
 }
 
 export type LocationState = {
@@ -343,7 +416,8 @@ export type LocationState = {
   tagFilter: string | null;
   folderFilter: string | null;
   forecastDay: ForecastDayKey;
-  focusedProjectId: string | null;
+  focusedProjectIds: string[];
+  focusedFolderPaths: string[];
 };
 
 export function sameLocation(a: LocationState, b: LocationState) {
@@ -352,5 +426,6 @@ export function sameLocation(a: LocationState, b: LocationState) {
     && a.tagFilter === b.tagFilter
     && a.folderFilter === b.folderFilter
     && a.forecastDay === b.forecastDay
-    && a.focusedProjectId === b.focusedProjectId;
+    && sameIdSet(a.focusedProjectIds, b.focusedProjectIds)
+    && sameIdSet(a.focusedFolderPaths, b.focusedFolderPaths);
 }

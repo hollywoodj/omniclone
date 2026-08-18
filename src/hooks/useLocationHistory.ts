@@ -18,7 +18,8 @@ export function useLocationHistory(onNavigate?: () => void) {
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [folderFilter, setFolderFilter] = useState<string | null>(null);
   const [forecastDay, setForecastDay] = useState(todayKey());
-  const [focusedProjectId, setFocusedProjectId] = useState<string | null>(null);
+  const [focusedProjectIds, setFocusedProjectIds] = useState<string[]>([]);
+  const [focusedFolderPaths, setFocusedFolderPaths] = useState<string[]>([]);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
   const locationRef = useRef<LocationState>({
@@ -27,13 +28,14 @@ export function useLocationHistory(onNavigate?: () => void) {
     tagFilter: null,
     folderFilter: null,
     forecastDay: todayKey(),
-    focusedProjectId: null,
+    focusedProjectIds: [],
+    focusedFolderPaths: [],
   });
   const historyRef = useRef<LocationHistory>(emptyHistory());
   const onNavigateRef = useRef(onNavigate);
   onNavigateRef.current = onNavigate;
 
-  locationRef.current = { perspective, projectFilter, tagFilter, folderFilter, forecastDay, focusedProjectId };
+  locationRef.current = { perspective, projectFilter, tagFilter, folderFilter, forecastDay, focusedProjectIds, focusedFolderPaths };
 
   const applyLocation = useCallback((next: LocationState) => {
     locationRef.current = next;
@@ -42,7 +44,8 @@ export function useLocationHistory(onNavigate?: () => void) {
     setTagFilter(next.tagFilter);
     setFolderFilter(next.folderFilter);
     setForecastDay(next.forecastDay);
-    setFocusedProjectId(next.focusedProjectId);
+    setFocusedProjectIds(next.focusedProjectIds);
+    setFocusedFolderPaths(next.focusedFolderPaths);
   }, []);
 
   const syncHistoryButtons = useCallback(() => {
@@ -90,7 +93,8 @@ export function useLocationHistory(onNavigate?: () => void) {
     tagFilter,
     folderFilter,
     forecastDay,
-    focusedProjectId,
+    focusedProjectIds,
+    focusedFolderPaths,
     canGoBack,
     canGoForward,
     locationRef,

@@ -40,6 +40,11 @@ export type HotkeyAction =
   | { type: "pasteTaskPaper" }
   | { type: "convertToProject" }
   | { type: "revealInProjects" }
+  | { type: "awaitReply" }
+  | { type: "findNext" }
+  | { type: "findPrevious" }
+  | { type: "typeSelect"; key: string }
+  | { type: "customizeToolbar" }
   | { type: "confirmDelete" }
   | { type: "cancel" };
 
@@ -126,6 +131,7 @@ export function matchOmniFocusHotkey(event: KeyboardEvent, options: {
     if (key === "k" || key === "K") return { type: "cleanUp" };
     if (key === "d" || key === "D") return { type: "duplicate" };
     if (key === "z" || key === "Z") return { type: "undo" };
+    if (key === "g" || key === "G") return { type: "findNext" };
   }
 
   if (meta && ctrl && !alt && !shift && (key === "p" || key === "P")) return { type: "showPerspectivesList" };
@@ -150,6 +156,7 @@ export function matchOmniFocusHotkey(event: KeyboardEvent, options: {
     if (key === "l" || key === "L") return { type: "toggleFlag" };
     if (key === "c" || key === "C") return { type: "copyTaskPaper" };
     if (key === "z" || key === "Z") return { type: "redo" };
+    if (key === "g" || key === "G") return { type: "findPrevious" };
   }
 
   if (ctrl && alt && !meta && shift && (key === "s" || key === "S")) return { type: "quickEntry" };
