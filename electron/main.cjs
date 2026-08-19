@@ -2,6 +2,7 @@ const { app, BrowserWindow, Menu, ipcMain, shell } = require("electron");
 const path = require("node:path");
 const http = require("node:http");
 const fs = require("node:fs");
+const { initAutoUpdate } = require("./updater.cjs");
 
 const distDir = path.join(__dirname, "..", "dist");
 const isMac = process.platform === "darwin";
@@ -206,7 +207,10 @@ if (!gotLock) {
       mainWindow.focus();
     }
   });
-  app.whenReady().then(createWindow);
+  app.whenReady().then(async () => {
+    await createWindow();
+    initAutoUpdate();
+  });
 }
 
 app.on("open-url", (event, url) => {

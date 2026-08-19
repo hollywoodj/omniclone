@@ -125,6 +125,7 @@ jobs:
             release/*.dmg
             release/*.exe
             release/*.blockmap
+            release/latest*.yml
           if-no-files-found: error
 
   publish:
