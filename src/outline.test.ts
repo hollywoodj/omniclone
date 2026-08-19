@@ -154,6 +154,17 @@ test("pastes nested TaskPaper back into actions", () => {
   assert.match(pasted.created[1]?.note ?? "", /Draft the homepage/);
 });
 
+test("pastes under a parent action when parentId is set", () => {
+  const parent = task({ id: "parent", title: "Launch" });
+  const pasted = pasteTaskPaper([parent], [project({ name: "Website" })], "- Write copy", {
+    fallbackProjectId: "p1",
+    parentId: "parent",
+    idFactory: (prefix) => `${prefix}-x`,
+  });
+  assert.equal(pasted.created[0]?.parentId, "parent");
+  assert.equal(pasted.created[0]?.projectId, "p1");
+});
+
 test("copies nested actions as TaskPaper", () => {
   const tasks = [
     task({ id: "a", title: "Launch", flagged: true }),

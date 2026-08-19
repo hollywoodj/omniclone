@@ -112,22 +112,55 @@ export function lastIntervalDays(task: Pick<Task, "due" | "defer">, fallback: nu
   return Math.max(1, fallback);
 }
 
+const monthIndexByName = Object.fromEntries(
+  monthNames.flatMap((name, index) => [
+    [name.toLowerCase(), index],
+    [name.slice(0, 3).toLowerCase(), index],
+  ]),
+) as Record<string, number>;
+
+function parseClockParts(hourRaw: string, minuteRaw: string | undefined, periodRaw: string | undefined) {
+  let hours = Number(hourRaw);
+  const minutes = Number(minuteRaw ?? 0);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return undefined;
+  if (periodRaw) {
+    hours = hours % 12;
+    if (periodRaw.toUpperCase() === "PM") hours += 12;
+  }
+  return { hours, minutes };
+}
+
+function splitDueDateAndTime(value: string): { datePart: string; hours: number; minutes: number } {
+  const withMinutes = value.match(/^(.*?)(?:,?\s+)(\d{1,2}):(\d{2})(?:\s*(AM|PM))\s*$/i);
+  if (withMinutes) {
+    const clock = parseClockParts(withMinutes[2] ?? "", withMinutes[3], withMinutes[4]);
+    if (clock) return { datePart: (withMinutes[1] ?? "").trim(), ...clock };
+  }
+  const ampm = value.match(/^(.*?)(?:,?\s+)(\d{1,2})\s*(AM|PM)\s*$/i);
+  if (ampm) {
+    const clock = parseClockParts(ampm[2] ?? "", "0", ampm[3]);
+    if (clock) return { datePart: (ampm[1] ?? "").trim(), ...clock };
+  }
+  const twentyFour = value.match(/^(.*?)\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*$/);
+  if (twentyFour && !/,\s*\d{4}$/.test(twentyFour[1] ?? "")) {
+    const clock = parseClockParts(twentyFour[2] ?? "", twentyFour[3], undefined);
+    if (clock) return { datePart: (twentyFour[1] ?? "").trim(), ...clock };
+  }
+  return { datePart: value, hours: 0, minutes: 0 };
+}
+
 export function parseDueLabel(raw: string | undefined, now = new Date()): Date | undefined {
   if (!raw) return undefined;
   const value = clean(raw);
   if (!value) return undefined;
 
-  const timeMatch = value.match(/,\s*(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-  let hours = 0;
-  let minutes = 0;
-  let datePart = value;
-  if (timeMatch && timeMatch.index !== undefined) {
-    const hour12 = Number(timeMatch[1]);
-    minutes = Number(timeMatch[2]);
-    const period = (timeMatch[3] ?? "AM").toUpperCase();
-    hours = hour12 % 12;
-    if (period === "PM") hours += 12;
-    datePart = value.slice(0, timeMatch.index).trim();
+  const split = splitDueDateAndTime(value);
+  const hours = split.hours;
+  const minutes = split.minutes;
+  const datePart = split.datePart;
+
+  if (!datePart) {
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes);
   }
 
   const named: Record<string, number> = { today: 0, tomorrow: 1, yesterday: -1 };
@@ -135,12 +168,15 @@ export function parseDueLabel(raw: string | undefined, now = new Date()): Date |
     return addDays(new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes), named[datePart.toLowerCase()] ?? 0);
   }
 
-  const monthMatch = datePart.match(/^([A-Za-z]{3})\s+(\d{1,2})(?:,\s*(\d{4}))?$/);
+  const iso = datePart.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) {
+    return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]), hours, minutes);
+  }
+
+  const monthMatch = datePart.match(/^([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?$/i);
   if (monthMatch) {
-    const monthToken = monthMatch[1];
-    if (!monthToken) return parseOmniTimestamp(value);
-    const month = monthNames.findIndex((name) => name.toLowerCase() === monthToken.toLowerCase());
-    if (month >= 0) {
+    const month = monthIndexByName[(monthMatch[1] ?? "").toLowerCase()];
+    if (month !== undefined) {
       const year = monthMatch[3] ? Number(monthMatch[3]) : now.getFullYear();
       return new Date(year, month, Number(monthMatch[2]), hours, minutes);
     }

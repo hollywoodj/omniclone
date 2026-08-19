@@ -57,7 +57,7 @@ import { Outline } from "./src/components/outline/Outline";
 import { InspectorPane } from "./src/components/inspector/InspectorPane";
 import { Inspector } from "./src/components/inspector/Inspector";
 import { ProjectInspector } from "./src/components/inspector/ProjectInspector";
-import { QuickEntryModal } from "./src/components/modals/QuickEntryModal";
+import { QuickEntryModal, type QuickEntryPayload } from "./src/components/modals/QuickEntryModal";
 import { SettingsModal } from "./src/components/modals/SettingsModal";
 import { ConfirmDeleteModal } from "./src/components/modals/ConfirmDeleteModal";
 import { OmniImportModal } from "./src/components/modals/OmniImportModal";
@@ -97,7 +97,7 @@ import { useAppLayout } from "./src/hooks/useAppLayout";
 import { hasNativeMenu, useAppHotkeys } from "./src/hooks/useAppHotkeys";
 import { copyToClipboard, readClipboard } from "./src/lib/clipboard";
 import { downloadTextFile } from "./src/lib/download";
-import { documentTitle, parseOmniCloneUrl, resolveOmniCloneOpen } from "./src/links";
+import { addDraftFromUrl, applyOmniCloneAdd, applyOmniClonePaste, buildXSuccessUrl, documentTitle, parseOmniCloneUrl, resolveOmniCloneOpen } from "./src/links";
 import { mergeTagRecords, renameTagRecord, upsertTagRecord } from "./src/tags";
 import { isTextInputTarget } from "./src/hotkeys";
 import { findTypeSelectMatch, nextTypeSelectQuery } from "./src/typeSelect";
@@ -159,6 +159,8 @@ export default function App() {
   const [pendingDeleteDirection, setPendingDeleteDirection] = useState<"menu" | "previous" | "next">("menu");
   const [pendingDeleteProjectId, setPendingDeleteProjectId] = useState<string | null>(null);
   const [quickKind, setQuickKind] = useState<"task" | "project" | "folder" | null>(null);
+  const [quickDraft, setQuickDraft] = useState<QuickEntryPayload | null>(null);
+  const pendingXSuccessRef = useRef<string | undefined>(undefined);
   const [perspectivesListOpen, setPerspectivesListOpen] = useState(false);
   const [quickOpenOpen, setQuickOpenOpen] = useState(false);
   const [shortcutRecordingId, setShortcutRecordingId] = useState<string | null>(null);
@@ -412,7 +414,52 @@ export default function App() {
     finalizeDeleteProject(id);
   };
 
-  const createItem = (payload: { title: string; projectId: string | null; flagged?: boolean; due?: string; tags?: string[] }) => {
+  const closeQuickEntry = () => {
+    pendingXSuccessRef.current = undefined;
+    setQuickDraft(null);
+    setQuickKind(null);
+  };
+
+  const startQuickEntry = (kind: "task" | "project" | "folder" | null) => {
+    pendingXSuccessRef.current = undefined;
+    setQuickDraft(null);
+    setQuickKind(kind);
+  };
+
+  const openCallbackUrl = (url: string) => {
+    if (typeof window !== "undefined" && window.omniclone?.openExternal) {
+      window.omniclone.openExternal(url);
+      return;
+    }
+    if (typeof window !== "undefined") window.open(url, "_blank", "noopener");
+  };
+
+  const revealCreatedTasks = (created: Task[]) => {
+    if (!created.length) return;
+    const first = created[0];
+    if (!first) return;
+    retainInspectionIds.current = new Set([...retainInspectionIds.current, ...created.map((item) => item.id)]);
+    if (created.length === 1) setSelection(singleSelection(first.id));
+    else {
+      setSelection({
+        ids: created.map((item) => item.id),
+        anchorId: first.id,
+        headId: created[created.length - 1]?.id ?? first.id,
+      });
+    }
+    setInspectedProjectId(null);
+    setInspectorOpen(true);
+    if (first.projectId === null) selectPerspective("inbox");
+    else navigate({ perspective: "projects", projectFilter: first.projectId, tagFilter: null, folderFilter: null, ...emptyFocus() });
+  };
+
+  const rememberCreatedTags = (created: Task[]) => {
+    const tags = created.flatMap((item) => item.tags);
+    if (!tags.length) return;
+    setTagRecords((current) => tags.reduce((records, tag) => upsertTagRecord(records, { name: tag }), current));
+  };
+
+  const createItem = (payload: QuickEntryPayload) => {
     pushUndo();
     if (quickKind === "folder") {
       const name = payload.title.trim();
@@ -439,16 +486,21 @@ export default function App() {
         projectId: payload.projectId,
         tags: payload.tags ?? [],
         due: payload.due,
+        defer: payload.defer,
+        note: payload.note,
         flagged: payload.flagged ?? false,
         completed: false,
         createdAt: new Date().toISOString(),
+        estimatedMinutes: payload.estimatedMinutes,
       };
       setTasks((current) => [...current, task]);
-      setSelection(singleSelection(task.id));
-      setInspectedProjectId(null);
-      if (payload.projectId === null) selectPerspective("inbox");
-      else navigate({ perspective: "projects", projectFilter: payload.projectId, tagFilter: null, folderFilter: null });
+      rememberCreatedTags([task]);
+      revealCreatedTasks([task]);
+      const callback = pendingXSuccessRef.current;
+      if (callback) openCallbackUrl(buildXSuccessUrl(callback, task.id));
     }
+    pendingXSuccessRef.current = undefined;
+    setQuickDraft(null);
     setQuickKind(null);
   };
 
@@ -630,18 +682,8 @@ export default function App() {
       fallbackProjectId: defaultProjectId,
     });
     setTasks(result.tasks);
-    if (result.created.length === 1) setSelection(singleSelection(result.created[0]?.id ?? null));
-    else if (result.created.length) {
-      setSelection({
-        ids: result.created.map((item) => item.id),
-        anchorId: result.created[0]?.id ?? null,
-        headId: result.created[result.created.length - 1]?.id ?? null,
-      });
-    }
-    const pastedTags = result.created.flatMap((item) => item.tags);
-    if (pastedTags.length) {
-      setTagRecords((current) => pastedTags.reduce((records, tag) => upsertTagRecord(records, { name: tag }), current));
-    }
+    rememberCreatedTags(result.created);
+    if (result.created.length) revealCreatedTasks(result.created);
   };
   const pasteFromClipboard = async () => {
     const text = await readClipboard();
@@ -734,24 +776,67 @@ export default function App() {
   };
 
   const openOmniCloneUrl = useCallback((raw: string) => {
-    const resolved = resolveOmniCloneOpen(raw, tasks);
-    if (!resolved) return;
-    if (resolved.kind === "perspective") {
-      selectPerspective(resolved.id as ActivePerspective);
+    const parsed = parseOmniCloneUrl(raw);
+    if (!parsed) return;
+    if (parsed.kind === "task" || parsed.kind === "perspective") {
+      const resolved = resolveOmniCloneOpen(raw, tasks);
+      if (!resolved) return;
+      if (resolved.kind === "perspective") {
+        selectPerspective(resolved.id as ActivePerspective);
+        return;
+      }
+      retainInspectionIds.current = new Set([...retainInspectionIds.current, resolved.id]);
+      navigate({
+        perspective: resolved.projectId ? "projects" : "inbox",
+        projectFilter: resolved.projectId,
+        tagFilter: null,
+        folderFilter: null,
+        ...emptyFocus(),
+      });
+      setSelection(singleSelection(resolved.id));
+      setInspectedProjectId(null);
+      setInspectorOpen(true);
       return;
     }
-    retainInspectionIds.current = new Set([...retainInspectionIds.current, resolved.id]);
-    navigate({
-      perspective: resolved.projectId ? "projects" : "inbox",
-      projectFilter: resolved.projectId,
-      tagFilter: null,
-      folderFilter: null,
-      ...emptyFocus(),
-    });
-    setSelection(singleSelection(resolved.id));
-    setInspectedProjectId(null);
-    setInspectorOpen(true);
-  }, [navigate, selectPerspective, setInspectorOpen, tasks]);
+    if (parsed.kind === "add") {
+      const draft = addDraftFromUrl(parsed, projects, knownTagRecords);
+      if (!parsed.autosave) {
+        pendingXSuccessRef.current = parsed.xSuccess;
+        setQuickDraft({
+          title: draft.title,
+          projectId: draft.projectId,
+          flagged: draft.flagged,
+          due: draft.due,
+          defer: draft.defer,
+          note: draft.note,
+          tags: draft.tags,
+          estimatedMinutes: draft.estimatedMinutes,
+        });
+        setQuickKind("task");
+        return;
+      }
+      if (!draft.title) return;
+      pushUndo();
+      const result = applyOmniCloneAdd(tasks, projects, parsed, knownTagRecords);
+      setTasks(result.tasks);
+      rememberCreatedTags([result.task]);
+      revealCreatedTasks([result.task]);
+      if (parsed.xSuccess) openCallbackUrl(buildXSuccessUrl(parsed.xSuccess, result.task.id));
+      return;
+    }
+    if (parsed.kind === "paste") {
+      void (async () => {
+        const content = parsed.content?.trim() ? parsed.content : await readClipboard();
+        if (!content.trim()) return;
+        pushUndo();
+        const result = applyOmniClonePaste(tasks, projects, { ...parsed, content }, { clipboard: content });
+        if (!result.created.length) return;
+        setTasks(result.tasks);
+        rememberCreatedTags(result.created);
+        revealCreatedTasks(result.created);
+      })();
+    }
+  }, [knownTagRecords, navigate, projects, pushUndo, selectPerspective, setInspectorOpen, tasks]);
   const openOmniCloneUrlRef = useRef(openOmniCloneUrl);
   openOmniCloneUrlRef.current = openOmniCloneUrl;
 
@@ -963,7 +1048,7 @@ export default function App() {
     openOmniFocusImport,
     toggleTitles: () => setSettings((current) => ({ ...current, perspectiveBarShowsTitles: !current.perspectiveBarShowsTitles })),
     insertAction: () => insertAction(),
-    setQuickKind,
+    setQuickKind: startQuickEntry,
     selectedTaskIds,
     toggleTasks,
     toggleTaskFlags,
@@ -1025,7 +1110,7 @@ export default function App() {
         setPendingDeleteDirection("menu");
         return;
       }
-      if (quickKind) setQuickKind(null);
+      if (quickKind) closeQuickEntry();
       else if (settingsOpen) setSettingsOpen(false);
       else if (perspectivesListOpen) {
         setShortcutRecordingId(null);
@@ -1146,7 +1231,7 @@ export default function App() {
             onForward={goForward}
             onToggleView={() => setViewMenuOpen((value) => !value)}
             onNewAction={() => insertAction()}
-            onQuickEntry={() => setQuickKind("task")}
+            onQuickEntry={() => startQuickEntry("task")}
             onQuickOpen={() => setQuickOpenOpen(true)}
             onFocus={focusSelected}
             onSettings={() => setSettingsOpen(true)}
@@ -1230,8 +1315,8 @@ export default function App() {
               onSelectTag={selectTag}
               onSelectFolder={selectFolder}
               onSelectForecastDay={selectForecastDay}
-              onNewProject={() => setQuickKind("project")}
-              onNewFolder={() => setQuickKind("folder")}
+              onNewProject={() => startQuickEntry("project")}
+              onNewFolder={() => startQuickEntry("folder")}
               onFocusProject={focusProject}
               onNewActionInProject={newActionInProject}
               onDeleteProject={deleteProject}
@@ -1362,7 +1447,7 @@ export default function App() {
         )}
       </View>
 
-      <QuickEntryModal visible={quickKind !== null} kind={quickKind ?? "task"} projects={projects} defaultProjectId={defaultProjectId} onClose={() => setQuickKind(null)} onSave={createItem} />
+      <QuickEntryModal visible={quickKind !== null} kind={quickKind ?? "task"} projects={projects} defaultProjectId={defaultProjectId} initial={quickDraft} onClose={closeQuickEntry} onSave={createItem} />
 
       {settingsOpen && <SettingsModal settings={settings} projectCount={projects.length} taskCount={tasks.length} compact={isPhone} onChange={(patch) => {
         setSettings((current) => ({ ...current, ...patch }));
