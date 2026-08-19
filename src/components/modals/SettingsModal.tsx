@@ -4,6 +4,7 @@ import { defaultToolbarButtons, outlineColumnLabels, outlineColumnOrder, palette
 import { appStyles as styles } from "../../styles/appStyles";
 import { Icon, type IconName } from "../ui/Icon";
 import { TrafficLights } from "../ui/TrafficLights";
+import { shortcutLabel } from "../../shortcuts.ts";
 
 type SettingsSection = "general" | "appearance" | "data";
 
@@ -114,7 +115,7 @@ export function SettingsModal({
                     <SettingsRow title="Confirm before deleting" detail="Ask before removing actions from the database.">
                       <Switch value={settings.confirmBeforeDelete} onValueChange={(confirmBeforeDelete) => onChange({ confirmBeforeDelete })} trackColor={{ true: palette.purple }} />
                     </SettingsRow>
-                    <SettingsRow title="Clean up immediately" detail="Hide completed and filed inbox items as soon as they change. Turn off to keep them until ⌘K.">
+                    <SettingsRow title="Clean up immediately" detail={`Hide completed and filed inbox items as soon as they change. Turn off to keep them until ${shortcutLabel("⌘K")}.`}>
                       <Switch value={settings.cleanUpImmediately} onValueChange={(cleanUpImmediately) => onChange({ cleanUpImmediately })} trackColor={{ true: palette.purple }} />
                     </SettingsRow>
                   </View>

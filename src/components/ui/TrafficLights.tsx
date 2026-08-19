@@ -1,6 +1,7 @@
 import React from "react";
 import { Pressable, View } from "react-native";
 import { appStyles as styles } from "../../styles/appStyles";
+import { isMacPlatform } from "../../shortcuts";
 
 const trafficLightColors = ["#ff5f57", "#febc2e", "#28c840"] as const;
 
@@ -18,7 +19,14 @@ function TrafficLight({ color, onPress, accessibilityLabel }: { color: string; o
   );
 }
 
+/**
+ * macOS window buttons. The Electron build uses a normal framed window, so on
+ * Windows and Linux the real minimize/maximize/close controls already sit in
+ * the title bar; drawing these there gives the user two sets, one of which is
+ * decorative. Render them only where they belong.
+ */
 export function TrafficLights({ onClose }: { onClose?: () => void }) {
+  if (!isMacPlatform()) return null;
   return (
     <View style={styles.trafficLights}>
       {trafficLightColors.map((color, index) => (

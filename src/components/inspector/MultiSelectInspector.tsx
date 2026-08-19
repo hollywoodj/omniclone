@@ -3,6 +3,7 @@ import { Pressable, Text, View } from "react-native";
 import { palette } from "../../model";
 import { appStyles as styles } from "../../styles/appStyles";
 import { Icon } from "../ui/Icon";
+import { shortcutLabel, modifierLabel } from "../../shortcuts.ts";
 
 export function MultiSelectInspector({
   count,
@@ -29,7 +30,7 @@ export function MultiSelectInspector({
       <View style={styles.multiSelectBody}>
         <Text style={styles.multiSelectCount}>{count}</Text>
         <Text style={styles.multiSelectLabel}>actions selected</Text>
-        <Text style={styles.multiSelectHint}>Shift-click, ⌘-click, drag, or ⌘A to change the selection.</Text>
+        <Text style={styles.multiSelectHint}>{`Shift-click, ${modifierLabel()}-click, drag, or ${shortcutLabel("⌘A")} to change the selection.`}</Text>
         <Pressable onPress={onToggle} style={styles.multiSelectButton}>
           <Icon name={allCompleted ? "circle-outline" : "check-circle-outline"} size={17} color={palette.purpleDark} />
           <Text style={styles.multiSelectButtonText}>{allCompleted ? "Mark Incomplete" : "Mark Complete"}</Text>

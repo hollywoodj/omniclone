@@ -138,7 +138,13 @@ export function matchOmniFocusHotkey(event: KeyboardEvent, options: {
     if (key === "p" || key === "P") return { type: "print" };
   }
 
+  // Mac uses ⌃⌘P. Windows has no second Command-like modifier (Ctrl already
+  // stands in for ⌘ here), so these chords need their own Windows bindings or
+  // they are unreachable on the platform we ship an installer for.
   if (meta && ctrl && !alt && !shift && (key === "p" || key === "P")) return { type: "showPerspectivesList" };
+  if (!isMacPlatform() && meta && shift && !alt && (key === "p" || key === "P")) {
+    return { type: "showPerspectivesList" };
+  }
 
   if (meta && alt && !ctrl && !shift) {
     if (key === "n" || key === "N") return { type: "newFolder" };
@@ -165,6 +171,8 @@ export function matchOmniFocusHotkey(event: KeyboardEvent, options: {
 
   if (ctrl && alt && !meta && shift && (key === "s" || key === "S")) return { type: "quickEntry" };
   if (ctrl && alt && !meta && !shift && key === " ") return { type: "quickEntry" };
+  // Windows equivalent of ⌃⌥Space. Ctrl+Alt+S is taken by Toggle Sidebar.
+  if (!isMacPlatform() && meta && alt && !shift && key === " ") return { type: "quickEntry" };
 
   if (isBareKey(event)) {
     if (key === " ") {

@@ -2,21 +2,9 @@
 
 # dependencies
 /node_modules
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
 
 # testing
 /coverage
-
-# next.js
-/.next/
-/.vinext/
-/out/
 
 # misc
 .DS_Store
@@ -31,17 +19,20 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
-# vercel
-.vercel
-
-# typescript
-next-env.d.ts
+# build output
 /dist/
 /release/
-/.wrangler/
-/outputs/
-/work/
-.sites-dev.log
+/build/
+web-build/
+
+# expo
 .expo/
 .expo-*.log
-web-build/
+
+# local logs and scratch
+.sites-dev.log
+/outputs/
+/work/
+
+# cloudflare wrangler local state (leftover scaffolding)
+/.wrangler/

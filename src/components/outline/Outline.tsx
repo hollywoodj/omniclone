@@ -26,6 +26,7 @@ import type { SelectionModifiers } from "../../selection";
 import { appStyles as styles } from "../../styles/appStyles";
 import { Icon } from "../ui/Icon";
 import { TaskRow } from "./TaskRow";
+import { shortcutLabel } from "../../shortcuts.ts";
 
 export function Outline({
   title,
@@ -55,6 +56,8 @@ export function Outline({
   onMoveTasks,
   onStartEdit,
   onCommitTitle,
+  onCommitTitleAndAdd,
+  onCancelEdit,
   onNewTask,
   onReviewProject,
   onSkipReview,
@@ -109,6 +112,8 @@ export function Outline({
   onMoveTasks: (id: string, projectId: string | null) => void;
   onStartEdit: (id: string) => void;
   onCommitTitle: (id: string, title: string) => void;
+  onCommitTitleAndAdd: (id: string, title: string) => void;
+  onCancelEdit: (id: string) => void;
   onNewTask: () => void;
   onReviewProject: (id: string) => void;
   onSkipReview: (id: string) => void;
@@ -153,13 +158,13 @@ export function Outline({
   const byId = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const children = useMemo(() => childMap(tasks), [tasks]);
   const outlineMenuItems: ContextMenuItem[] = [
-    { id: "select-all", label: "Select All", icon: "select-all", shortcut: "⌘A", onPress: onSelectAll },
-    { id: "clean-up", label: "Clean Up", icon: "broom", shortcut: "⌘K", onPress: onCleanUp },
+    { id: "select-all", label: "Select All", icon: "select-all", shortcut: shortcutLabel("⌘A"), onPress: onSelectAll },
+    { id: "clean-up", label: "Clean Up", icon: "broom", shortcut: shortcutLabel("⌘K"), onPress: onCleanUp },
     { id: "sep-outline", label: "", separator: true },
-    { id: "expand", label: "Expand All", icon: "arrow-expand-vertical", shortcut: "⌥⌘9", onPress: onExpandAll },
-    { id: "collapse", label: "Collapse All", icon: "arrow-collapse-vertical", shortcut: "⌥⌘0", onPress: onCollapseAll },
-    { id: "view-options", label: "View Options", icon: "tune-variant", shortcut: "⇧⌘V", onPress: onOpenViewMenu },
-    { id: "new-action", label: "New Action", icon: "plus", shortcut: "⌘N", onPress: onNewTask },
+    { id: "expand", label: "Expand All", icon: "arrow-expand-vertical", shortcut: shortcutLabel("⌥⌘9"), onPress: onExpandAll },
+    { id: "collapse", label: "Collapse All", icon: "arrow-collapse-vertical", shortcut: shortcutLabel("⌥⌘0"), onPress: onCollapseAll },
+    { id: "view-options", label: "View Options", icon: "tune-variant", shortcut: shortcutLabel("⇧⌘V"), onPress: onOpenViewMenu },
+    { id: "new-action", label: "New Action", icon: "plus", shortcut: shortcutLabel("⌘N"), onPress: onNewTask },
   ];
   const projectHandlers = { onFocusProject, onNewActionInProject, onDeleteProject, onDuplicateProject, onInspectProject, onOpenProject: onSelectProject };
   const groupBy = customPerspective ? effectiveGroupBy(customPerspective) : null;
@@ -247,6 +252,8 @@ export function Outline({
         onToggleCollapse={() => toggleCollapsed(task.id)}
         onStartEdit={() => onStartEdit(task.id)}
         onCommitTitle={(title) => onCommitTitle(task.id, title)}
+        onCommitTitleAndAdd={(title) => onCommitTitleAndAdd(task.id, title)}
+        onCancelEdit={() => onCancelEdit(task.id)}
         onConvertToProject={() => onConvertToProject(task.id)}
         onReveal={() => onReveal(task.id)}
         onChangeDates={(patch) => onChangeDates(task.id, patch)}
@@ -447,7 +454,7 @@ export function Outline({
               <Icon name="database-import-outline" size={16} color="#fff" />
               <Text style={styles.migrateButtonText}>Import from OmniFocus</Text>
             </Pressable>
-            <Text style={styles.migrateHint}>Or create a project with ⇧⌘N and start empty.</Text>
+            <Text style={styles.migrateHint}>{`Or create a project with ${shortcutLabel("⇧⌘N")} and start empty.`}</Text>
           </View>
         ) : !customPerspective && perspective === "review" && !reviewProjects.length ? (
           <View style={styles.emptyState}>

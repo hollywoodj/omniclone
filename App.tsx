@@ -144,6 +144,10 @@ export default function App() {
   const [selection, setSelection] = useState<SelectionState>(emptySelection);
   const [inspectedProjectId, setInspectedProjectId] = useState<string | null>(null);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  // A row inserted by New Action that has never been given a title. Cancelling or
+  // clicking away discards it, the way OmniFocus does, instead of leaving an
+  // empty action behind in the database.
+  const [unnamedTaskId, setUnnamedTaskId] = useState<string | null>(null);
   const [collapseNonce, setCollapseNonce] = useState<{ action: "expand" | "collapse"; n: number } | null>(null);
   const [pendingCleanupIds, setPendingCleanupIds] = useState<string[]>([]);
   const [, startSidebarTransition] = useTransition();
@@ -560,7 +564,19 @@ export default function App() {
     });
   };
 
-  const insertAction = (projectId?: string | null, afterId?: string | null) => {
+  /**
+   * Insert a new action.
+   *
+   * `prePatch` is applied to the existing task in the same state update. Return
+   * in the outline commits the current title and opens the next row, and doing
+   * those as two separate updates let the insert overwrite the title with a
+   * stale snapshot of the task list.
+   */
+  const insertAction = (
+    projectId?: string | null,
+    afterId?: string | null,
+    prePatch?: { id: string; patch: Partial<Task> }
+  ) => {
     pushUndo();
     const after = afterId ?? selectedTaskId;
     const created: Task = {
@@ -572,12 +588,16 @@ export default function App() {
       completed: false,
       createdAt: new Date().toISOString(),
     };
-    const result = insertTaskAfter(tasks, after, created, projectId ?? defaultProjectId);
-    setTasks(result.tasks);
+    setTasks((current) => {
+      const base = prePatch ? applyTaskPatch(current, prePatch.id, prePatch.patch) : current;
+      return insertTaskAfter(base, after, created, projectId ?? defaultProjectId).tasks;
+    });
     setInspectedProjectId(null);
-    setSelection(singleSelection(result.created.id));
-    setEditingTaskId(result.created.id);
-    if ((projectId ?? result.created.projectId) === null) selectPerspective("inbox");
+    // insertTaskAfter keeps the id it was handed, so this matches the inserted row.
+    setSelection(singleSelection(created.id));
+    setEditingTaskId(created.id);
+    setUnnamedTaskId(created.id);
+    if ((projectId ?? created.projectId) === null) selectPerspective("inbox");
   };
 
   const newActionInProject = (projectId: string) => {
@@ -745,9 +765,42 @@ export default function App() {
     }
   };
 
+  /**
+   * Drop a never-named New Action row. Bypasses deleteTasks so discarding a row
+   * the user never filled in does not raise the delete confirmation.
+   */
+  const discardUnnamedTask = (id: string) => {
+    setTasks((current) => current.filter((task) => task.id !== id));
+    setUnnamedTaskId((current) => (current === id ? null : current));
+    setEditingTaskId((current) => (current === id ? null : current));
+    setSelection((current) => (current.ids.includes(id) ? emptySelection : current));
+  };
+
   const commitTaskTitle = (id: string, title: string) => {
+    if (!title.trim() && id === unnamedTaskId) {
+      discardUnnamedTask(id);
+      return;
+    }
+    if (title.trim()) setUnnamedTaskId((current) => (current === id ? null : current));
     updateTask(id, { title });
     setEditingTaskId((current) => current === id ? null : current);
+  };
+
+  /** Return in the outline: commit this title, then open a fresh sibling row. */
+  const commitTaskTitleAndAdd = (id: string, title: string) => {
+    if (!title.trim()) {
+      if (id === unnamedTaskId) discardUnnamedTask(id);
+      else setEditingTaskId((current) => (current === id ? null : current));
+      return;
+    }
+    const task = tasks.find((item) => item.id === id);
+    setUnnamedTaskId((current) => (current === id ? null : current));
+    insertAction(task?.projectId ?? null, id, { id, patch: { title } });
+  };
+
+  const cancelTaskEdit = (id: string) => {
+    if (id === unnamedTaskId) discardUnnamedTask(id);
+    else setEditingTaskId((current) => (current === id ? null : current));
   };
 
   const startEditTitle = (id?: string) => {
@@ -985,7 +1038,10 @@ export default function App() {
         setQuery("");
         setSearchOpen(false);
       }
-      else if (editingTaskId) setEditingTaskId(null);
+      else if (editingTaskId) {
+        if (editingTaskId === unnamedTaskId) discardUnnamedTask(editingTaskId);
+        else setEditingTaskId(null);
+      }
       else if (selectedTaskIds.length || inspectedProjectId) {
         setSelection(emptySelection);
         setInspectedProjectId(null);
@@ -1227,6 +1283,8 @@ export default function App() {
             onCopyTaskPaper={copySelectedTaskPaper}
             onStartEdit={startEditTitle}
             onCommitTitle={commitTaskTitle}
+            onCommitTitleAndAdd={commitTaskTitleAndAdd}
+            onCancelEdit={cancelTaskEdit}
             onNewTask={() => insertAction()}
             onReviewProject={(id) => setProjects((current) => current.map((project) => project.id === id ? { ...project, lastReviewedAt: new Date().toISOString() } : project))}
             onSkipReview={skipReview}

@@ -106,3 +106,71 @@ export function toElectronAccelerator(value: string | undefined | null): string 
   parts.push(key);
   return parts.join("+");
 }
+
+/**
+ * Render a Mac chord written in glyphs ("⇧⌘N") for the current platform.
+ *
+ * Menus hardcoded the Mac glyphs, so every Windows build showed ⌘/⌥/⇧ for keys
+ * that are actually Ctrl/Alt/Shift. Chords that need a real Control modifier
+ * have no direct Windows spelling and are remapped to match the bindings in
+ * hotkeys.ts.
+ */
+const WINDOWS_CHORD_OVERRIDES: Record<string, string> = {
+  "⌃⌘P": "Ctrl+Shift+P",
+  "⌃⌥Space": "Ctrl+Alt+Space",
+  "⌃⌥S": "Ctrl+Alt+Space",
+};
+
+const GLYPH_MODIFIERS: Array<[string, "meta" | "alt" | "shift" | "ctrl"]> = [
+  ["⌘", "meta"],
+  ["⌥", "alt"],
+  ["⇧", "shift"],
+  ["⌃", "ctrl"],
+  ["^", "ctrl"],
+];
+
+const GLYPH_KEY_LABELS: Record<string, string> = {
+  "↑": "Up",
+  "↓": "Down",
+  "←": "Left",
+  "→": "Right",
+  "↩": "Enter",
+  "⌫": "Backspace",
+  "⎋": "Esc",
+};
+
+export function shortcutLabel(chord: string): string {
+  if (!chord) return "";
+  if (isMacPlatform()) return chord;
+  if (WINDOWS_CHORD_OVERRIDES[chord]) return WINDOWS_CHORD_OVERRIDES[chord];
+
+  let rest = chord;
+  const found = new Set<string>();
+  let matched = true;
+  while (matched) {
+    matched = false;
+    for (const [glyph, name] of GLYPH_MODIFIERS) {
+      if (rest.startsWith(glyph)) {
+        found.add(name);
+        rest = rest.slice(glyph.length);
+        matched = true;
+        break;
+      }
+    }
+  }
+
+  const tokens: string[] = [];
+  if (found.has("ctrl")) tokens.push("Ctrl");
+  if (found.has("meta")) tokens.push("Ctrl");
+  if (found.has("alt")) tokens.push("Alt");
+  if (found.has("shift")) tokens.push("Shift");
+
+  const key = GLYPH_KEY_LABELS[rest] ?? (rest.length === 1 ? rest.toUpperCase() : rest);
+  const unique = tokens.filter((token, index) => tokens.indexOf(token) === index);
+  return [...unique, key].join("+");
+}
+
+/** "⌘" on Mac, "Ctrl" elsewhere — for prose like "⌘-click to extend". */
+export function modifierLabel(): string {
+  return isMacPlatform() ? "⌘" : "Ctrl";
+}

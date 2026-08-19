@@ -43,8 +43,12 @@ export function useAppHotkeys(options: {
       event.preventDefault();
       options.onCommand(action);
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    // Capture phase: outline rows render as focusable buttons, and their own
+    // Space/Enter handling stops the event before it reaches window. Listening
+    // on the way down lets Space complete the focused action instead of just
+    // re-triggering the row.
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [
     nativeMenu,
     options.enabled,

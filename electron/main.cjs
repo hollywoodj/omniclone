@@ -4,6 +4,7 @@ const http = require("node:http");
 const fs = require("node:fs");
 
 const distDir = path.join(__dirname, "..", "dist");
+const isMac = process.platform === "darwin";
 
 const mimeTypes = {
   ".html": "text/html",
@@ -48,7 +49,9 @@ function send(win, command) {
 
 function buildMenu(win, customPerspectives = []) {
   const perspectivesSubmenu = [
-        { label: "Show Perspectives List", accelerator: "Control+Command+P", click: () => send(win, { type: "showPerspectivesList" }) },
+    // ⌃⌘P has no Windows/Linux spelling (there is no Command key), so the
+    // non-Mac binding matches the Ctrl+Shift+P handled in src/hotkeys.ts.
+    { label: "Show Perspectives List", accelerator: isMac ? "Control+Command+P" : "Control+Shift+P", click: () => send(win, { type: "showPerspectivesList" }) },
     { label: "Add Perspective…", click: () => send(win, { type: "addPerspective" }) },
     { type: "separator" },
     { label: "Inbox", accelerator: "CommandOrControl+1", click: () => send(win, { type: "perspective", id: "inbox" }) },
@@ -91,7 +94,7 @@ function buildMenu(win, customPerspectives = []) {
         { label: "New Action", accelerator: "CommandOrControl+N", click: () => send(win, { type: "newAction" }) },
         { label: "New Project", accelerator: "Shift+CommandOrControl+N", click: () => send(win, { type: "newProject" }) },
         { label: "New Folder", accelerator: "Alt+CommandOrControl+N", click: () => send(win, { type: "newFolder" }) },
-        { label: "Quick Entry", click: () => send(win, { type: "quickEntry" }) },
+        { label: "Quick Entry", accelerator: "Control+Alt+Space", click: () => send(win, { type: "quickEntry" }) },
         { type: "separator" },
         { label: "Quick Open…", accelerator: "CommandOrControl+O", click: () => send(win, { type: "quickOpen" }) },
         { label: "Import from OmniFocus…", click: () => send(win, { type: "importOmniFocus" }) },

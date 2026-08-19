@@ -9,8 +9,9 @@ import { appStyles as styles } from "../../styles/appStyles";
 import { DateField } from "../inspector/DateField";
 import { Icon, type IconName } from "../ui/Icon";
 import { StatusRing } from "../ui/StatusRing";
+import { shortcutLabel } from "../../shortcuts.ts";
 
-export function TaskRow({ task, project, projects, selected, editing, bulkCount, settings, depth = 0, hasChildren = false, collapsed = false, hideProject = false, blocked = false, compactDue = false, dragIds, registerRow, onSelect, onToggle, onInspect, onToggleSelected, onToggleFlag, onDelete, onCopy, onCopyLink, onCopyTaskPaper, onDuplicate, onMove, onIndent, onOutdent, onMoveRow, onToggleCollapse, onStartEdit, onCommitTitle, onConvertToProject, onReveal, onChangeDates, onAwaitReply }: {
+export function TaskRow({ task, project, projects, selected, editing, bulkCount, settings, depth = 0, hasChildren = false, collapsed = false, hideProject = false, blocked = false, compactDue = false, dragIds, registerRow, onSelect, onToggle, onInspect, onToggleSelected, onToggleFlag, onDelete, onCopy, onCopyLink, onCopyTaskPaper, onDuplicate, onMove, onIndent, onOutdent, onMoveRow, onToggleCollapse, onStartEdit, onCommitTitle, onCommitTitleAndAdd, onCancelEdit, onConvertToProject, onReveal, onChangeDates, onAwaitReply }: {
   task: Task;
   project?: Project;
   projects: Project[];
@@ -43,6 +44,8 @@ export function TaskRow({ task, project, projects, selected, editing, bulkCount,
   onToggleCollapse: () => void;
   onStartEdit: () => void;
   onCommitTitle: (title: string) => void;
+  onCommitTitleAndAdd?: (title: string) => void;
+  onCancelEdit?: () => void;
   onConvertToProject: () => void;
   onReveal: () => void;
   onChangeDates: (patch: Pick<Task, "due" | "defer">) => void;
@@ -57,6 +60,18 @@ export function TaskRow({ task, project, projects, selected, editing, bulkCount,
   useEffect(() => setDraft(task.title), [task.id, task.title, editing]);
   useEffect(() => setEditingDate(null), [task.id]);
   const commit = () => onCommitTitle(draft.trim() || task.title);
+  // OmniFocus commits on Return and opens the next action, so a list can be
+  // typed straight through without reaching for the mouse.
+  const commitAndAdd = () => {
+    const title = draft.trim() || task.title;
+    if (onCommitTitleAndAdd) onCommitTitleAndAdd(title);
+    else onCommitTitle(title);
+  };
+  const cancelEdit = () => {
+    setDraft(task.title);
+    if (onCancelEdit) onCancelEdit();
+    else onCommitTitle(task.title);
+  };
   const columns = visibleOutlineColumns(settings.outlineColumns, hideProject);
   const columnStyle: Record<OutlineColumnId, object> = {
     project: styles.outlineColumnProject,
@@ -76,14 +91,14 @@ export function TaskRow({ task, project, projects, selected, editing, bulkCount,
     { id: "edit", label: "Edit", icon: "pencil-outline", shortcut: "↩", onPress: onStartEdit },
     { id: "toggle", label: `${task.completed ? "Mark Incomplete" : "Mark Complete"}${bulk ? ` (${bulkCount})` : ""}`, icon: task.completed ? "circle-outline" : "check-circle-outline", onPress: onToggleSelected },
     { id: "await", label: `Complete and Await Reply${bulk ? ` (${bulkCount})` : ""}`, icon: "email-fast-outline", onPress: onAwaitReply },
-    { id: "flag", label: `${task.flagged ? "Remove Flag" : "Flag"}${bulk ? ` (${bulkCount})` : ""}`, icon: task.flagged ? "flag-off-outline" : "flag-outline", shortcut: "⇧⌘L", onPress: onToggleFlag },
+    { id: "flag", label: `${task.flagged ? "Remove Flag" : "Flag"}${bulk ? ` (${bulkCount})` : ""}`, icon: task.flagged ? "flag-off-outline" : "flag-outline", shortcut: shortcutLabel("⇧⌘L"), onPress: onToggleFlag },
     { id: "sep-org", label: "", separator: true },
-    { id: "duplicate", label: bulk ? `Duplicate (${bulkCount})` : "Duplicate", icon: "content-duplicate", shortcut: "⌘D", onPress: onDuplicate },
+    { id: "duplicate", label: bulk ? `Duplicate (${bulkCount})` : "Duplicate", icon: "content-duplicate", shortcut: shortcutLabel("⌘D"), onPress: onDuplicate },
     { id: "indent", label: "Indent", icon: "format-indent-increase", shortcut: "⇥", onPress: onIndent },
-    { id: "outdent", label: "Outdent", icon: "format-indent-decrease", shortcut: "⇧⇥", onPress: onOutdent },
+    { id: "outdent", label: "Outdent", icon: "format-indent-decrease", shortcut: shortcutLabel("⇧⇥"), onPress: onOutdent },
     { id: "convert", label: "Convert to Project", icon: "folder-plus-outline", onPress: onConvertToProject },
-    { id: "up", label: "Move Up", icon: "arrow-up", shortcut: "⌥⌘↑", onPress: () => onMoveRow(-1) },
-    { id: "down", label: "Move Down", icon: "arrow-down", shortcut: "⌥⌘↓", onPress: () => onMoveRow(1) },
+    { id: "up", label: "Move Up", icon: "arrow-up", shortcut: shortcutLabel("⌥⌘↑"), onPress: () => onMoveRow(-1) },
+    { id: "down", label: "Move Down", icon: "arrow-down", shortcut: shortcutLabel("⌥⌘↓"), onPress: () => onMoveRow(1) },
     { id: "inbox", label: "Move to Inbox", icon: "inbox-arrow-down-outline", onPress: () => onMove(null) },
     ...projects.slice(0, 8).map((item) => ({
       id: `move-${item.id}`,
@@ -93,7 +108,7 @@ export function TaskRow({ task, project, projects, selected, editing, bulkCount,
     })),
     { id: "sep-copy", label: "", separator: true },
     { id: "copy", label: bulk ? `Copy Titles (${bulkCount})` : "Copy Title", icon: "content-copy", onPress: onCopy },
-    { id: "paper", label: "Copy as TaskPaper", icon: "code-tags", shortcut: "⇧⌘C", onPress: onCopyTaskPaper },
+    { id: "paper", label: "Copy as TaskPaper", icon: "code-tags", shortcut: shortcutLabel("⇧⌘C"), onPress: onCopyTaskPaper },
     { id: "link", label: bulk ? `Copy Links (${bulkCount})` : "Copy Link", icon: "link-variant", onPress: onCopyLink },
     { id: "delete", label: bulk ? `Delete (${bulkCount})` : "Delete", icon: "trash-can-outline", destructive: true, onPress: onDelete },
   ];
@@ -157,7 +172,13 @@ export function TaskRow({ task, project, projects, selected, editing, bulkCount,
                 value={draft}
                 onChangeText={setDraft}
                 onBlur={commit}
-                onSubmitEditing={commit}
+                onSubmitEditing={commitAndAdd}
+                onKeyPress={(event) => {
+                  if (event.nativeEvent.key === "Escape") {
+                    event.preventDefault?.();
+                    cancelEdit();
+                  }
+                }}
                 style={[
                   styles.taskTitle,
                   styles.taskTitleInput,
