@@ -17,4 +17,7 @@ contextBridge.exposeInMainWorld("omniclone", {
     ipcRenderer.on("open-url", listener);
     return () => ipcRenderer.removeListener("open-url", listener);
   },
+  openExternal: (url) => {
+    ipcRenderer.send("open-external", url);
+  },
 });

@@ -5,6 +5,7 @@ export type DesktopBridge = {
   setPerspectivesMenu: (items: Array<{ id: string; label: string; accelerator?: string }>) => void;
   setWindowTitle?: (title: string) => void;
   onOpenUrl?: (cb: (url: string) => void) => () => void;
+  openExternal?: (url: string) => void;
 };
 
 declare global {

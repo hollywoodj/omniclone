@@ -363,7 +363,7 @@ function splitTagList(value: string) {
   return [...new Set(value.replace(/^\(|\)$/g, "").split(/[,;]+/).map((tag) => tag.trim()).filter(Boolean))];
 }
 
-function parseEstimateTag(raw: string) {
+export function parseEstimateTag(raw: string) {
   const match = raw.trim().match(/^(\d+(?:\.\d+)?)\s*(m|h|min|mins|minute|minutes|hour|hours)?/i);
   if (!match) return undefined;
   const amount = Number(match[1]);
@@ -455,7 +455,7 @@ export function looksLikeTaskPaper(text: string) {
   return /(?:^|\n)\s*-\s+\S/.test(trimmed) || /(?:^|\n).+:\s*(?:$|\n)/.test(trimmed);
 }
 
-function matchPastedProject(projects: Project[], name: string | undefined) {
+export function matchPastedProject(projects: Project[], name: string | undefined) {
   if (!name) return undefined;
   const needle = name.trim().toLowerCase();
   return projects.find((project) => {
@@ -465,13 +465,30 @@ function matchPastedProject(projects: Project[], name: string | undefined) {
   });
 }
 
+function insertionSortBase(tasks: Task[], parentId: string | null, projectId: string | null, index: number | undefined, after?: Task) {
+  if (index === undefined || Number.isNaN(index)) {
+    return after ? (after.sortOrder ?? 0) : tasks.length;
+  }
+  const siblings = sortedSiblings(tasks, parentId, projectId);
+  if (!siblings.length) return 0;
+  const at = index < 0 ? siblings.length + index : index;
+  const clamped = Math.max(0, Math.min(siblings.length, at));
+  if (clamped <= 0) return (siblings[0]?.sortOrder ?? 0) - 1;
+  if (clamped >= siblings.length) return siblings[siblings.length - 1]?.sortOrder ?? siblings.length;
+  const prev = siblings[clamped - 1]?.sortOrder ?? clamped - 1;
+  const next = siblings[clamped]?.sortOrder ?? prev + 1;
+  return (prev + next) / 2 - 0.5;
+}
+
 export function pasteTaskPaper(
   tasks: Task[],
   projects: Project[],
   text: string,
   options: {
     afterId?: string | null;
+    parentId?: string | null;
     fallbackProjectId: string | null;
+    index?: number;
     idFactory?: (prefix: string) => string;
     now?: Date;
   },
@@ -484,23 +501,26 @@ export function pasteTaskPaper(
     if (!title) return { tasks, created: [] };
     items.push({ title, depth: 0, tags: [], flagged: false, completed: false });
   }
+  const forcedParent = options.parentId ? tasks.find((task) => task.id === options.parentId) : undefined;
   const after = options.afterId ? tasks.find((task) => task.id === options.afterId) : undefined;
   const created: Task[] = [];
   const stack: Array<{ depth: number; id: string }> = [];
   const next = tasks.map((task) => ({ ...task }));
-  let sortBase = after ? (after.sortOrder ?? 0) : next.length;
+  const topParentId = forcedParent?.id ?? after?.parentId ?? null;
+  const topProjectId = forcedParent?.projectId ?? after?.projectId ?? options.fallbackProjectId;
+  let sortBase = insertionSortBase(next, topParentId, topProjectId, options.index, after);
   for (const item of items) {
     while (stack.length && (stack[stack.length - 1]?.depth ?? 0) >= item.depth) stack.pop();
     const parent = stack[stack.length - 1];
     const matchedProject = matchPastedProject(projects, item.projectName);
     const projectId = parent
-      ? (created.find((task) => task.id === parent.id)?.projectId ?? after?.projectId ?? options.fallbackProjectId)
-      : (matchedProject?.id ?? after?.projectId ?? options.fallbackProjectId);
+      ? (created.find((task) => task.id === parent.id)?.projectId ?? forcedParent?.projectId ?? after?.projectId ?? options.fallbackProjectId)
+      : (forcedParent?.projectId ?? matchedProject?.id ?? after?.projectId ?? options.fallbackProjectId);
     const task: Task = {
       id: idFactory("task"),
       title: item.title,
       projectId,
-      parentId: parent?.id ?? (item.depth === 0 ? after?.parentId ?? null : null),
+      parentId: parent?.id ?? (item.depth === 0 ? forcedParent?.id ?? after?.parentId ?? null : null),
       sortOrder: (sortBase += 0.5),
       tags: item.tags,
       due: item.due,

@@ -38,6 +38,15 @@ test("parses OmniFocus-style due labels back into dates", () => {
   assert.equal(parseDueLabel("Yesterday", now)?.getDate(), 16);
   assert.equal(parseDueLabel("Aug 22", now)?.getDate(), 22);
   assert.equal(parseDueLabel("Jun 12, 2017", now)?.getFullYear(), 2017);
+  const isoAfternoon = parseDueLabel("2026-08-19 5pm", now);
+  assert.equal(isoAfternoon?.getFullYear(), 2026);
+  assert.equal(isoAfternoon?.getMonth(), 7);
+  assert.equal(isoAfternoon?.getDate(), 19);
+  assert.equal(isoAfternoon?.getHours(), 17);
+  const juneMorning = parseDueLabel("jun 25 8am", now);
+  assert.equal(juneMorning?.getMonth(), 5);
+  assert.equal(juneMorning?.getDate(), 25);
+  assert.equal(juneMorning?.getHours(), 8);
 });
 
 test("classifies overdue, due soon, and upcoming dates", () => {

@@ -218,6 +218,10 @@ app.on("open-url", (event, url) => {
   sendOpenUrl(url);
 });
 
+ipcMain.on("open-external", (_event, url) => {
+  if (typeof url === "string" && url.trim()) shell.openExternal(url);
+});
+
 async function createWindow() {
   const win = new BrowserWindow({
     width: 1280,

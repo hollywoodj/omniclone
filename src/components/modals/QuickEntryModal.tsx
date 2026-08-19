@@ -6,29 +6,47 @@ import { Icon } from "../ui/Icon";
 import { DatePresets } from "../inspector/DatePresets";
 import { FieldLabel } from "../inspector/FieldLabel";
 
-export function QuickEntryModal({ visible, kind, projects, defaultProjectId, onClose, onSave }: {
+export type QuickEntryPayload = {
+  title: string;
+  projectId: string | null;
+  flagged?: boolean;
+  due?: string;
+  defer?: string;
+  note?: string;
+  tags?: string[];
+  estimatedMinutes?: number;
+};
+
+export function QuickEntryModal({ visible, kind, projects, defaultProjectId, initial, onClose, onSave }: {
   visible: boolean;
   kind: "task" | "project" | "folder";
   projects: Project[];
   defaultProjectId: string | null;
+  initial?: QuickEntryPayload | null;
   onClose: () => void;
-  onSave: (payload: { title: string; projectId: string | null; flagged?: boolean; due?: string; tags?: string[] }) => void;
+  onSave: (payload: QuickEntryPayload) => void;
 }) {
   const [title, setTitle] = useState("");
   const [projectId, setProjectId] = useState<string | null>(defaultProjectId);
   const [flagged, setFlagged] = useState(false);
   const [due, setDue] = useState<string | undefined>();
+  const [defer, setDefer] = useState<string | undefined>();
+  const [note, setNote] = useState("");
   const [tagDraft, setTagDraft] = useState("");
+  const [estimatedMinutes, setEstimatedMinutes] = useState<number | undefined>();
 
   useEffect(() => {
     if (visible) {
-      setTitle("");
-      setProjectId(defaultProjectId);
-      setFlagged(false);
-      setDue(undefined);
-      setTagDraft("");
+      setTitle(initial?.title ?? "");
+      setProjectId(initial?.projectId ?? defaultProjectId);
+      setFlagged(initial?.flagged ?? false);
+      setDue(initial?.due);
+      setDefer(initial?.defer);
+      setNote(initial?.note ?? "");
+      setTagDraft((initial?.tags ?? []).join(", "));
+      setEstimatedMinutes(initial?.estimatedMinutes);
     }
-  }, [visible, defaultProjectId]);
+  }, [visible, defaultProjectId, initial]);
 
   const save = () => {
     if (!title.trim()) return;
@@ -37,12 +55,18 @@ export function QuickEntryModal({ visible, kind, projects, defaultProjectId, onC
       projectId,
       flagged,
       due,
+      defer,
+      note: note.trim() || undefined,
       tags: tagDraft.split(",").map((tag) => tag.trim()).filter(Boolean),
+      estimatedMinutes,
     });
     setTitle("");
     setFlagged(false);
     setDue(undefined);
+    setDefer(undefined);
+    setNote("");
     setTagDraft("");
+    setEstimatedMinutes(undefined);
   };
 
   return (
@@ -69,8 +93,12 @@ export function QuickEntryModal({ visible, kind, projects, defaultProjectId, onC
               <View style={styles.quickMeta}>
                 <FieldLabel>Due</FieldLabel>
                 <DatePresets value={due} onChange={setDue} />
+                <FieldLabel>Defer</FieldLabel>
+                <DatePresets value={defer} onChange={setDefer} />
                 <FieldLabel>Tags</FieldLabel>
                 <TextInput value={tagDraft} onChangeText={setTagDraft} placeholder="errands, phone" style={styles.fieldInput} />
+                <FieldLabel>Note</FieldLabel>
+                <TextInput value={note} onChangeText={setNote} placeholder="Optional note" multiline style={styles.fieldInput} />
               </View>
             </>
           )}
