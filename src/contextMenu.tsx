@@ -16,6 +16,12 @@ export type ContextMenuItem = {
   onPress?: () => void;
 };
 
+export type ContextMenuItems = ContextMenuItem[] | (() => ContextMenuItem[]);
+
+function resolveMenuItems(items: ContextMenuItems) {
+  return typeof items === "function" ? items() : items;
+}
+
 type ContextMenuState = {
   x: number;
   y: number;
@@ -126,7 +132,7 @@ type PointerLike = {
 };
 
 type OpenMenuOptions = {
-  items: ContextMenuItem[];
+  items: ContextMenuItems;
   event?: PointerLike;
   fallbackPosition?: { x: number; y: number };
 };
@@ -152,16 +158,16 @@ export function useContextMenuTrigger() {
   const { openContextMenu } = useContextMenu();
 
   const openMenu = useCallback((options: OpenMenuOptions) => {
-    const { items, event, fallbackPosition } = options;
+    const items = resolveMenuItems(options.items);
     if (!items.length) return;
-    event?.preventDefault?.();
-    event?.stopPropagation?.();
-    event?.nativeEvent?.preventDefault?.();
-    event?.nativeEvent?.stopPropagation?.();
-    openContextMenu(menuPosition(event, fallbackPosition), items);
+    options.event?.preventDefault?.();
+    options.event?.stopPropagation?.();
+    options.event?.nativeEvent?.preventDefault?.();
+    options.event?.nativeEvent?.stopPropagation?.();
+    openContextMenu(menuPosition(options.event, options.fallbackPosition), items);
   }, [openContextMenu]);
 
-  const contextMenuProps = useCallback((items: ContextMenuItem[], fallbackPosition?: { x: number; y: number }) => ({
+  const contextMenuProps = useCallback((items: ContextMenuItems, fallbackPosition?: { x: number; y: number }) => ({
     onContextMenu: (event: PointerLike) => openMenu({ items, event, fallbackPosition }),
     onLongPress: () => openMenu({ items, fallbackPosition }),
   }), [openMenu]);
@@ -170,7 +176,7 @@ export function useContextMenuTrigger() {
 }
 
 type ContextMenuPressableProps = Omit<React.ComponentProps<typeof Pressable>, "onLongPress" | "onContextMenu"> & {
-  items: ContextMenuItem[];
+  items: ContextMenuItems;
   fallbackPosition?: { x: number; y: number };
 };
 

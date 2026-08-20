@@ -19,11 +19,39 @@ export function compareSiblings(a: Task, b: Task, index: Map<string, number>) {
   return (index.get(a.id) ?? 0) - (index.get(b.id) ?? 0);
 }
 
-export function sortedSiblings(tasks: Task[], parentId: string | null, projectId: string | null) {
+export function siblingMap(tasks: Task[]) {
+  const index = originalIndex(tasks);
+  const groups = new Map<string, Task[]>();
+  for (const task of tasks) {
+    const key = siblingKey(task);
+    const list = groups.get(key);
+    if (list) list.push(task);
+    else groups.set(key, [task]);
+  }
+  for (const list of groups.values()) list.sort((a, b) => compareSiblings(a, b, index));
+  return groups;
+}
+
+export function sortedSiblings(tasks: Task[], parentId: string | null, projectId: string | null, siblings?: Map<string, Task[]>) {
+  if (siblings) return siblings.get(`${projectId ?? "inbox"}::${parentId ?? ""}`) ?? [];
   const index = originalIndex(tasks);
   return tasks
     .filter((task) => (task.parentId ?? null) === parentId && task.projectId === projectId)
     .sort((a, b) => compareSiblings(a, b, index));
+}
+
+export function tasksByProjectId(tasks: Task[]) {
+  const groups = new Map<string | null, Task[]>();
+  for (const task of tasks) {
+    const list = groups.get(task.projectId);
+    if (list) list.push(task);
+    else groups.set(task.projectId, [task]);
+  }
+  return groups;
+}
+
+export function projectByIdMap(projects: Project[]) {
+  return new Map(projects.map((project) => [project.id, project]));
 }
 
 export function childMap(tasks: Task[]) {
@@ -31,9 +59,9 @@ export function childMap(tasks: Task[]) {
   const index = originalIndex(tasks);
   for (const task of tasks) {
     if (!task.parentId) continue;
-    const list = map.get(task.parentId) ?? [];
-    list.push(task);
-    map.set(task.parentId, list);
+    const list = map.get(task.parentId);
+    if (list) list.push(task);
+    else map.set(task.parentId, [task]);
   }
   for (const list of map.values()) list.sort((a, b) => compareSiblings(a, b, index));
   return map;
@@ -57,13 +85,26 @@ function visibleParentId(task: Task, ids: Set<string>) {
   return task.parentId && ids.has(task.parentId) ? task.parentId : null;
 }
 
-function walk(tasks: Task[], ids: Set<string>, parentId: string | null, projectId: string | null, collapsed: Set<string>, into: Task[], index: Map<string, number>) {
-  const siblings = tasks
-    .filter((task) => task.projectId === projectId && visibleParentId(task, ids) === parentId)
-    .sort((a, b) => compareSiblings(a, b, index));
-  for (const task of siblings) {
+function visibleGroupKey(projectId: string | null, parentId: string | null) {
+  return `${projectId ?? "inbox"}::${parentId ?? ""}`;
+}
+
+function visibleSiblingMap(tasks: Task[], ids: Set<string>, index: Map<string, number>) {
+  const groups = new Map<string, Task[]>();
+  for (const task of tasks) {
+    const key = visibleGroupKey(task.projectId, visibleParentId(task, ids));
+    const list = groups.get(key);
+    if (list) list.push(task);
+    else groups.set(key, [task]);
+  }
+  for (const list of groups.values()) list.sort((a, b) => compareSiblings(a, b, index));
+  return groups;
+}
+
+function walkVisible(groups: Map<string, Task[]>, projectId: string | null, parentId: string | null, collapsed: Set<string>, into: Task[]) {
+  for (const task of groups.get(visibleGroupKey(projectId, parentId)) ?? []) {
     into.push(task);
-    if (!collapsed.has(task.id)) walk(tasks, ids, task.id, task.projectId, collapsed, into, index);
+    if (!collapsed.has(task.id)) walkVisible(groups, task.projectId, task.id, collapsed, into);
   }
 }
 
@@ -71,13 +112,14 @@ export function flattenTasks(tasks: Task[], collapsed: Iterable<string> = []) {
   const hidden = new Set(collapsed);
   const ids = new Set(tasks.map((task) => task.id));
   const index = originalIndex(tasks);
+  const groups = visibleSiblingMap(tasks, ids, index);
   const result: Task[] = [];
   const seenProjects = new Set<string | null>();
   for (const task of tasks) {
     const projectId = task.projectId;
     if (seenProjects.has(projectId)) continue;
     seenProjects.add(projectId);
-    walk(tasks, ids, null, projectId, hidden, result, index);
+    walkVisible(groups, projectId, null, hidden, result);
   }
   return result;
 }
@@ -198,17 +240,49 @@ export function insertTaskAfter(tasks: Task[], afterId: string | null, task: Tas
   return { tasks: reindexSiblings(next), created };
 }
 
-export function isBlockedSequential(task: Task, tasks: Task[], projects: Project[]) {
-  const project = task.projectId ? projects.find((item) => item.id === task.projectId) : undefined;
+export type TaskViewContext = {
+  tasks: Task[];
+  projects: Project[];
+  now?: Date;
+  tagRecords?: TagRecord[];
+  projectById?: Map<string, Project>;
+  siblings?: Map<string, Task[]>;
+  stalledIds?: Set<string>;
+};
+
+export function projectOf(task: Pick<Task, "projectId">, context: Pick<TaskViewContext, "projects" | "projectById">) {
+  if (!task.projectId) return undefined;
+  return context.projectById?.get(task.projectId) ?? context.projects.find((item) => item.id === task.projectId);
+}
+
+export function isBlockedSequential(task: Task, tasks: Task[], projects: Project[], siblings?: Map<string, Task[]>, projectById?: Map<string, Project>) {
+  const project = task.projectId ? (projectById?.get(task.projectId) ?? projects.find((item) => item.id === task.projectId)) : undefined;
   if (!project || (project.type ?? "parallel") !== "sequential" || task.completed) return false;
-  const firstRemaining = sortedSiblings(tasks, task.parentId ?? null, task.projectId).find((item) => !item.completed && (item.status ?? "active") !== "dropped");
+  const firstRemaining = sortedSiblings(tasks, task.parentId ?? null, task.projectId, siblings).find((item) => !item.completed && (item.status ?? "active") !== "dropped");
   return !!firstRemaining && firstRemaining.id !== task.id;
 }
 
-export function isFirstAvailable(task: Task, tasks: Task[], projects: Project[], now?: Date): boolean {
-  if (!taskMatchesView(task, "available", { tasks, projects, now })) return false;
-  const first = sortedSiblings(tasks, task.parentId ?? null, task.projectId).find((item) => (
-    taskMatchesView(item, "available", { tasks, projects, now })
+export function blockedSequentialIds(tasks: Task[], projects: Project[], siblings = siblingMap(tasks), projectById = projectByIdMap(projects)) {
+  const blocked = new Set<string>();
+  for (const list of siblings.values()) {
+    const first = list[0];
+    if (!first?.projectId) continue;
+    const project = projectById.get(first.projectId);
+    if (!project || (project.type ?? "parallel") !== "sequential") continue;
+    const firstRemaining = list.find((item) => !item.completed && (item.status ?? "active") !== "dropped");
+    if (!firstRemaining) continue;
+    for (const item of list) {
+      if (!item.completed && item.id !== firstRemaining.id) blocked.add(item.id);
+    }
+  }
+  return blocked;
+}
+
+export function isFirstAvailable(task: Task, tasks: Task[], projects: Project[], now?: Date, context?: TaskViewContext): boolean {
+  const view = context ?? { tasks, projects, now };
+  if (!taskMatchesView(task, "available", view)) return false;
+  const first = sortedSiblings(tasks, task.parentId ?? null, task.projectId, view.siblings).find((item) => (
+    taskMatchesView(item, "available", view)
   ));
   return first?.id === task.id;
 }
@@ -216,9 +290,9 @@ export function isFirstAvailable(task: Task, tasks: Task[], projects: Project[],
 export function taskMatchesView(
   task: Task,
   availability: PerspectiveAvailability,
-  context: { tasks: Task[]; projects: Project[]; now?: Date; tagRecords?: TagRecord[] },
+  context: TaskViewContext,
 ): boolean {
-  const project = task.projectId ? context.projects.find((item) => item.id === task.projectId) : undefined;
+  const project = projectOf(task, context);
   const projectStatus = project?.status ?? "active";
   const actionStatus = task.status ?? "active";
   if (availability === "all") return true;
@@ -227,8 +301,8 @@ export function taskMatchesView(
   if (availability === "remaining") return true;
   if (projectStatus === "onHold" || actionStatus === "onHold" || taskHasOnHoldTag(task, context.tagRecords)) return false;
   if (!isActionAvailable(task, context.now)) return false;
-  if (isBlockedSequential(task, context.tasks, context.projects)) return false;
-  if (availability === "firstAvailable") return isFirstAvailable(task, context.tasks, context.projects, context.now);
+  if (isBlockedSequential(task, context.tasks, context.projects, context.siblings, context.projectById)) return false;
+  if (availability === "firstAvailable") return isFirstAvailable(task, context.tasks, context.projects, context.now, { ...context, now: context.now });
   return true;
 }
 
@@ -548,6 +622,18 @@ export function idsWithDescendants(tasks: Task[], ids: string[]) {
 export function projectIsStalled(project: Project, tasks: Task[]) {
   if ((project.status ?? "active") !== "active") return false;
   return !tasks.some((task) => task.projectId === project.id && !task.completed && (task.status ?? "active") !== "dropped");
+}
+
+export function stalledProjectIds(projects: Project[], tasks: Task[]) {
+  const remaining = new Set<string>();
+  for (const task of tasks) {
+    if (task.projectId && !task.completed && (task.status ?? "active") !== "dropped") remaining.add(task.projectId);
+  }
+  const stalled = new Set<string>();
+  for (const project of projects) {
+    if ((project.status ?? "active") === "active" && !remaining.has(project.id)) stalled.add(project.id);
+  }
+  return stalled;
 }
 
 export function withLingeringTasks(visible: Task[], all: Task[], lingeringIds: Iterable<string>) {

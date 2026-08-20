@@ -1,5 +1,5 @@
 import type { ActivePerspective, PerspectiveGroupBy, Project, Task } from "./model";
-import { flattenTasks } from "./outline.ts";
+import { flattenTasks, tasksByProjectId } from "./outline.ts";
 
 export type SelectionModifiers = {
   shift?: boolean;
@@ -177,13 +177,14 @@ export function outlineTaskIds(options: {
   const ids: string[] = [];
   const seen = new Set<string>();
   const push = (task: Task) => pushUnique(ids, seen, task);
-  const pushTree = (slice: Task[], projectId: string | null) => {
-    for (const task of flattenTasks(slice.filter((item) => item.projectId === projectId), collapsed)) push(task);
+  const byProject = tasksByProjectId(tasks);
+  const pushTree = (projectId: string | null) => {
+    for (const task of flattenTasks(byProject.get(projectId) ?? [], collapsed)) push(task);
   };
 
   if (groupBy === "project") {
-    pushTree(tasks, null);
-    for (const project of projects) pushTree(tasks, project.id);
+    pushTree(null);
+    for (const project of projects) pushTree(project.id);
     return ids;
   }
   if (groupBy === "tag") {
@@ -212,7 +213,7 @@ export function outlineTaskIds(options: {
   }
   if (perspective === "projects") {
     const visibleProjects = projects.filter((project) => !projectFilter || project.id === projectFilter);
-    for (const project of visibleProjects) pushTree(tasks, project.id);
+    for (const project of visibleProjects) pushTree(project.id);
     return ids;
   }
   if (perspective === "tags") {

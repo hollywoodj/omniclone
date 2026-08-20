@@ -14,12 +14,13 @@ import { palette, visibleOutlineColumns, type ActivePerspective, type AppSetting
 import { effectiveGroupBy } from "../../perspectiveRules";
 import { projectContextItems } from "../../perspectives/projectContextItems";
 import {
+  blockedSequentialIds,
   childMap,
   flattenTasks,
-  isBlockedSequential,
   projectDisplayName,
   projectInFolder,
-  projectIsStalled,
+  stalledProjectIds,
+  tasksByProjectId,
   taskDepth,
 } from "../../outline";
 import type { SelectionModifiers } from "../../selection";
@@ -153,10 +154,19 @@ export function Outline({
     onSelect: onMarqueeSelect,
     onClear: onClearSelection,
   });
+  const latestActions = useRef({
+    onSelectTask, onToggleTask, onInspectTask, onToggleSelectedTasks, onToggleFlagTask, onDeleteTask, onCopyTasks, onCopyLink, onCopyTaskPaper, onDuplicateTasks, onMoveTasks, onIndent, onOutdent, onMoveRow, onStartEdit, onCommitTitle, onCommitTitleAndAdd, onCancelEdit, onConvertToProject, onReveal, onChangeDates, onAwaitReply, editingTaskId,
+  });
+  latestActions.current = {
+    onSelectTask, onToggleTask, onInspectTask, onToggleSelectedTasks, onToggleFlagTask, onDeleteTask, onCopyTasks, onCopyLink, onCopyTaskPaper, onDuplicateTasks, onMoveTasks, onIndent, onOutdent, onMoveRow, onStartEdit, onCommitTitle, onCommitTitleAndAdd, onCancelEdit, onConvertToProject, onReveal, onChangeDates, onAwaitReply, editingTaskId,
+  };
   const selectedSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
   const byId = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const children = useMemo(() => childMap(tasks), [tasks]);
+  const groupedByProject = useMemo(() => tasksByProjectId(tasks), [tasks]);
+  const blockedIds = useMemo(() => blockedSequentialIds(tasks, projects), [tasks, projects]);
+  const stalledIds = useMemo(() => stalledProjectIds(projects, tasks), [projects, tasks]);
   const outlineMenuItems: ContextMenuItem[] = [
     { id: "select-all", label: "Select All", icon: "select-all", shortcut: shortcutLabel("⌘A"), onPress: onSelectAll },
     { id: "clean-up", label: "Clean Up", icon: "broom", shortcut: shortcutLabel("⌘K"), onPress: onCleanUp },
@@ -202,10 +212,10 @@ export function Outline({
         <View style={styles.projectHeadingCopy}>
           <Text style={styles.projectHeadingTitle}>{projectDisplayName(project)}</Text>
           <Text numberOfLines={1} style={styles.projectHeadingNote}>
-            {projectIsStalled(project, tasks) ? "Stalled · no remaining actions" : (project.note || (project.folder ? project.folder : "Project"))}
+            {stalledIds.has(project.id) ? "Stalled · no remaining actions" : (project.note || (project.folder ? project.folder : "Project"))}
           </Text>
         </View>
-        {projectIsStalled(project, tasks) && <Text style={styles.sidebarStatusTag}>Stalled</Text>}
+        {stalledIds.has(project.id) && <Text style={styles.sidebarStatusTag}>Stalled</Text>}
         <Text style={styles.projectHeadingCount}>{count}</Text>
       </ContextMenuPressable>
     </View>
@@ -227,49 +237,53 @@ export function Outline({
         hasChildren={!!children.get(task.id)?.length}
         collapsed={collapsed.has(task.id)}
         hideProject={hideProjectColumn}
-        blocked={isBlockedSequential(task, tasks, projects)}
+        blocked={blockedIds.has(task.id)}
         compactDue={!customPerspective && perspective === "forecast"}
-        dragIds={selected && selectedTaskIds.length > 1 ? selectedTaskIds : [task.id]}
+        dragIds={selected && selectedTaskIds.length > 1 ? selectedTaskIds : undefined}
         registerRow={registerRow}
         onSelect={() => {
+          const current = latestActions.current;
           if (suppressClickRef.current) return;
-          if (editingTaskId === task.id) return;
-          onSelectTask(task.id, modifiersRef.current);
+          if (current.editingTaskId === task.id) return;
+          current.onSelectTask(task.id, modifiersRef.current);
         }}
-        onToggle={() => onToggleTask(task.id)}
-        onInspect={() => onInspectTask(task.id)}
-        onToggleSelected={() => onToggleSelectedTasks(task.id)}
-        onToggleFlag={() => onToggleFlagTask(task.id)}
-        onDelete={() => onDeleteTask(task.id)}
-        onCopy={() => onCopyTasks(task.id)}
-        onCopyLink={() => onCopyLink(task.id)}
-        onCopyTaskPaper={() => onCopyTaskPaper(task.id)}
-        onDuplicate={() => onDuplicateTasks(task.id)}
-        onMove={(projectId) => onMoveTasks(task.id, projectId)}
-        onIndent={() => onIndent(task.id)}
-        onOutdent={() => onOutdent(task.id)}
-        onMoveRow={(direction) => onMoveRow(task.id, direction)}
+        onToggle={() => latestActions.current.onToggleTask(task.id)}
+        onInspect={() => latestActions.current.onInspectTask(task.id)}
+        onToggleSelected={() => latestActions.current.onToggleSelectedTasks(task.id)}
+        onToggleFlag={() => latestActions.current.onToggleFlagTask(task.id)}
+        onDelete={() => latestActions.current.onDeleteTask(task.id)}
+        onCopy={() => latestActions.current.onCopyTasks(task.id)}
+        onCopyLink={() => latestActions.current.onCopyLink(task.id)}
+        onCopyTaskPaper={() => latestActions.current.onCopyTaskPaper(task.id)}
+        onDuplicate={() => latestActions.current.onDuplicateTasks(task.id)}
+        onMove={(projectId) => latestActions.current.onMoveTasks(task.id, projectId)}
+        onIndent={() => latestActions.current.onIndent(task.id)}
+        onOutdent={() => latestActions.current.onOutdent(task.id)}
+        onMoveRow={(direction) => latestActions.current.onMoveRow(task.id, direction)}
         onToggleCollapse={() => toggleCollapsed(task.id)}
-        onStartEdit={() => onStartEdit(task.id)}
-        onCommitTitle={(title) => onCommitTitle(task.id, title)}
-        onCommitTitleAndAdd={(title) => onCommitTitleAndAdd(task.id, title)}
-        onCancelEdit={() => onCancelEdit(task.id)}
-        onConvertToProject={() => onConvertToProject(task.id)}
-        onReveal={() => onReveal(task.id)}
-        onChangeDates={(patch) => onChangeDates(task.id, patch)}
-        onAwaitReply={() => onAwaitReply(task.id)}
+        onStartEdit={() => latestActions.current.onStartEdit(task.id)}
+        onCommitTitle={(title) => latestActions.current.onCommitTitle(task.id, title)}
+        onCommitTitleAndAdd={(title) => latestActions.current.onCommitTitleAndAdd(task.id, title)}
+        onCancelEdit={() => latestActions.current.onCancelEdit(task.id)}
+        onConvertToProject={() => latestActions.current.onConvertToProject(task.id)}
+        onReveal={() => latestActions.current.onReveal(task.id)}
+        onChangeDates={(patch) => latestActions.current.onChangeDates(task.id, patch)}
+        onAwaitReply={() => latestActions.current.onAwaitReply(task.id)}
       />
     );
   };
 
-  const tags = [...new Set(tasks.flatMap((task) => task.tags))].sort();
-  const visibleProjects = projects.filter((project) => {
+  const tags = useMemo(() => [...new Set(tasks.flatMap((task) => task.tags))].sort(), [tasks]);
+  const visibleProjects = useMemo(() => projects.filter((project) => {
     if (projectFilter) return project.id === projectFilter;
     if (folderFilter) return projectInFolder(project, folderFilter);
     return true;
-  });
-  const reviewProjects = projects.filter((project) => projectDueForReview(project) || projectIsStalled(project, tasks));
-  const remainingCount = tasks.filter((task) => !task.completed).length;
+  }), [folderFilter, projectFilter, projects]);
+  const reviewProjects = useMemo(
+    () => projects.filter((project) => projectDueForReview(project) || stalledIds.has(project.id)),
+    [projects, stalledIds],
+  );
+  const remainingCount = useMemo(() => tasks.filter((task) => !task.completed).length, [tasks]);
   const outlineSubtitle = perspective === "forecast"
     ? forecastSubtitle(forecastDay)
     : perspective === "review"
@@ -322,7 +336,7 @@ export function Outline({
             ))}
           </View>
         )}
-        {groupBy === "project" && [{ project: null as Project | null, groupTasks: tasks.filter((task) => task.projectId === null) }, ...projects.map((project) => ({ project, groupTasks: tasks.filter((task) => task.projectId === project.id) }))].map(({ project, groupTasks }) => {
+        {groupBy === "project" && [{ project: null as Project | null, groupTasks: groupedByProject.get(null) ?? [] }, ...projects.map((project) => ({ project, groupTasks: groupedByProject.get(project.id) ?? [] }))].map(({ project, groupTasks }) => {
           if (!groupTasks.length && !project) return null;
           return (
             <View key={project?.id ?? "inbox"} style={styles.projectGroup}>
@@ -382,7 +396,7 @@ export function Outline({
         })}
         {groupBy === "none" && flattenTasks(tasks, collapsed).map(taskRow)}
         {!customPerspective && perspective === "projects" && visibleProjects.map((project) => {
-          const projectTasks = tasks.filter((task) => task.projectId === project.id);
+          const projectTasks = groupedByProject.get(project.id) ?? [];
           return (
             <View key={project.id} style={styles.projectGroup}>
               {projectHeading(project, projectTasks.filter((task) => !task.completed).length)}
@@ -411,8 +425,9 @@ export function Outline({
         })}
         {!customPerspective && perspective === "tags" && !!tagFilter && flattenTasks(tasks, collapsed).map(taskRow)}
         {!customPerspective && perspective === "review" && reviewProjects.map((project) => {
-          const remaining = tasks.filter((task) => task.projectId === project.id && !task.completed);
+          const remaining = groupedByProject.get(project.id) ?? [];
           const reviewId = `review:${project.id}`;
+          const stalled = stalledIds.has(project.id);
           return (
             <View key={project.id} style={styles.projectGroup}>
               <ContextMenuPressable items={projectContextItems(project, projectHandlers)} onPress={() => onInspectProject(project.id)} style={[styles.reviewRow, inspectedProjectId === project.id && styles.projectHeadingSelected]}>
@@ -420,11 +435,11 @@ export function Outline({
                   <Icon name={collapsed.has(reviewId) ? "chevron-right" : "chevron-down"} size={18} color="#6e6c72" />
                 </Pressable>
                 <View style={[styles.projectHeadingRing, { borderColor: project.color }]} />
-                <View style={styles.reviewCopy}><Text style={styles.projectHeadingTitle}>{projectDisplayName(project)}</Text><Text style={styles.projectHeadingNote}>{projectIsStalled(project, tasks) ? "Stalled · no remaining actions" : reviewStatusText(project)}{remaining.length ? ` · ${remaining.length} remaining` : ""}</Text></View>
+                <View style={styles.reviewCopy}><Text style={styles.projectHeadingTitle}>{projectDisplayName(project)}</Text><Text style={styles.projectHeadingNote}>{stalled ? "Stalled · no remaining actions" : reviewStatusText(project)}{remaining.length ? ` · ${remaining.length} remaining` : ""}</Text></View>
                 <Pressable onPress={() => onSkipReview(project.id)} style={styles.skipButton} {...({ dataSet: { noMarquee: "true" } } as object)}><Text style={styles.skipButtonText}>Skip</Text></Pressable>
                 <Pressable onPress={() => onReviewProject(project.id)} style={styles.reviewButton} {...({ dataSet: { noMarquee: "true" } } as object)}><Icon name="check" size={15} color="#fff" /><Text style={styles.reviewButtonText}>Reviewed</Text></Pressable>
               </ContextMenuPressable>
-              {!collapsed.has(reviewId) && remaining.map(taskRow)}
+              {renderGroupTasks(reviewId, remaining)}
             </View>
           );
         })}

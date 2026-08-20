@@ -4,6 +4,7 @@ import type { Project, Task } from "./model.ts";
 import { projectDueForReview } from "./dates.ts";
 import {
   applyRepeat,
+  blockedSequentialIds,
   buildFolderTree,
   convertActionToProject,
   flattenTasks,
@@ -17,8 +18,11 @@ import {
   projectDisplayName,
   projectIsStalled,
   sidebarActionCounts,
+  siblingMap,
   skipReviewTimestamp,
+  stalledProjectIds,
   taskMatchesView,
+  tasksByProjectId,
   toTaskPaper,
   withLingeringTasks,
 } from "./outline.ts";
@@ -237,3 +241,82 @@ test("sidebar counts remaining actions in one pass", () => {
   assert.equal(counts.remainingByTag.get("errand"), 1);
   assert.equal(counts.remainingTagged, 1);
 });
+
+test("tasks group by project in a single pass", () => {
+  const grouped = tasksByProjectId([
+    task({ id: "a", title: "Inbox", projectId: null }),
+    task({ id: "b", title: "Site", projectId: "p1" }),
+    task({ id: "c", title: "Home", projectId: "p2" }),
+    task({ id: "d", title: "Also site", projectId: "p1" }),
+  ]);
+  assert.deepEqual(grouped.get(null)?.map((item) => item.id), ["a"]);
+  assert.deepEqual(grouped.get("p1")?.map((item) => item.id), ["b", "d"]);
+  assert.deepEqual(grouped.get("p2")?.map((item) => item.id), ["c"]);
+});
+
+test("blocked sequential ids match per-task checks", () => {
+  const tasks = [
+    task({ id: "a", title: "First" }),
+    task({ id: "b", title: "Second" }),
+    task({ id: "c", title: "Nested", parentId: "a" }),
+    task({ id: "d", title: "Nested later", parentId: "a" }),
+  ];
+  const sequential = project({ type: "sequential" });
+  const blocked = blockedSequentialIds(tasks, [sequential]);
+  for (const item of tasks) {
+    assert.equal(blocked.has(item.id), isBlockedSequential(item, tasks, [sequential]));
+  }
+  assert.equal(blocked.has("b"), true);
+  assert.equal(blocked.has("d"), true);
+  assert.equal(blocked.has("a"), false);
+});
+
+test("stalled project ids scan the library once", () => {
+  const projects = [project(), project({ id: "p2", name: "Home" }), project({ id: "p3", name: "Hold", status: "onHold" })];
+  const tasks = [
+    task({ id: "a", title: "Open" }),
+    task({ id: "b", title: "Done", projectId: "p2", completed: true }),
+    task({ id: "c", title: "Hold work", projectId: "p3" }),
+  ];
+  const stalled = stalledProjectIds(projects, tasks);
+  assert.equal(stalled.has("p1"), false);
+  assert.equal(stalled.has("p2"), true);
+  assert.equal(stalled.has("p3"), false);
+  assert.equal(projectIsStalled(projects[1]!, tasks), true);
+});
+
+test("flatten keeps nested order across many projects without dropping orphans", () => {
+  const tasks: Task[] = [];
+  for (let p = 0; p < 20; p++) {
+    for (let i = 0; i < 25; i++) {
+      tasks.push(task({
+        id: `p${p}-${i}`,
+        title: `Action ${i}`,
+        projectId: `p${p}`,
+        parentId: i > 0 && i % 5 !== 0 ? `p${p}-${i - 1}` : undefined,
+        sortOrder: i,
+      }));
+    }
+  }
+  tasks.push(task({ id: "orphan", title: "Open", parentId: "missing", projectId: "p0" }));
+  const flat = flattenTasks(tasks);
+  assert.equal(flat.length, tasks.length);
+  assert.equal(flat[0]?.id, "p0-0");
+  assert.ok(flat.some((item) => item.id === "orphan"));
+  const collapsed = flattenTasks(tasks, ["p0-0"]);
+  assert.equal(collapsed.some((item) => item.parentId === "p0-0"), false);
+  assert.ok(collapsed.some((item) => item.id === "p0-0"));
+  assert.ok(collapsed.some((item) => item.id === "p0-5"));
+});
+
+test("sibling map sorts within a parent group", () => {
+  const tasks = [
+    task({ id: "b", title: "B", sortOrder: 1 }),
+    task({ id: "a", title: "A", sortOrder: 0 }),
+    task({ id: "c", title: "C", parentId: "a", sortOrder: 0 }),
+  ];
+  const siblings = siblingMap(tasks);
+  assert.deepEqual(siblings.get("p1::")?.map((item) => item.id), ["a", "b"]);
+  assert.deepEqual(siblings.get("p1::a")?.map((item) => item.id), ["c"]);
+});
+
