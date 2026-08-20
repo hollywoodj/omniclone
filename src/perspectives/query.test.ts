@@ -139,6 +139,23 @@ test("selecting a parent tag includes descendant-tagged actions", () => {
   assert.deepEqual(visible.map((item) => item.id), ["a"]);
 });
 
+test("available sequential filtering stays correct with shared indexes", () => {
+  const sequential: Project = { id: "p1", name: "Site", color: "#000", note: "", reviewIntervalDays: 7, type: "sequential" };
+  const tasks = [
+    task({ id: "a", title: "First" }),
+    task({ id: "b", title: "Second" }),
+    task({ id: "c", title: "Third" }),
+  ];
+  const visible = filterVisibleTasks({
+    ...baseQuery,
+    projects: [sequential],
+    tasks,
+    perspective: "projects",
+    settings: { ...defaultSettings, standardAvailability: { ...defaultSettings.standardAvailability, projects: "available" } },
+  });
+  assert.deepEqual(visible.map((item) => item.id), ["a"]);
+});
+
 test("focus can include a folder of projects", () => {
   const flagged = [
     task({ id: "a", title: "Site", projectId: "p1", flagged: true }),

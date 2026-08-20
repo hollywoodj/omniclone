@@ -1,5 +1,5 @@
 import { dueDayKey, todayKey } from "./dates.ts";
-import { taskMatchesView, projectIsStalled } from "./outline.ts";
+import { taskMatchesView, projectIsStalled, type TaskViewContext } from "./outline.ts";
 import {
   createCustomPerspective,
   makeId,
@@ -85,7 +85,7 @@ export function describeRule(rule: PerspectiveRule): string {
   return ruleKindLabels[rule.kind];
 }
 
-function matchRule(task: Task, rule: PerspectiveRule, context?: { tasks: Task[]; projects: Project[] }): boolean {
+function matchRule(task: Task, rule: PerspectiveRule, context?: TaskViewContext): boolean {
   switch (rule.kind) {
     case "availability": {
       const availability = rule.availability ?? "remaining";
@@ -121,19 +121,21 @@ function matchRule(task: Task, rule: PerspectiveRule, context?: { tasks: Task[];
       if (!rule.projectIds?.length) return true;
       return !!task.projectId && rule.projectIds.includes(task.projectId);
     case "projectType": {
-      const project = task.projectId ? context?.projects.find((item) => item.id === task.projectId) : undefined;
+      const project = task.projectId ? (context?.projectById?.get(task.projectId) ?? context?.projects.find((item) => item.id === task.projectId)) : undefined;
       return (project?.type ?? "parallel") === (rule.projectType ?? "parallel");
     }
     case "stalled": {
-      const project = task.projectId ? context?.projects.find((item) => item.id === task.projectId) : undefined;
-      return !!project && !!context && projectIsStalled(project, context.tasks);
+      const project = task.projectId ? (context?.projectById?.get(task.projectId) ?? context?.projects.find((item) => item.id === task.projectId)) : undefined;
+      if (!project) return false;
+      if (context?.stalledIds) return context.stalledIds.has(project.id);
+      return !!context && projectIsStalled(project, context.tasks);
     }
     case "onHold": {
-      const project = task.projectId ? context?.projects.find((item) => item.id === task.projectId) : undefined;
+      const project = task.projectId ? (context?.projectById?.get(task.projectId) ?? context?.projects.find((item) => item.id === task.projectId)) : undefined;
       return (task.status ?? "active") === "onHold" || (project?.status ?? "active") === "onHold";
     }
     case "dropped": {
-      const project = task.projectId ? context?.projects.find((item) => item.id === task.projectId) : undefined;
+      const project = task.projectId ? (context?.projectById?.get(task.projectId) ?? context?.projects.find((item) => item.id === task.projectId)) : undefined;
       return (task.status ?? "active") === "dropped" || (project?.status ?? "active") === "dropped";
     }
     case "matchesSearch": {
@@ -146,7 +148,7 @@ function matchRule(task: Task, rule: PerspectiveRule, context?: { tasks: Task[];
   }
 }
 
-export function taskMatchesCustomPerspective(task: Task, perspective: CustomPerspective, context?: { tasks: Task[]; projects: Project[] }): boolean {
+export function taskMatchesCustomPerspective(task: Task, perspective: CustomPerspective, context?: TaskViewContext): boolean {
   const rules = (perspective.rules ?? []).filter((rule) => rule.enabled !== false);
   if (!rules.length) return true;
   const results = rules.map((rule) => matchRule(task, rule, context));

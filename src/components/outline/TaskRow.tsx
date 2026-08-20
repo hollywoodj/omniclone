@@ -11,7 +11,7 @@ import { Icon, type IconName } from "../ui/Icon";
 import { StatusRing } from "../ui/StatusRing";
 import { shortcutLabel } from "../../shortcuts.ts";
 
-export function TaskRow({ task, project, projects, selected, editing, bulkCount, settings, depth = 0, hasChildren = false, collapsed = false, hideProject = false, blocked = false, compactDue = false, dragIds, registerRow, onSelect, onToggle, onInspect, onToggleSelected, onToggleFlag, onDelete, onCopy, onCopyLink, onCopyTaskPaper, onDuplicate, onMove, onIndent, onOutdent, onMoveRow, onToggleCollapse, onStartEdit, onCommitTitle, onCommitTitleAndAdd, onCancelEdit, onConvertToProject, onReveal, onChangeDates, onAwaitReply }: {
+export const TaskRow = React.memo(function TaskRow({ task, project, projects, selected, editing, bulkCount, settings, depth = 0, hasChildren = false, collapsed = false, hideProject = false, blocked = false, compactDue = false, dragIds, registerRow, onSelect, onToggle, onInspect, onToggleSelected, onToggleFlag, onDelete, onCopy, onCopyLink, onCopyTaskPaper, onDuplicate, onMove, onIndent, onOutdent, onMoveRow, onToggleCollapse, onStartEdit, onCommitTitle, onCommitTitleAndAdd, onCancelEdit, onConvertToProject, onReveal, onChangeDates, onAwaitReply }: {
   task: Task;
   project?: Project;
   projects: Project[];
@@ -85,7 +85,7 @@ export function TaskRow({ task, project, projects, selected, editing, bulkCount,
   const showTailDue = !columns.includes("due");
   const showTailDefer = !columns.includes("defer") && !task.due && !!availableLabel;
   const showTailEstimate = !!task.estimatedMinutes && !columns.includes("duration");
-  const menuItems: ContextMenuItem[] = [
+  const menuItems = (): ContextMenuItem[] => [
     { id: "inspect", label: "Inspect", icon: "information-outline", onPress: onInspect },
     { id: "reveal", label: "Show in Projects", icon: "folder-arrow-right", onPress: onReveal },
     { id: "edit", label: "Edit", icon: "pencil-outline", shortcut: "↩", onPress: onStartEdit },
@@ -117,7 +117,10 @@ export function TaskRow({ task, project, projects, selected, editing, bulkCount,
     <View
       ref={(node) => registerRow(task.id, node)}
       collapsable={false}
-      style={editingDate ? { zIndex: 24, position: "relative" } : undefined}
+      style={[
+        editingDate ? { zIndex: 24, position: "relative" } : null,
+        !editingDate && Platform.OS === "web" ? { contentVisibility: "auto", containIntrinsicSize: "auto 52px" } as object : null,
+      ]}
       {...({
         dataSet: { taskId: task.id },
         ...(Platform.OS === "web" && !editing ? {
@@ -295,4 +298,19 @@ export function TaskRow({ task, project, projects, selected, editing, bulkCount,
       </ContextMenuPressable>
     </View>
   );
-}
+}, (prev, next) => (
+  prev.task === next.task
+  && prev.project === next.project
+  && prev.projects === next.projects
+  && prev.selected === next.selected
+  && prev.editing === next.editing
+  && prev.bulkCount === next.bulkCount
+  && prev.settings === next.settings
+  && prev.depth === next.depth
+  && prev.hasChildren === next.hasChildren
+  && prev.collapsed === next.collapsed
+  && prev.hideProject === next.hideProject
+  && prev.blocked === next.blocked
+  && prev.compactDue === next.compactDue
+  && prev.dragIds === next.dragIds
+));

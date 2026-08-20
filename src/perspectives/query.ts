@@ -10,7 +10,7 @@ import {
   type Task,
   perspectives,
 } from "../model.ts";
-import { projectInFolder, taskMatchesView, withLingeringTasks } from "../outline.ts";
+import { projectInFolder, projectByIdMap, siblingMap, stalledProjectIds, taskMatchesView, withLingeringTasks } from "../outline.ts";
 import { compareTasks, effectiveGroupBy, taskMatchesCustomPerspective } from "../perspectiveRules.ts";
 import { mergeTagRecords, taskHasTag } from "../tags.ts";
 
@@ -51,8 +51,26 @@ export function filterVisibleTasks({
   const lingering = new Set(pendingCleanupIds);
   const records = mergeTagRecords(tagRecords, tasks);
   const matchesTag = (task: Task, tag: string) => taskHasTag(task, tag, records);
+  const projectById = projectByIdMap(projects);
+  const viewContextFor = (slice: Task[], availability?: string) => ({
+    tasks: slice,
+    projects,
+    tagRecords: records,
+    projectById,
+    siblings: availability === "available" || availability === "firstAvailable" ? siblingMap(slice) : undefined,
+  });
   if (customPerspective) {
-    result = result.filter((task) => taskMatchesCustomPerspective(task, customPerspective, { tasks, projects }) || lingering.has(task.id));
+    const needsSequence = (customPerspective.rules ?? []).some((rule) => rule.enabled !== false && rule.kind === "availability" && (rule.availability === "available" || rule.availability === "firstAvailable"));
+    const needsStalled = (customPerspective.rules ?? []).some((rule) => rule.enabled !== false && rule.kind === "stalled");
+    const context = {
+      tasks,
+      projects,
+      tagRecords: records,
+      projectById,
+      siblings: needsSequence ? siblingMap(tasks) : undefined,
+      stalledIds: needsStalled ? stalledProjectIds(projects, tasks) : undefined,
+    };
+    result = result.filter((task) => taskMatchesCustomPerspective(task, customPerspective, context) || lingering.has(task.id));
     if (projectFilter) result = result.filter((task) => task.projectId === projectFilter);
     if (folderFilter) {
       const allowed = new Set(projects.filter((project) => projectInFolder(project, folderFilter)).map((project) => project.id));
@@ -73,7 +91,8 @@ export function filterVisibleTasks({
     }
     if (tagFilter) result = result.filter((task) => matchesTag(task, tagFilter));
     const availability = settings.standardAvailability[perspective as PerspectiveId] ?? (settings.showCompleted ? "all" : "remaining");
-    result = result.filter((task) => taskMatchesView(task, availability, { tasks, projects, tagRecords: records }) || lingering.has(task.id));
+    const context = viewContextFor(result, availability);
+    result = result.filter((task) => taskMatchesView(task, availability, context) || lingering.has(task.id));
   }
   if (focusedProjectIds.length || focusedFolderPaths.length) {
     result = result.filter((task) => taskMatchesFocus(task, projects, { focusedProjectIds, focusedFolderPaths }));
