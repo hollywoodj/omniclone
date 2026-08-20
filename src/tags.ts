@@ -37,11 +37,23 @@ export function findTagRecord(records: TagRecord[], name: string) {
   return records.find((record) => tagKey(record.name) === key);
 }
 
+function childrenByParent(records: TagRecord[]) {
+  const map = new Map<string, TagRecord[]>();
+  for (const record of records) {
+    if (!record.parent) continue;
+    const key = tagKey(record.parent);
+    const list = map.get(key);
+    if (list) list.push(record);
+    else map.set(key, [record]);
+  }
+  return map;
+}
+
 export function descendantTagNames(records: TagRecord[], name: string): Set<string> {
+  const children = childrenByParent(records);
   const names = new Set<string>();
   const visit = (parent: string) => {
-    for (const record of records) {
-      if (!record.parent || tagKey(record.parent) !== tagKey(parent)) continue;
+    for (const record of children.get(tagKey(parent)) ?? []) {
       if (names.has(record.name)) continue;
       names.add(record.name);
       visit(record.name);
@@ -58,14 +70,28 @@ export function tagAndDescendantNames(records: TagRecord[], name: string): Set<s
   return names;
 }
 
-export function taskHasTag(task: Pick<Task, "tags">, name: string, records: TagRecord[] = []) {
-  const allowed = tagAndDescendantNames(records, name);
-  const keys = new Set([...allowed].map(tagKey));
-  return task.tags.some((tag) => keys.has(tagKey(tag)));
+export function tagMatchKeys(records: TagRecord[], name: string) {
+  return new Set([...tagAndDescendantNames(records, name)].map(tagKey));
 }
 
-export function taskHasOnHoldTag(task: Pick<Task, "tags">, records: TagRecord[] = []) {
-  return task.tags.some((tag) => (findTagRecord(records, tag)?.status ?? "active") === "onHold");
+export function taskHasTag(task: Pick<Task, "tags">, name: string, records: TagRecord[] = [], keys?: Set<string>) {
+  const allowed = keys ?? tagMatchKeys(records, name);
+  return task.tags.some((tag) => allowed.has(tagKey(tag)));
+}
+
+export function onHoldTagKeys(records: TagRecord[] = []) {
+  const keys = new Set<string>();
+  for (const record of records) {
+    if ((record.status ?? "active") === "onHold") keys.add(tagKey(record.name));
+  }
+  return keys;
+}
+
+export function taskHasOnHoldTag(task: Pick<Task, "tags">, records: TagRecord[] = [], keys?: Set<string>) {
+  if (!task.tags.length) return false;
+  const hold = keys ?? onHoldTagKeys(records);
+  if (!hold.size) return false;
+  return task.tags.some((tag) => hold.has(tagKey(tag)));
 }
 
 export function buildTagTree(records: TagRecord[]): TagNode[] {
@@ -120,8 +146,26 @@ export function setTagStatus(records: TagRecord[], name: string, status: TagStat
   return upsertTagRecord(records, { ...(findTagRecord(records, name) ?? { name }), name, status });
 }
 
+export function remainingCountsForTagTree(tasks: Task[], records: TagRecord[]) {
+  const byKey = new Map(records.map((record) => [tagKey(record.name), record]));
+  const counts = new Map<string, number>();
+  for (const task of tasks) {
+    if (task.completed || (task.status ?? "active") === "dropped") continue;
+    const seen = new Set<string>();
+    for (const raw of task.tags) {
+      let current: string | undefined = raw;
+      while (current) {
+        const key = tagKey(current);
+        if (!key || seen.has(key)) break;
+        seen.add(key);
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+        current = byKey.get(key)?.parent;
+      }
+    }
+  }
+  return counts;
+}
+
 export function remainingCountForTagTree(tasks: Task[], name: string, records: TagRecord[]) {
-  const allowed = tagAndDescendantNames(records, name);
-  const keys = new Set([...allowed].map(tagKey));
-  return tasks.filter((task) => !task.completed && (task.status ?? "active") !== "dropped" && task.tags.some((tag) => keys.has(tagKey(tag)))).length;
+  return remainingCountsForTagTree(tasks, records).get(tagKey(name)) ?? 0;
 }

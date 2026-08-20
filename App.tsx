@@ -35,7 +35,7 @@ import {
   skipReviewTimestamp,
   toTaskPaper,
 } from "./src/outline";
-import { todayKey, emptyFocus, focusLabel, isFocusActive, projectMatchesFocus, taskMatchesFocus, type ForecastDayKey } from "./src/dates";
+import { todayKey, emptyFocus, focusLabel, focusedTaskProjectIds, isFocusActive, projectMatchesFocus, type ForecastDayKey } from "./src/dates";
 import {
   applyClick,
   applyMarquee,
@@ -175,8 +175,9 @@ export default function App() {
 
   const selectedTaskIds = selection.ids;
   const selectedTaskId = selection.headId ?? selection.ids[0] ?? null;
-  const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
-  const selectedTasks = tasks.filter((task) => selectedTaskIds.includes(task.id));
+  const selectedTask = useMemo(() => tasks.find((task) => task.id === selectedTaskId) ?? null, [selectedTaskId, tasks]);
+  const selectedIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
+  const selectedTasks = useMemo(() => selectedIdSet.size ? tasks.filter((task) => selectedIdSet.has(task.id)) : [], [selectedIdSet, tasks]);
   const selectedProject = selectedTask?.projectId ? projects.find((project) => project.id === selectedTask.projectId) : undefined;
   const defaultProjectId = defaultProjectIdFor({
     projectFilter,
@@ -189,7 +190,7 @@ export default function App() {
   const barItems = useMemo(() => favoritePerspectives(settings, customPerspectives), [customPerspectives, settings]);
   const knownTagRecords = useMemo(() => mergeTagRecords(tagRecords, tasks), [tagRecords, tasks]);
   const knownTags = useMemo(() => knownTagsFrom(tasks, knownTagRecords), [knownTagRecords, tasks]);
-  const focused = { focusedProjectIds, focusedFolderPaths };
+  const focused = useMemo(() => ({ focusedProjectIds, focusedFolderPaths }), [focusedFolderPaths, focusedProjectIds]);
   const focusedName = focusLabel(projects, focused);
   const systemScheme = useColorScheme();
   const colorScheme = resolvedScheme(settings.appearance, systemScheme === "dark" ? "dark" : "light");
@@ -1184,7 +1185,15 @@ export default function App() {
     };
   }, [hydrated]);
 
-  const sidebarProjects = isFocusActive(focused) ? projects.filter((project) => projectMatchesFocus(project, focused)) : projects;
+  const sidebarProjects = useMemo(
+    () => isFocusActive(focused) ? projects.filter((project) => projectMatchesFocus(project, focused)) : projects,
+    [focused, projects],
+  );
+  const sidebarTasks = useMemo(() => {
+    const focusedIds = focusedTaskProjectIds(projects, focused);
+    if (!focusedIds) return tasks;
+    return tasks.filter((task) => task.projectId && focusedIds.has(task.projectId));
+  }, [focused, projects, tasks]);
   const forecastCounts = useMemo(() => forecastCountsFor(tasks, focused, undefined, projects), [focused, projects, tasks]);
   const perspectiveBadges = useMemo(() => perspectiveBadgesFor(tasks, projects, focused), [focused, projects, tasks]);
 
@@ -1301,7 +1310,7 @@ export default function App() {
             <ProjectSidebar
               perspective={sidebarPerspective}
               projects={sidebarProjects}
-              tasks={tasks.filter((task) => taskMatchesFocus(task, projects, focused))}
+              tasks={sidebarTasks}
               extraFolders={settings.extraFolders}
               selectedProjectId={projectFilter}
               selectedProjectIds={sidebarSelection.projectIds}

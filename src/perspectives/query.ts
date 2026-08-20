@@ -1,5 +1,5 @@
 import type { ForecastDayKey } from "../dates.ts";
-import { isForecastItem, taskMatchesFocus } from "../dates.ts";
+import { isForecastItem, focusedTaskProjectIds, taskMatchesFocus } from "../dates.ts";
 import {
   type ActivePerspective,
   type AppSettings,
@@ -12,7 +12,7 @@ import {
 } from "../model.ts";
 import { projectInFolder, projectByIdMap, siblingMap, stalledProjectIds, taskMatchesView, withLingeringTasks } from "../outline.ts";
 import { compareTasks, effectiveGroupBy, taskMatchesCustomPerspective } from "../perspectiveRules.ts";
-import { mergeTagRecords, taskHasTag } from "../tags.ts";
+import { mergeTagRecords, onHoldTagKeys, tagKey, tagMatchKeys } from "../tags.ts";
 
 export type VisibleTaskQuery = {
   tasks: Task[];
@@ -50,14 +50,17 @@ export function filterVisibleTasks({
   let result = [...tasks];
   const lingering = new Set(pendingCleanupIds);
   const records = mergeTagRecords(tagRecords, tasks);
-  const matchesTag = (task: Task, tag: string) => taskHasTag(task, tag, records);
+  const tagKeys = tagFilter ? tagMatchKeys(records, tagFilter) : null;
+  const matchesTag = (task: Task) => !!tagKeys && task.tags.some((tag) => tagKeys.has(tagKey(tag)));
   const projectById = projectByIdMap(projects);
+  const holdKeys = onHoldTagKeys(records);
   const viewContextFor = (slice: Task[], availability?: string) => ({
     tasks: slice,
     projects,
     tagRecords: records,
     projectById,
     siblings: availability === "available" || availability === "firstAvailable" ? siblingMap(slice) : undefined,
+    onHoldTagKeys: availability === "available" || availability === "firstAvailable" ? holdKeys : undefined,
   });
   if (customPerspective) {
     const needsSequence = (customPerspective.rules ?? []).some((rule) => rule.enabled !== false && rule.kind === "availability" && (rule.availability === "available" || rule.availability === "firstAvailable"));
@@ -69,6 +72,7 @@ export function filterVisibleTasks({
       projectById,
       siblings: needsSequence ? siblingMap(tasks) : undefined,
       stalledIds: needsStalled ? stalledProjectIds(projects, tasks) : undefined,
+      onHoldTagKeys: needsSequence ? holdKeys : undefined,
     };
     result = result.filter((task) => taskMatchesCustomPerspective(task, customPerspective, context) || lingering.has(task.id));
     if (projectFilter) result = result.filter((task) => task.projectId === projectFilter);
@@ -76,7 +80,7 @@ export function filterVisibleTasks({
       const allowed = new Set(projects.filter((project) => projectInFolder(project, folderFilter)).map((project) => project.id));
       result = result.filter((task) => task.projectId && allowed.has(task.projectId));
     }
-    if (tagFilter) result = result.filter((task) => matchesTag(task, tagFilter));
+    if (tagKeys) result = result.filter((task) => matchesTag(task) || lingering.has(task.id));
     result.sort((a, b) => compareTasks(a, b, customPerspective.sortBy));
   } else {
     if (perspective === "inbox") result = result.filter((task) => task.projectId === null || lingering.has(task.id));
@@ -89,13 +93,14 @@ export function filterVisibleTasks({
       const allowed = new Set(projects.filter((project) => projectInFolder(project, folderFilter)).map((project) => project.id));
       result = result.filter((task) => task.projectId && allowed.has(task.projectId));
     }
-    if (tagFilter) result = result.filter((task) => matchesTag(task, tagFilter));
+    if (tagKeys) result = result.filter((task) => matchesTag(task) || lingering.has(task.id));
     const availability = settings.standardAvailability[perspective as PerspectiveId] ?? (settings.showCompleted ? "all" : "remaining");
     const context = viewContextFor(result, availability);
     result = result.filter((task) => taskMatchesView(task, availability, context) || lingering.has(task.id));
   }
   if (focusedProjectIds.length || focusedFolderPaths.length) {
-    result = result.filter((task) => taskMatchesFocus(task, projects, { focusedProjectIds, focusedFolderPaths }));
+    const focusedIds = focusedTaskProjectIds(projects, { focusedProjectIds, focusedFolderPaths });
+    result = result.filter((task) => taskMatchesFocus(task, projects, { focusedProjectIds, focusedFolderPaths }, focusedIds));
   }
   if (query.trim()) {
     const needle = query.trim().toLowerCase();

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Task } from "./model.ts";
-import { buildTagTree, mergeTagRecords, remainingCountForTagTree, renameTagRecord, taskHasOnHoldTag, taskHasTag } from "./tags.ts";
+import { buildTagTree, mergeTagRecords, remainingCountForTagTree, remainingCountsForTagTree, renameTagRecord, tagKey, taskHasOnHoldTag, taskHasTag } from "./tags.ts";
 
 function task(partial: Partial<Task> & { id: string; title: string }): Task {
   return {
@@ -30,6 +30,14 @@ test("nested tags include descendant actions", () => {
     task({ id: "a", title: "Reply", tags: ["Email"] }),
     task({ id: "b", title: "Done", tags: ["Email"], completed: true }),
   ], "Work", records), 1);
+  const rolled = remainingCountsForTagTree([
+    task({ id: "a", title: "Reply", tags: ["Email"] }),
+    task({ id: "b", title: "Plan", tags: ["Work"] }),
+    task({ id: "c", title: "Both", tags: ["Work", "Email"] }),
+    task({ id: "d", title: "Done", tags: ["Email"], completed: true }),
+  ], records);
+  assert.equal(rolled.get(tagKey("Email")), 2);
+  assert.equal(rolled.get(tagKey("Work")), 3);
 });
 
 test("on-hold tags mark tagged actions unavailable", () => {
