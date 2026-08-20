@@ -132,3 +132,19 @@ test("outline order follows project grouping used by the outline", () => {
   }), ["t-inbox"]);
   assert.equal(emptySelection.ids.length, 0);
 });
+
+test("outline order for Tags uses a single grouping pass", () => {
+  const projects: Project[] = [
+    { id: "p1", name: "Site", color: "#000", note: "", reviewIntervalDays: 7 },
+  ];
+  const tasks: Task[] = [
+    { id: "t2", title: "Shop", projectId: "p1", tags: ["errand"], flagged: false, completed: false, createdAt: "" },
+    { id: "t1", title: "Reply", projectId: "p1", tags: ["email", "errand"], flagged: false, completed: false, createdAt: "" },
+  ];
+  assert.deepEqual(outlineTaskIds({
+    tasks,
+    projects,
+    perspective: "tags",
+    projectFilter: null,
+  }), ["t1", "t2"]);
+});

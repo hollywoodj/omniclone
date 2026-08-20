@@ -22,7 +22,9 @@ import {
   skipReviewTimestamp,
   stalledProjectIds,
   taskMatchesView,
+  tasksByDueLabel,
   tasksByProjectId,
+  tasksByTag,
   toTaskPaper,
   withLingeringTasks,
 } from "./outline.ts";
@@ -252,6 +254,21 @@ test("tasks group by project in a single pass", () => {
   assert.deepEqual(grouped.get(null)?.map((item) => item.id), ["a"]);
   assert.deepEqual(grouped.get("p1")?.map((item) => item.id), ["b", "d"]);
   assert.deepEqual(grouped.get("p2")?.map((item) => item.id), ["c"]);
+});
+
+test("tag and due grouping indexes the library once", () => {
+  const tasks = [
+    task({ id: "a", title: "Reply", tags: ["Email", "Work"], due: "Today" }),
+    task({ id: "b", title: "Shop", tags: ["Errand"], due: "Today" }),
+    task({ id: "c", title: "Later", due: "Tomorrow" }),
+  ];
+  const byTag = tasksByTag(tasks);
+  assert.deepEqual(byTag.tags, ["Email", "Errand", "Work"]);
+  assert.deepEqual(byTag.groups.get("Work")?.map((item) => item.id), ["a"]);
+  assert.deepEqual(byTag.groups.get("Email")?.map((item) => item.id), ["a"]);
+  const byDue = tasksByDueLabel(tasks);
+  assert.deepEqual(byDue.labels, ["Today", "Tomorrow"]);
+  assert.deepEqual(byDue.groups.get("Today")?.map((item) => item.id), ["a", "b"]);
 });
 
 test("blocked sequential ids match per-task checks", () => {

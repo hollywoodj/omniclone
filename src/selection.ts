@@ -1,5 +1,5 @@
 import type { ActivePerspective, PerspectiveGroupBy, Project, Task } from "./model";
-import { flattenTasks, tasksByProjectId } from "./outline.ts";
+import { flattenTasks, tasksByDueLabel, tasksByFlag, tasksByProjectId, tasksByTag } from "./outline.ts";
 
 export type SelectionModifiers = {
   shift?: boolean;
@@ -188,22 +188,23 @@ export function outlineTaskIds(options: {
     return ids;
   }
   if (groupBy === "tag") {
-    const tags = [...new Set(tasks.flatMap((task) => task.tags))].sort();
+    const { groups, tags } = tasksByTag(tasks);
     for (const tag of tags) {
-      for (const task of flattenTasks(tasks.filter((item) => item.tags.includes(tag)), collapsed)) push(task);
+      for (const task of flattenTasks(groups.get(tag) ?? [], collapsed)) push(task);
     }
     return ids;
   }
   if (groupBy === "flagged") {
-    for (const flagged of [true, false]) {
-      for (const task of flattenTasks(tasks.filter((item) => item.flagged === flagged), collapsed)) push(task);
+    const { flagged, unflagged } = tasksByFlag(tasks);
+    for (const group of [flagged, unflagged]) {
+      for (const task of flattenTasks(group, collapsed)) push(task);
     }
     return ids;
   }
   if (groupBy === "due") {
-    const dues = [...new Set(tasks.map((task) => task.due ?? "No Due Date"))];
-    for (const due of dues) {
-      for (const task of flattenTasks(tasks.filter((item) => (item.due ?? "No Due Date") === due), collapsed)) push(task);
+    const { groups, labels } = tasksByDueLabel(tasks);
+    for (const due of labels) {
+      for (const task of flattenTasks(groups.get(due) ?? [], collapsed)) push(task);
     }
     return ids;
   }
@@ -217,9 +218,9 @@ export function outlineTaskIds(options: {
     return ids;
   }
   if (perspective === "tags") {
-    const tags = [...new Set(tasks.flatMap((task) => task.tags))].sort();
+    const { groups, tags } = tasksByTag(tasks);
     for (const tag of tags) {
-      for (const task of flattenTasks(tasks.filter((item) => item.tags.includes(tag)), collapsed)) push(task);
+      for (const task of flattenTasks(groups.get(tag) ?? [], collapsed)) push(task);
     }
     return ids;
   }

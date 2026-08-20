@@ -1,4 +1,4 @@
-import { addDays, formatDueLabel, isActionAvailable, parseDueLabel, startOfLocalDay } from "./dates.ts";
+import { addDays, completionBucket, formatDueLabel, isActionAvailable, parseDueLabel, startOfLocalDay } from "./dates.ts";
 import { makeId, type PerspectiveAvailability, type Project, type RepeatRule, type RepeatSimple, type RepeatUnit, type TagRecord, type Task } from "./model.ts";
 import { taskHasOnHoldTag } from "./tags.ts";
 
@@ -46,6 +46,47 @@ export function tasksByProjectId(tasks: Task[]) {
     const list = groups.get(task.projectId);
     if (list) list.push(task);
     else groups.set(task.projectId, [task]);
+  }
+  return groups;
+}
+
+export function tasksByTag(tasks: Task[]) {
+  const groups = new Map<string, Task[]>();
+  for (const task of tasks) {
+    for (const tag of task.tags) {
+      const list = groups.get(tag);
+      if (list) list.push(task);
+      else groups.set(tag, [task]);
+    }
+  }
+  return { groups, tags: [...groups.keys()].sort() };
+}
+
+export function tasksByDueLabel(tasks: Task[]) {
+  const groups = new Map<string, Task[]>();
+  for (const task of tasks) {
+    const label = task.due ?? "No Due Date";
+    const list = groups.get(label);
+    if (list) list.push(task);
+    else groups.set(label, [task]);
+  }
+  return { groups, labels: [...groups.keys()] };
+}
+
+export function tasksByFlag(tasks: Task[]) {
+  const flagged: Task[] = [];
+  const unflagged: Task[] = [];
+  for (const task of tasks) (task.flagged ? flagged : unflagged).push(task);
+  return { flagged, unflagged };
+}
+
+export function tasksByCompletionGroup(tasks: Task[], now = new Date()) {
+  const groups = new Map<string, Task[]>();
+  for (const task of tasks) {
+    const label = completionBucket(task, now);
+    const list = groups.get(label);
+    if (list) list.push(task);
+    else groups.set(label, [task]);
   }
   return groups;
 }
@@ -248,6 +289,7 @@ export type TaskViewContext = {
   projectById?: Map<string, Project>;
   siblings?: Map<string, Task[]>;
   stalledIds?: Set<string>;
+  onHoldTagKeys?: Set<string>;
 };
 
 export function projectOf(task: Pick<Task, "projectId">, context: Pick<TaskViewContext, "projects" | "projectById">) {
@@ -299,7 +341,7 @@ export function taskMatchesView(
   if (availability === "completed") return task.completed || actionStatus === "dropped" || projectStatus === "dropped" || projectStatus === "done";
   if (task.completed || actionStatus === "dropped" || projectStatus === "dropped" || projectStatus === "done") return false;
   if (availability === "remaining") return true;
-  if (projectStatus === "onHold" || actionStatus === "onHold" || taskHasOnHoldTag(task, context.tagRecords)) return false;
+  if (projectStatus === "onHold" || actionStatus === "onHold" || taskHasOnHoldTag(task, context.tagRecords, context.onHoldTagKeys)) return false;
   if (!isActionAvailable(task, context.now)) return false;
   if (isBlockedSequential(task, context.tasks, context.projects, context.siblings, context.projectById)) return false;
   if (availability === "firstAvailable") return isFirstAvailable(task, context.tasks, context.projects, context.now, { ...context, now: context.now });

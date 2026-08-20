@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Platform, Pressable, View } from "react-native";
-import { ContextMenuPressable, type ContextMenuItem } from "../../contextMenu";
+import { ContextMenuPressable, type ContextMenuItems } from "../../contextMenu";
 import { allowTaskDrop, getTaskDragData } from "../../lib/dnd";
 import { appStyles as styles } from "../../styles/appStyles";
 
@@ -14,7 +14,7 @@ export function SidebarRow({
   ...rest
 }: Omit<React.ComponentProps<typeof Pressable>, "style"> & {
   selected?: boolean;
-  items?: ContextMenuItem[];
+  items?: ContextMenuItems;
   style?: React.ComponentProps<typeof View>["style"];
   droppable?: boolean;
   onDropTasks?: (ids: string[]) => void;
@@ -46,7 +46,7 @@ export function SidebarRow({
       if (ids?.length) onDropTasks?.(ids);
     },
   } : {};
-  if (items?.length) {
+  if (typeof items === "function" || items?.length) {
     return (
       <ContextMenuPressable items={items} {...hoverProps} {...dropProps} {...rest} style={rowStyle}>
         {children}

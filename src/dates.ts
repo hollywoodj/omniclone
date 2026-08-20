@@ -423,17 +423,28 @@ export function folderMatchesFocus(folder: string | undefined, paths: string[]) 
   return paths.some((path) => folder === path || folder.startsWith(`${path} : `));
 }
 
+export function focusedTaskProjectIds(projects: Project[], focus: FocusState): Set<string> | null {
+  if (!isFocusActive(focus)) return null;
+  const ids = new Set(focus.focusedProjectIds);
+  if (focus.focusedFolderPaths.length) {
+    for (const project of projects) {
+      if (folderMatchesFocus(project.folder, focus.focusedFolderPaths)) ids.add(project.id);
+    }
+  }
+  return ids;
+}
+
 export function projectMatchesFocus(project: Project, focus: FocusState) {
   if (!isFocusActive(focus)) return true;
   if (focus.focusedProjectIds.includes(project.id)) return true;
   return folderMatchesFocus(project.folder, focus.focusedFolderPaths);
 }
 
-export function taskMatchesFocus(task: Pick<Task, "projectId">, projects: Project[], focus: FocusState) {
+export function taskMatchesFocus(task: Pick<Task, "projectId">, projects: Project[], focus: FocusState, projectIds?: Set<string> | null) {
   if (!isFocusActive(focus)) return true;
-  if (task.projectId && focus.focusedProjectIds.includes(task.projectId)) return true;
-  const project = projects.find((item) => item.id === task.projectId);
-  return !!project && projectMatchesFocus(project, focus);
+  const allowed = projectIds === undefined ? focusedTaskProjectIds(projects, focus) : projectIds;
+  if (!allowed) return true;
+  return !!task.projectId && allowed.has(task.projectId);
 }
 
 export function focusLabel(projects: Project[], focus: FocusState) {

@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { ContextMenuPressable, useContextMenuTrigger, type ContextMenuItem } from "../../contextMenu";
 import {
-  completionBucket,
   completionGroupOrder,
   forecastSubtitle,
   projectDueForReview,
@@ -20,7 +19,11 @@ import {
   projectDisplayName,
   projectInFolder,
   stalledProjectIds,
+  tasksByCompletionGroup,
+  tasksByDueLabel,
+  tasksByFlag,
   tasksByProjectId,
+  tasksByTag,
   taskDepth,
 } from "../../outline";
 import type { SelectionModifiers } from "../../selection";
@@ -165,6 +168,10 @@ export function Outline({
   const byId = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const children = useMemo(() => childMap(tasks), [tasks]);
   const groupedByProject = useMemo(() => tasksByProjectId(tasks), [tasks]);
+  const groupedByTag = useMemo(() => tasksByTag(tasks), [tasks]);
+  const groupedByDue = useMemo(() => tasksByDueLabel(tasks), [tasks]);
+  const groupedByFlag = useMemo(() => tasksByFlag(tasks), [tasks]);
+  const groupedByCompletion = useMemo(() => tasksByCompletionGroup(tasks), [tasks]);
   const blockedIds = useMemo(() => blockedSequentialIds(tasks, projects), [tasks, projects]);
   const stalledIds = useMemo(() => stalledProjectIds(projects, tasks), [projects, tasks]);
   const outlineMenuItems: ContextMenuItem[] = [
@@ -186,18 +193,17 @@ export function Outline({
   };
   const groupIds = useMemo(() => {
     const ids: string[] = [];
-    const tags = [...new Set(tasks.flatMap((task) => task.tags))].sort();
     const groupBy = customPerspective ? effectiveGroupBy(customPerspective) : null;
     if (groupBy === "project" || (!customPerspective && perspective === "projects")) {
       ids.push("inbox", ...projects.map((project) => project.id));
     }
-    if (groupBy === "tag" || (!customPerspective && perspective === "tags")) ids.push(...tags.map((tag) => `tag:${tag}`));
+    if (groupBy === "tag" || (!customPerspective && perspective === "tags")) ids.push(...groupedByTag.tags.map((tag) => `tag:${tag}`));
     if (groupBy === "flagged") ids.push("flagged", "unflagged");
-    if (groupBy === "due") ids.push(...[...new Set(tasks.map((task) => `due:${task.due ?? "No Due Date"}`))]);
+    if (groupBy === "due") ids.push(...groupedByDue.labels.map((due) => `due:${due}`));
     if (!customPerspective && perspective === "review") ids.push(...projects.map((project) => `review:${project.id}`));
     if (!customPerspective && perspective === "completed") ids.push(...completionGroupOrder.map((label) => `done:${label}`));
     return ids;
-  }, [customPerspective, perspective, projects, tasks]);
+  }, [customPerspective, groupedByDue.labels, groupedByTag.tags, perspective, projects]);
   useEffect(() => {
     if (!collapseNonce) return;
     setCollapsedIds(collapseNonce.action === "expand" ? [] : groupIds);
@@ -273,7 +279,6 @@ export function Outline({
     );
   };
 
-  const tags = useMemo(() => [...new Set(tasks.flatMap((task) => task.tags))].sort(), [tasks]);
   const visibleProjects = useMemo(() => projects.filter((project) => {
     if (projectFilter) return project.id === projectFilter;
     if (folderFilter) return projectInFolder(project, folderFilter);
@@ -352,8 +357,8 @@ export function Outline({
             </View>
           );
         })}
-        {groupBy === "tag" && tags.map((tag) => {
-          const tagged = tasks.filter((task) => task.tags.includes(tag));
+        {groupBy === "tag" && groupedByTag.tags.map((tag) => {
+          const tagged = groupedByTag.groups.get(tag) ?? [];
           return (
             <View key={tag} style={styles.projectGroup}>
               <Pressable onPress={() => toggleCollapsed(`tag:${tag}`)} style={styles.tagHeading}>
@@ -366,7 +371,7 @@ export function Outline({
           );
         })}
         {groupBy === "flagged" && [true, false].map((flagged) => {
-          const groupTasks = tasks.filter((task) => task.flagged === flagged);
+          const groupTasks = flagged ? groupedByFlag.flagged : groupedByFlag.unflagged;
           if (!groupTasks.length) return null;
           const groupId = flagged ? "flagged" : "unflagged";
           return (
@@ -380,8 +385,8 @@ export function Outline({
             </View>
           );
         })}
-        {groupBy === "due" && [...new Set(tasks.map((task) => task.due ?? "No Due Date"))].map((due) => {
-          const groupTasks = tasks.filter((task) => (task.due ?? "No Due Date") === due);
+        {groupBy === "due" && groupedByDue.labels.map((due) => {
+          const groupTasks = groupedByDue.groups.get(due) ?? [];
           const groupId = `due:${due}`;
           return (
             <View key={due} style={styles.projectGroup}>
@@ -410,8 +415,8 @@ export function Outline({
             </View>
           );
         })}
-        {!customPerspective && perspective === "tags" && !tagFilter && tags.map((tag) => {
-          const tagged = tasks.filter((task) => task.tags.includes(tag));
+        {!customPerspective && perspective === "tags" && !tagFilter && groupedByTag.tags.map((tag) => {
+          const tagged = groupedByTag.groups.get(tag) ?? [];
           return (
             <View key={tag} style={styles.projectGroup}>
               <Pressable onPress={() => toggleCollapsed(`tag:${tag}`)} style={styles.tagHeading}>
@@ -444,7 +449,7 @@ export function Outline({
           );
         })}
         {!customPerspective && perspective === "completed" && completionGroupOrder.map((label) => {
-          const groupTasks = tasks.filter((task) => completionBucket(task) === label);
+          const groupTasks = groupedByCompletion.get(label) ?? [];
           if (!groupTasks.length) return null;
           const groupId = `done:${label}`;
           const dropped = label === "Dropped";

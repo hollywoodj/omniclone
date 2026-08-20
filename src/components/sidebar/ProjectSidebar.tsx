@@ -6,7 +6,7 @@ import { useModifierKeys } from "../../marquee";
 import { defaultTagColor, palette, perspectives, type PerspectiveId, type Project, type TagRecord, type Task } from "../../model";
 import { projectContextItems } from "../../perspectives/projectContextItems";
 import { buildFolderTree, projectDisplayName, sidebarActionCounts } from "../../outline";
-import { buildTagTree, remainingCountForTagTree } from "../../tags";
+import { buildTagTree, remainingCountsForTagTree, tagKey } from "../../tags";
 import type { SidebarDropTarget } from "../../library/mutations";
 import { appStyles as styles } from "../../styles/appStyles";
 import { Icon } from "../ui/Icon";
@@ -68,6 +68,7 @@ export function ProjectSidebar({
   const selectedFolders = new Set(selectedFolderPaths?.length ? selectedFolderPaths : (selectedFolder ? [selectedFolder] : []));
   const tags = useMemo(() => buildTagTree(tagRecords ?? []), [tagRecords]);
   const counts = useMemo(() => sidebarActionCounts(tasks), [tasks]);
+  const tagCounts = useMemo(() => remainingCountsForTagTree(tasks, tagRecords ?? []), [tagRecords, tasks]);
   const title = perspectives.find((item) => item.id === perspective)?.label ?? "Projects";
   const { openMenu } = useContextMenuTrigger();
   const sidebarMenuItems: ContextMenuItem[] = [
@@ -100,7 +101,7 @@ export function ProjectSidebar({
       <SidebarRow
         key={project.id}
         selected={selectedProjects.has(project.id)}
-        items={projectContextItems(project, { onFocusProject, onNewActionInProject, onDeleteProject, onDuplicateProject })}
+        items={() => projectContextItems(project, { onFocusProject, onNewActionInProject, onDeleteProject, onDuplicateProject })}
         onPress={() => onSelectProject(project.id, modifiersRef.current)}
         droppable
         onDropTasks={(ids) => onDropOnSidebar?.(ids, { kind: "project", projectId: project.id })}
@@ -145,7 +146,7 @@ export function ProjectSidebar({
     const collapsed = collapsedTags.includes(node.name);
     const status = node.record.status ?? "active";
     const color = node.record.color ?? defaultTagColor;
-    const count = remainingCountForTagTree(tasks, node.name, tagRecords ?? []);
+    const count = tagCounts.get(tagKey(node.name)) ?? 0;
     return (
       <View key={node.name}>
         <SidebarRow
