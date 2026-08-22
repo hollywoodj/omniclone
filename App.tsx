@@ -16,7 +16,7 @@ import {
   type TagRecord,
   type Task,
 } from "./src/model";
-import { applyOmniFocusImport, parseOmniFocusFile, type ImportMode, type OmniImportData } from "./src/importOmniFocus";
+import { applyOmniFocusImport, mergeExtraFolders, parseOmniFocusFile, type ImportMode, type OmniImportData } from "./src/importOmniFocus";
 import { ContextMenuProvider } from "./src/contextMenu";
 import { MenuBar } from "./src/menuBar";
 import { PerspectivesListModal } from "./src/perspectivesList";
@@ -1095,6 +1095,12 @@ export default function App() {
     const result = applyOmniFocusImport(projects, tasks, importPreview, mode);
     setProjects(result.projects);
     setTasks(result.tasks);
+    setSettings((current) => ({
+      ...current,
+      extraFolders: mode === "replace"
+        ? result.extraFolders
+        : mergeExtraFolders(current.extraFolders, result.extraFolders),
+    }));
     if (mode === "replace") {
       const retainedProjectIds = new Set(result.projects.map((project) => project.id));
       setCustomPerspectives((current) => retainProjectsInPerspectives(current, retainedProjectIds));
@@ -1104,7 +1110,8 @@ export default function App() {
     setInspectorOpen(false);
     setImportPreview(null);
     const duplicateNote = result.duplicateTasks ? ` ${result.duplicateTasks} duplicate${result.duplicateTasks === 1 ? " was" : "s were"} ignored.` : "";
-    setImportSummary(`${mode === "replace" ? "Loaded" : "Added"} ${result.addedTasks} action${result.addedTasks === 1 ? "" : "s"} and ${result.addedProjects} project${result.addedProjects === 1 ? "" : "s"}.${duplicateNote}`);
+    const folderNote = result.extraFolders.length ? ` and ${result.extraFolders.length} folder${result.extraFolders.length === 1 ? "" : "s"}` : "";
+    setImportSummary(`${mode === "replace" ? "Loaded" : "Added"} ${result.addedTasks} action${result.addedTasks === 1 ? "" : "s"} and ${result.addedProjects} project${result.addedProjects === 1 ? "" : "s"}${folderNote}.${duplicateNote}`);
   };
 
   const pendingDeleteProjects = pendingDelete?.kind === "projects"

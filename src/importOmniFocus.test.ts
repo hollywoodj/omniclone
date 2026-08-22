@@ -36,6 +36,7 @@ test("imports a realistic OmniFocus CSV with folders, inbox, tags, and status", 
   assert.equal(imported.projects.length, 1);
   assert.equal(imported.projects[0]?.name, "Website");
   assert.equal(imported.projects[0]?.folder, "Work");
+  assert.deepEqual(imported.extraFolders, ["Work"]);
   assert.equal(imported.projects[0]?.note, "Kickoff the public site.");
   assert.equal(imported.tasks.length, 6);
 
@@ -63,6 +64,42 @@ test("imports a realistic OmniFocus CSV with folders, inbox, tags, and status", 
 
   assert.equal(imported.skipped, 1);
   assert.ok(imported.warnings.some((warning) => warning.includes("folder")));
+});
+
+test("imports nested CSV folders as sidebar folder paths", () => {
+  const csv = [
+    "Task ID,Type,Name,Status,Project",
+    "f1,Folder,Home,active,",
+    "f2,Folder,Personal,active,Home",
+    "f3,Folder,Hollywood,active,Musician",
+    "f4,Folder,Musician,active,",
+    "p1,Project,Website,active,Home : Personal",
+  ].join("\n");
+  const imported = parseOmniFocusFile("OmniFocus.csv", bytes(csv), now);
+  assert.ok(imported.extraFolders.includes("Home"));
+  assert.ok(imported.extraFolders.includes("Home : Personal"));
+  assert.ok(imported.extraFolders.includes("Musician"));
+  assert.ok(imported.extraFolders.includes("Musician : Hollywood"));
+  assert.equal(imported.projects[0]?.folder, "Home : Personal");
+});
+
+test("imports empty CSV folders without projects", () => {
+  const csv = [
+    "Task ID,Type,Name,Status,Project",
+    "f1,Folder,Archive,active,",
+    "f2,Folder,Old Clients,active,Archive",
+  ].join("\n");
+  const imported = parseOmniFocusFile("OmniFocus.csv", bytes(csv), now);
+  assert.deepEqual(imported.extraFolders.sort(), ["Archive", "Archive : Old Clients"]);
+  assert.equal(imported.projects.length, 0);
+  assert.equal(imported.tasks.length, 0);
+});
+
+test("apply import merges sidebar folders in merge mode", () => {
+  const csv = "Task ID,Type,Name,Status,Project\nf1,Folder,Work,active,\n";
+  const imported = parseOmniFocusFile("OmniFocus.csv", bytes(csv), now);
+  const result = applyOmniFocusImport([], [], imported, "merge");
+  assert.deepEqual(result.extraFolders, ["Work"]);
 });
 
 test("creates folder-prefixed projects even when actions appear before project rows", () => {
