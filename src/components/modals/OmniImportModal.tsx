@@ -60,7 +60,8 @@ export function OmniImportModal({ data, error, summary, guide, onClose, onApply,
                 <Text style={styles.exportInstructionsTitle}>Mac</Text>
                 <Text style={styles.exportInstruction}>1. File → Export…</Text>
                 <Text style={styles.exportInstruction}>2. Choose CSV (or CSV UTF-16 if you use non-English characters)</Text>
-                <Text style={styles.exportInstruction}>3. TaskPaper / Plain Text also works if you already have one</Text>
+                <Text style={styles.exportInstruction}>3. For parallel/sequential/single-action project types, use Plain Text (TaskPaper) export</Text>
+                <Text style={styles.exportInstruction}>4. TaskPaper / Plain Text also works if you already have one</Text>
               </View>
               <View style={styles.importWarning}><Icon name="information-outline" size={18} color="#9b6c24" /><Text style={styles.importWarningText}>Skip .ofocus and .ofocus-backup files. Those packages are OmniFocus’s private transaction log, not a portable export.</Text></View>
             </ScrollView>

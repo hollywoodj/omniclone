@@ -119,24 +119,46 @@ function projectFullName(project: Project) {
   return project.folder ? `${project.folder} : ${project.name}` : project.name;
 }
 
+function csvTypeHintHeaders(header: string) {
+  return /sequential|singleton|singleaction|paralle|grouptype|projecttype|order|completioncriteria|grouping|containsingleton/i.test(header);
+}
+
+export function collectCsvTypeHints(row: string[], headers: string[]) {
+  const hints: string[] = [];
+  for (let index = 0; index < headers.length; index += 1) {
+    const cell = clean(row[index]);
+    if (!cell) continue;
+    const header = normalizeHeader(headers[index] ?? "");
+    if (header.includes("sequential") && /^(true|1|yes)$/i.test(cell)) hints.push("sequential");
+    if (header.includes("singleton") && /^(true|1|yes)$/i.test(cell)) hints.push("single action");
+    if (csvTypeHintHeaders(header)) hints.push(cell);
+    if (cell.includes("@parallel") || cell.includes("@singleton")) hints.push(cell);
+  }
+  return hints;
+}
+
 export function parseImportedProjectType(
   typeValue: string,
   extraValues: string[] = [],
-): Project["type"] {
-  const combined = [typeValue, ...extraValues].join(" ").toLowerCase();
-  if (combined.includes("single action")) return "singleActions";
-  if (combined.includes("sequential")) return "sequential";
-  if (combined.includes("parallel")) return "parallel";
-  return "parallel";
+): Project["type"] | undefined {
+  const combined = [typeValue, ...extraValues].join(" ");
+  const lowered = combined.toLowerCase();
+  if (/@parallel\s*\(\s*false\s*\)/.test(combined)) return "sequential";
+  if (lowered.includes("single action") || /\bsingleton\b/.test(lowered)) return "singleActions";
+  if (lowered.includes("sequential")) return "sequential";
+  if (lowered.includes("parallel")) return "parallel";
+  return undefined;
 }
 
-export function projectTypeFromTaskPaperParameters(parameters: Record<string, string | true>): Project["type"] {
+export function projectTypeFromTaskPaperParameters(parameters: Record<string, string | true>): Project["type"] | undefined {
   const singleton = parameters.singleton;
   if (singleton === true || singleton === "true") return "singleActions";
+  const containsSingleton = parameters.containsingletonactions;
+  if (containsSingleton === true || containsSingleton === "true") return "singleActions";
   const parallel = parameters.parallel;
   if (parallel === "false") return "sequential";
   if (parallel === true || parallel === "true") return "parallel";
-  return "parallel";
+  return undefined;
 }
 
 function folderAncestors(path: string) {
@@ -228,7 +250,7 @@ function parseOmniCsv(sourceName: string, text: string, now: Date): OmniImportDa
       return existing;
     }
     const project = projectRecord(name, projects.length, note);
-    if (type) project.type = type;
+    if (type !== undefined) project.type = type;
     projects.push(project);
     addProjectAlias(projectAliases, name, project.id);
     addProjectAlias(projectAliases, leafName(name), project.id);
@@ -255,8 +277,10 @@ function parseOmniCsv(sourceName: string, text: string, now: Date): OmniImportDa
         : name;
       const note = value(row, "Notes", "Note");
       const review = Number(value(row, "Review Interval", "Review", "Repeat Interval"));
-      const projectType = parseImportedProjectType(type, [
+      const projectType = parseImportedProjectType(value(row, "Type", "Task Type"), [
+        ...collectCsvTypeHints(row, headers),
         value(row, "Project Type", "Group Type", "ProjectType"),
+        value(row, "Notes", "Note"),
       ]);
       const project = ensureProject(fullName, note, projectType);
       if (Number.isFinite(review) && review > 0) project.reviewIntervalDays = review;
@@ -279,6 +303,26 @@ function parseOmniCsv(sourceName: string, text: string, now: Date): OmniImportDa
     const projectName = inbox ? "" : value(row, "Project", "Project Name", "Container");
     if (projectName) ensureProject(projectName);
     rawTasks.push({ row, projectName, inbox });
+  }
+
+  for (const project of projects) {
+    if (project.type !== undefined) continue;
+    const fullName = projectFullName(project).toLowerCase();
+    for (const row of body) {
+      const name = value(row, "Name", "Title");
+      if (!name) continue;
+      const rowType = value(row, "Type", "Task Type").toLowerCase();
+      if (!rowType.includes("project") && !rowType.includes("single action")) continue;
+      if (name.toLowerCase() !== project.name.toLowerCase() && name.toLowerCase() !== fullName) continue;
+      const inferred = parseImportedProjectType(value(row, "Type", "Task Type"), [
+        ...collectCsvTypeHints(row, headers),
+        value(row, "Notes", "Note"),
+      ]);
+      if (inferred !== undefined) {
+        project.type = inferred;
+        break;
+      }
+    }
   }
 
   const warnings: string[] = [];
@@ -323,6 +367,10 @@ function parseOmniCsv(sourceName: string, text: string, now: Date): OmniImportDa
   if (folderCount) warnings.push(`${folderCount} folder${folderCount === 1 ? " was" : "s were"} imported as sidebar folders.`);
   if (droppedCount) warnings.push(`${droppedCount} dropped item${droppedCount === 1 ? " was" : "s were"} kept with Dropped status.`);
   if (onHoldCount) warnings.push(`${onHoldCount} on-hold item${onHoldCount === 1 ? " was" : "s were"} kept with On Hold status.`);
+  const typedProjects = projects.filter((project) => project.type !== undefined).length;
+  if (projects.length && typedProjects === 0) {
+    warnings.push("OmniFocus CSV exports do not include project types. On Mac, export as Plain Text (TaskPaper) to preserve parallel, sequential, and single-action lists.");
+  }
   return { sourceName, format: "OmniFocus CSV", projects, tasks, extraFolders, skipped, warnings };
 }
 
@@ -342,6 +390,30 @@ function parseTaskPaper(sourceName: string, text: string, now: Date): OmniImport
     const line = rawLine.trim();
     if (line.startsWith("- ")) {
       const parsed = extractTaskPaperTags(line.slice(2));
+      if (parsed.title.endsWith(":")) {
+        const rawName = parsed.title.slice(0, -1).trim();
+        if (!rawName) continue;
+        const parent = [...projectAtIndent.entries()].filter(([level]) => level < indent).sort((a, b) => b[0] - a[0])[0]?.[1];
+        const parentFullName = parent ? projectFullName(parent) : undefined;
+        const name = parentFullName && !rawName.toLowerCase().startsWith(`${parentFullName.toLowerCase()} :`)
+          ? `${parentFullName} : ${rawName}`
+          : rawName;
+        const pathKey = name.toLowerCase();
+        const existing = projectByPath.get(pathKey);
+        const selected = existing ?? projectRecord(name, projects.length);
+        const projectType = projectTypeFromTaskPaperParameters(parsed.parameters);
+        if (!existing) {
+          if (projectType !== undefined) selected.type = projectType;
+          projects.push(selected);
+          projectByPath.set(pathKey, selected);
+        } else if (projectType !== undefined) {
+          selected.type = projectType;
+        }
+        [...projectAtIndent.keys()].filter((level) => level > indent).forEach((level) => projectAtIndent.delete(level));
+        projectAtIndent.set(indent, selected);
+        lastTask = null;
+        continue;
+      }
       if (!parsed.title) {
         skipped += 1;
         continue;
@@ -386,10 +458,10 @@ function parseTaskPaper(sourceName: string, text: string, now: Date): OmniImport
       const selected = existing ?? projectRecord(name, projects.length);
       const projectType = projectTypeFromTaskPaperParameters(parsed.parameters);
       if (!existing) {
-        selected.type = projectType;
+        if (projectType !== undefined) selected.type = projectType;
         projects.push(selected);
         projectByPath.set(pathKey, selected);
-      } else if (projectType !== "parallel" || selected.type === undefined) {
+      } else if (projectType !== undefined) {
         selected.type = projectType;
       }
       [...projectAtIndent.keys()].filter((level) => level > indent).forEach((level) => projectAtIndent.delete(level));
@@ -450,6 +522,7 @@ export function applyOmniFocusImport(currentProjects: Project[], currentTasks: T
     if (existing) {
       projectIdMap.set(incoming.id, existing.id);
       if (incoming.note && !existing.note) existing.note = incoming.note;
+      if (incoming.type !== undefined) existing.type = incoming.type;
     } else {
       let id = incoming.id;
       while (projectIds.has(id)) id = `${incoming.id}-${addedProjects + 1}`;
