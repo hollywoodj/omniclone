@@ -36,6 +36,7 @@ export function OmniImportModal({ data, error, summary, guide, onClose, onApply,
               <Text style={styles.importSectionTitle}>READY TO IMPORT</Text>
               <View style={styles.importStats}>
                 <View style={styles.importStat}><Text style={styles.importStatValue}>{data.projects.length}</Text><Text style={styles.importStatLabel}>Projects</Text></View>
+                <View style={styles.importStat}><Text style={styles.importStatValue}>{data.extraFolders.length}</Text><Text style={styles.importStatLabel}>Folders</Text></View>
                 <View style={styles.importStat}><Text style={styles.importStatValue}>{data.tasks.length}</Text><Text style={styles.importStatLabel}>Actions</Text></View>
                 <View style={styles.importStat}><Text style={styles.importStatValue}>{inboxCount}</Text><Text style={styles.importStatLabel}>Inbox</Text></View>
                 <View style={styles.importStat}><Text style={styles.importStatValue}>{completed}</Text><Text style={styles.importStatLabel}>Completed</Text></View>
