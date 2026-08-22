@@ -4,6 +4,7 @@ import { type CustomPerspective, type PersistedState, type Project, type RepeatR
 import { normalizeCustomPerspective } from "./perspectiveRules";
 import { hydrateProjectFolder } from "./outline.ts";
 import { mergeTagRecords } from "./tags.ts";
+import { demoLibrary } from "./demoLibrary";
 
 const LEGACY_STORAGE_KEY = "omniclone.database.v1";
 
@@ -19,6 +20,7 @@ type ProjectRow = {
   type?: string | null;
   folder?: string | null;
   complete_with_last_action?: number | null;
+  sidebar_order?: number | null;
 };
 
 type TaskRow = {
@@ -105,9 +107,13 @@ export async function loadDatabase(): Promise<PersistedState | null> {
 
   if (isEmpty) {
     const legacy = await migrateLegacyAsyncStorage();
-    if (!legacy) return null;
-    await saveDatabase(legacy);
-    return legacy;
+    if (legacy) {
+      await saveDatabase(legacy);
+      return legacy;
+    }
+    const demo = demoLibrary();
+    await saveDatabase(demo);
+    return demo;
   }
 
   const [projectRows, taskRows, tagRows, tagMetaRows, perspectiveRows] = await Promise.all([
@@ -139,6 +145,7 @@ export async function loadDatabase(): Promise<PersistedState | null> {
     status: row.status === "onHold" || row.status === "dropped" || row.status === "done" ? row.status : "active",
     type: row.type === "sequential" || row.type === "singleActions" ? row.type : "parallel",
     completeWithLastAction: !!row.complete_with_last_action,
+    sidebarOrder: row.sidebar_order ?? undefined,
   }));
 
   const tasks: Task[] = taskRows.map((row) => ({
@@ -228,12 +235,12 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
 
     for (const project of state.projects) {
       await db.runAsync(
-        `INSERT INTO projects (id, import_key, name, color, note, review_interval_days, last_reviewed_at, status, type, folder, complete_with_last_action)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO projects (id, import_key, name, color, note, review_interval_days, last_reviewed_at, status, type, folder, complete_with_last_action, sidebar_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET import_key = excluded.import_key, name = excluded.name, color = excluded.color,
            note = excluded.note, review_interval_days = excluded.review_interval_days, last_reviewed_at = excluded.last_reviewed_at,
            status = excluded.status, type = excluded.type, folder = excluded.folder,
-           complete_with_last_action = excluded.complete_with_last_action`,
+           complete_with_last_action = excluded.complete_with_last_action, sidebar_order = excluded.sidebar_order`,
         project.id,
         project.importKey ?? null,
         project.name,
@@ -244,7 +251,8 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
         project.status ?? "active",
         project.type ?? "parallel",
         project.folder ?? null,
-        project.completeWithLastAction ? 1 : 0
+        project.completeWithLastAction ? 1 : 0,
+        project.sidebarOrder ?? null,
       );
     }
 

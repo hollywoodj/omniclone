@@ -5,11 +5,12 @@ import { forecastWeek, todayKey, type ForecastDayKey } from "../../dates";
 import { useModifierKeys } from "../../marquee";
 import { defaultTagColor, palette, perspectives, type PerspectiveId, type Project, type TagRecord, type Task } from "../../model";
 import { projectContextItems } from "../../perspectives/projectContextItems";
-import { buildFolderTree, projectDisplayName, sidebarActionCounts } from "../../outline";
+import { buildFolderTree, orderedSidebarSiblings, projectDisplayName, sidebarActionCounts } from "../../outline";
 import { buildTagTree, remainingCountsForTagTree, tagKey } from "../../tags";
 import type { SidebarDropTarget } from "../../library/mutations";
 import { appStyles as styles } from "../../styles/appStyles";
 import { Icon } from "../ui/Icon";
+import { ProjectTypeIcon, projectTypeIconColor } from "../ui/ProjectTypeIcon";
 import { SidebarRow } from "../ui/SidebarRow";
 
 export function ProjectSidebar({
@@ -17,6 +18,7 @@ export function ProjectSidebar({
   projects,
   tasks,
   extraFolders,
+  folderSidebarOrders = {},
   selectedProjectId,
   selectedProjectIds,
   selectedTag,
@@ -42,6 +44,7 @@ export function ProjectSidebar({
   projects: Project[];
   tasks: Task[];
   extraFolders: string[];
+  folderSidebarOrders?: Record<string, number>;
   selectedProjectId: string | null;
   selectedProjectIds?: string[];
   selectedTag: string | null;
@@ -90,7 +93,7 @@ export function ProjectSidebar({
     return () => window.clearInterval(interval);
   }, []);
   const week = useMemo(() => forecastWeek(calendarNow), [calendarNow]);
-  const tree = useMemo(() => buildFolderTree(remainingProjects, extraFolders), [extraFolders, remainingProjects]);
+  const tree = useMemo(() => buildFolderTree(remainingProjects, extraFolders, folderSidebarOrders), [extraFolders, folderSidebarOrders, remainingProjects]);
   const [collapsedFolders, setCollapsedFolders] = useState<string[]>([]);
   const [collapsedTags, setCollapsedTags] = useState<string[]>([]);
   const toggleFolder = (path: string) => {
@@ -102,6 +105,7 @@ export function ProjectSidebar({
   const remainingIn = (projectId: string) => counts.remainingByProject.get(projectId) ?? 0;
   const projectRow = (project: Project, depth: number) => {
     const stalled = (project.status ?? "active") === "active" && remainingIn(project.id) === 0;
+    const dimmed = project.status === "onHold" || project.status === "dropped";
     return (
       <SidebarRow
         key={project.id}
@@ -112,13 +116,12 @@ export function ProjectSidebar({
         onDropTasks={(ids) => onDropOnSidebar?.(ids, { kind: "project", projectId: project.id })}
         style={{ paddingLeft: 8 + depth * 14 }}
       >
-        <View style={[styles.projectDot, { borderColor: project.color }, project.status === "dropped" && styles.projectDotDropped, project.status === "onHold" && styles.projectDotHold, stalled && styles.projectDotStalled]} />
+        <ProjectTypeIcon type={project.type} size={16} dimmed={dimmed} />
         <Text numberOfLines={1} style={[styles.sidebarRowText, project.status === "dropped" && styles.taskTitleCompleted, project.status === "onHold" && styles.sidebarHoldText]}>{projectDisplayName(project)}</Text>
         {stalled && <Text style={styles.sidebarStatusTag}>Stalled</Text>}
         {project.status === "onHold" && <Text style={styles.sidebarStatusTag}>On Hold</Text>}
         {project.status === "dropped" && <Text style={styles.sidebarStatusTag}>Dropped</Text>}
         {project.status === "done" && <Text style={styles.sidebarStatusTag}>Done</Text>}
-        {project.type === "sequential" && <Icon name="arrow-down-bold" size={12} color="#8b888f" />}
         {showCounts && <Text style={styles.sidebarCount}>{remainingIn(project.id)}</Text>}
       </SidebarRow>
     );
@@ -138,12 +141,15 @@ export function ProjectSidebar({
           <Pressable onPress={() => toggleFolder(node.path)} hitSlop={8} style={styles.collapseButton}>
             <Icon name={collapsed ? "chevron-right" : "chevron-down"} size={16} color="#6e6c72" />
           </Pressable>
-          <Icon name={collapsed ? "folder-outline" : "folder-open-outline"} size={16} color="#8b4fc2" />
+          <Icon name={collapsed ? "folder-outline" : "folder-open-outline"} size={16} color={projectTypeIconColor} />
           <Text numberOfLines={1} style={styles.sidebarRowText}>{node.name}</Text>
           {showCounts && <Text style={styles.sidebarCount}>{node.projects.reduce((sum, project) => sum + remainingIn(project.id), 0)}</Text>}
         </SidebarRow>
-        {!collapsed && node.projects.map((project) => projectRow(project, depth + 1))}
-        {!collapsed && node.children.map((child) => renderFolder(child, depth + 1))}
+        {!collapsed && orderedSidebarSiblings(node, folderSidebarOrders).map((item) => (
+          item.kind === "project"
+            ? projectRow(item.project, depth + 1)
+            : renderFolder(item.node, depth + 1)
+        ))}
       </View>
     );
   };
