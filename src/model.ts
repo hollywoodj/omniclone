@@ -73,6 +73,7 @@ export type AppSettings = {
   sidebarWidth: number;
   inspectorWidth: number;
   perspectiveBarIds: string[];
+  perspectiveOrderIds: string[];
   perspectiveShortcuts: Record<string, string>;
   standardAvailability: Record<PerspectiveId, PerspectiveAvailability>;
   outlineColumns: OutlineColumnId[];
@@ -268,6 +269,7 @@ export const defaultSettings: AppSettings = {
   sidebarWidth: 236,
   inspectorWidth: 316,
   perspectiveBarIds: defaultPerspectiveBarIds,
+  perspectiveOrderIds: defaultPerspectiveBarIds,
   perspectiveShortcuts: defaultPerspectiveShortcuts,
   outlineColumns: defaultOutlineColumns,
   toolbarButtons: defaultToolbarButtons,
@@ -332,14 +334,14 @@ export const perspectiveColorChoices = [
 ];
 
 
-export const perspectives: Array<{ id: PerspectiveId; label: string; icon: string }> = [
-  { id: "inbox", label: "Inbox", icon: "inbox-arrow-down-outline" },
-  { id: "projects", label: "Projects", icon: "folder-multiple-outline" },
-  { id: "tags", label: "Tags", icon: "tag-multiple-outline" },
-  { id: "forecast", label: "Forecast", icon: "calendar-month-outline" },
-  { id: "flagged", label: "Flagged", icon: "flag-outline" },
-  { id: "completed", label: "Completed", icon: "check-circle-outline" },
-  { id: "review", label: "Review", icon: "check-decagram-outline" },
+export const perspectives: Array<{ id: PerspectiveId; label: string; icon: string; color: string }> = [
+  { id: "inbox", label: "Inbox", icon: "inbox-arrow-down-outline", color: "#8b4fc2" },
+  { id: "projects", label: "Projects", icon: "circle-multiple", color: "#2f7de1" },
+  { id: "tags", label: "Tags", icon: "tag-outline", color: "#9b59b6" },
+  { id: "forecast", label: "Forecast", icon: "calendar-month-outline", color: "#e2554a" },
+  { id: "flagged", label: "Flagged", icon: "flag", color: "#e8893a" },
+  { id: "completed", label: "Completed", icon: "check-circle", color: "#8b4fc2" },
+  { id: "review", label: "Review", icon: "coffee-outline", color: "#3b7dd8" },
 ];
 
 export function createCustomPerspective(): CustomPerspective {

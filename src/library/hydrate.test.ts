@@ -19,6 +19,7 @@ test("adds custom perspectives to the default bar on first hydrate", () => {
   }];
   const next = settingsWithCustomBarItems(defaultSettings, custom);
   assert.ok(next.perspectiveBarIds.includes("custom:c1"));
+  assert.ok(next.perspectiveOrderIds.includes("custom:c1"));
 });
 
 test("does not rewrite a customized perspective bar", () => {
