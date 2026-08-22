@@ -129,6 +129,21 @@ test("pending delete copy describes projects and multi-select", () => {
     deletingProject: false,
   });
   assert.equal(multi.title, "2 actions");
+  const projects = pendingDeleteCopy({
+    projectCount: 2,
+    folderCount: 1,
+    projectActionCount: 3,
+    taskCount: 0,
+    deletingProject: true,
+  });
+  assert.equal(projects.title, "2 projects and 1 folder");
+  const clear = pendingDeleteCopy({
+    projectActionCount: 0,
+    taskCount: 0,
+    deletingProject: false,
+    clearingDatabase: true,
+  });
+  assert.equal(clear.title, "Clear database");
 });
 
 test("dropping on a tag assigns it and folders take the first project", () => {

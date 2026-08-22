@@ -256,10 +256,50 @@ export function removeProjectFromLibrary(
   customPerspectives: CustomPerspective[],
   projectId: string,
 ) {
+  return removeProjectsFromLibrary(projects, tasks, customPerspectives, [projectId]);
+}
+
+export function removeProjectsFromLibrary(
+  projects: Project[],
+  tasks: Task[],
+  customPerspectives: CustomPerspective[],
+  projectIds: string[],
+) {
+  const ids = new Set(projectIds.filter(Boolean));
+  let nextPerspectives = customPerspectives;
+  for (const id of ids) nextPerspectives = pruneProjectFromPerspectives(nextPerspectives, id);
   return {
-    projects: projects.filter((project) => project.id !== projectId),
-    tasks: tasks.filter((task) => task.projectId !== projectId),
-    customPerspectives: pruneProjectFromPerspectives(customPerspectives, projectId),
+    projects: projects.filter((project) => !ids.has(project.id)),
+    tasks: tasks.filter((task) => !task.projectId || !ids.has(task.projectId)),
+    customPerspectives: nextPerspectives,
+  };
+}
+
+export function collectDescendantFolderPaths(folderPaths: string[], extraFolders: string[]): string[] {
+  const roots = [...new Set(folderPaths.filter(Boolean))];
+  if (!roots.length) return [];
+  return extraFolders.filter((path) => roots.some((root) => path === root || path.startsWith(`${root} : `)));
+}
+
+export function projectIdsInFolderPaths(projects: Project[], folderPaths: string[]): string[] {
+  const paths = [...new Set(folderPaths.filter(Boolean))];
+  if (!paths.length) return [];
+  return projects
+    .filter((project) => paths.some((path) => projectInFolder(project, path)))
+    .map((project) => project.id);
+}
+
+export function sidebarDeleteTargets(
+  projects: Project[],
+  extraFolders: string[],
+  projectIds: string[],
+  folderPaths: string[],
+) {
+  const foldersToRemove = collectDescendantFolderPaths(folderPaths, extraFolders);
+  const folderProjectIds = projectIdsInFolderPaths(projects, foldersToRemove);
+  return {
+    projectIds: [...new Set([...projectIds, ...folderProjectIds])],
+    folderPaths: foldersToRemove,
   };
 }
 
@@ -277,7 +317,19 @@ export function selectionAfterProjectDelete(
   tasks: Task[],
   projectId: string,
 ) {
-  const remaining = current.ids.filter((taskId) => tasks.find((task) => task.id === taskId)?.projectId !== projectId);
+  return selectionAfterProjectsDelete(current, tasks, [projectId]);
+}
+
+export function selectionAfterProjectsDelete(
+  current: { ids: string[]; anchorId: string | null; headId: string | null },
+  tasks: Task[],
+  projectIds: string[],
+) {
+  const removedProjects = new Set(projectIds);
+  const remaining = current.ids.filter((taskId) => {
+    const projectId = tasks.find((task) => task.id === taskId)?.projectId;
+    return projectId === undefined || projectId === null || !removedProjects.has(projectId);
+  });
   if (!remaining.length) return { ids: [] as string[], anchorId: null, headId: null };
   return {
     ids: remaining,
@@ -313,12 +365,33 @@ export function extraFoldersAfterCreate(extraFolders: string[], name: string): s
 
 export function pendingDeleteCopy(options: {
   projectName?: string;
+  projectCount?: number;
   projectActionCount: number;
+  folderCount?: number;
   taskCount: number;
   taskTitle?: string;
   deletingProject: boolean;
+  clearingDatabase?: boolean;
 }): { title: string; message?: string } {
+  if (options.clearingDatabase) {
+    return {
+      title: "Clear database",
+      message: "All projects, actions, tags, and custom perspectives will be permanently removed from your local database.",
+    };
+  }
   if (options.deletingProject) {
+    const projectCount = options.projectCount ?? 1;
+    const folderCount = options.folderCount ?? 0;
+    if (projectCount > 1 || folderCount > 0) {
+      const parts: string[] = [];
+      if (projectCount) parts.push(`${projectCount} project${projectCount === 1 ? "" : "s"}`);
+      if (folderCount) parts.push(`${folderCount} folder${folderCount === 1 ? "" : "s"}`);
+      const title = parts.join(" and ");
+      const message = options.projectActionCount
+        ? `${title} and ${options.projectActionCount} action${options.projectActionCount === 1 ? "" : "s"} will be permanently removed from your local database.`
+        : `${title} will be permanently removed from your local database.`;
+      return { title, message };
+    }
     const title = options.projectName ?? "this project";
     const message = options.projectActionCount
       ? `This project and ${options.projectActionCount} action${options.projectActionCount === 1 ? "" : "s"} will be permanently removed from your local database.`
