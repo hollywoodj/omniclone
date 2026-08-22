@@ -5,6 +5,7 @@ import type { Project, TagRecord, Task } from "../../model";
 import { EmptyInspector } from "../inspector/EmptyInspector";
 import { Inspector } from "../inspector/Inspector";
 import { MultiSelectInspector } from "../inspector/MultiSelectInspector";
+import { MultiSelectProjectInspector } from "../inspector/MultiSelectProjectInspector";
 import { ProjectInspector } from "../inspector/ProjectInspector";
 import { TagInspector } from "../inspector/TagInspector";
 import { findTagRecord, remainingCountForTagTree } from "../../tags";
@@ -31,6 +32,10 @@ export function InspectorPane({
   onRenameTag,
   onChangeTag,
   tagRecords,
+  selectedSidebarProjectIds = [],
+  selectedSidebarFolderPaths = [],
+  onDeleteSidebarSelection,
+  onFocusSidebarSelection,
 }: {
   selectedTaskIds: string[];
   selectedTask: Task | null;
@@ -53,7 +58,22 @@ export function InspectorPane({
   onRenameTag: (name: string) => void;
   onChangeTag: (patch: Partial<TagRecord>) => void;
   tagRecords: TagRecord[];
+  selectedSidebarProjectIds?: string[];
+  selectedSidebarFolderPaths?: string[];
+  onDeleteSidebarSelection?: () => void;
+  onFocusSidebarSelection?: () => void;
 }) {
+  const sidebarSelectionCount = selectedSidebarProjectIds.length + selectedSidebarFolderPaths.length;
+  if (sidebarSelectionCount > 1 && !selectedTaskIds.length && !inspectedProject && !tagFilter) {
+    return (
+      <MultiSelectProjectInspector
+        projectCount={selectedSidebarProjectIds.length}
+        folderCount={selectedSidebarFolderPaths.length}
+        onFocus={() => onFocusSidebarSelection?.()}
+        onDelete={() => onDeleteSidebarSelection?.()}
+      />
+    );
+  }
   if (selectedTaskIds.length > 1) {
     return (
       <MultiSelectInspector

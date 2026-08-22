@@ -31,6 +31,9 @@ function handlers(overrides: Partial<AppCommandHandlers> = {}): AppCommandHandle
     deleteTasks: record("deleteTasks") as AppCommandHandlers["deleteTasks"],
     projectFilter: "p1",
     deleteProject: record("deleteProject") as AppCommandHandlers["deleteProject"],
+    sidebarProjectIds: [],
+    sidebarFolderPaths: [],
+    deleteSidebarSelection: record("deleteSidebarSelection"),
     focusSelected: record("focusSelected"),
     goBack: record("goBack"),
     goForward: record("goForward"),
@@ -91,6 +94,16 @@ test("delete falls back to the selected project when no actions are selected", (
   const next = handlers({ selectedTaskIds: [] });
   dispatchAppCommand({ type: "delete", direction: "menu" }, next);
   assert.deepEqual(next.calls, ["deleteProject:[\"p1\"]"]);
+});
+
+test("delete removes sidebar multi-selection before the filtered project", () => {
+  const next = handlers({
+    selectedTaskIds: [],
+    sidebarProjectIds: ["p1", "p2"],
+    sidebarFolderPaths: ["Home"],
+  });
+  dispatchAppCommand({ type: "delete", direction: "menu" }, next);
+  assert.deepEqual(next.calls, ["deleteSidebarSelection"]);
 });
 
 test("sidebar and inspector toggles respect layout availability", () => {

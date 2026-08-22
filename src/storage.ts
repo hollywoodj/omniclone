@@ -7,6 +7,7 @@ import { mergeTagRecords } from "./tags.ts";
 import { demoLibrary } from "./demoLibrary";
 
 const LEGACY_STORAGE_KEY = "omniclone.database.v1";
+const DEMO_SEED_DISABLED_KEY = "omniclone.demoSeedDisabled";
 
 type ProjectRow = {
   id: string;
@@ -111,9 +112,13 @@ export async function loadDatabase(): Promise<PersistedState | null> {
       await saveDatabase(legacy);
       return legacy;
     }
-    const demo = demoLibrary();
-    await saveDatabase(demo);
-    return demo;
+    const demoDisabled = await AsyncStorage.getItem(DEMO_SEED_DISABLED_KEY);
+    if (!demoDisabled) {
+      const demo = demoLibrary();
+      await saveDatabase(demo);
+      return demo;
+    }
+    return { version: 2, projects: [], tasks: [], customPerspectives: [], tagRecords: [] };
   }
 
   const [projectRows, taskRows, tagRows, tagMetaRows, perspectiveRows] = await Promise.all([
@@ -416,4 +421,16 @@ function legacyProjectIds(perspective: CustomPerspective): string[] {
 
 function legacyTags(perspective: CustomPerspective): string[] {
   return perspective.rules.find((rule) => rule.kind === "taggedAny" || rule.kind === "taggedAll")?.tags ?? [];
+}
+
+export async function clearDatabase(): Promise<void> {
+  const db = await getDb();
+  await db.withTransactionAsync(async () => {
+    await db.execAsync("DELETE FROM task_tags");
+    await db.execAsync("DELETE FROM tasks");
+    await db.execAsync("DELETE FROM projects");
+    await db.execAsync("DELETE FROM tags");
+    await db.execAsync("DELETE FROM custom_perspectives");
+  });
+  await AsyncStorage.setItem(DEMO_SEED_DISABLED_KEY, "1");
 }

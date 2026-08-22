@@ -85,10 +85,12 @@ import {
   lingeringIdsAfterCompletion,
   lingeringIdsAfterPatch,
   pendingDeleteCopy,
-  removeProjectFromLibrary,
+  removeProjectsFromLibrary,
   retainProjectsInPerspectives,
-  selectionAfterProjectDelete,
+  selectionAfterProjectsDelete,
+  sidebarDeleteTargets,
 } from "./src/library/mutations";
+import { clearDatabase } from "./src/storage";
 import { dispatchAppCommand, type AppCommand, type AppCommandHandlers } from "./src/commands/dispatch";
 import { usePersistedLibrary } from "./src/hooks/usePersistedLibrary";
 import { useLocationHistory } from "./src/hooks/useLocationHistory";
@@ -159,7 +161,8 @@ export default function App() {
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<
     | { kind: "tasks"; ids: string[]; direction: "menu" | "previous" | "next" }
-    | { kind: "project"; id: string }
+    | { kind: "projects"; projectIds: string[]; folderPaths: string[] }
+    | { kind: "database" }
     | null
   >(null);
   const [quickKind, setQuickKind] = useState<"task" | "project" | "folder" | null>(null);
@@ -413,24 +416,87 @@ export default function App() {
     deleteTasks(idsForRow(id), direction);
   };
 
-  const finalizeDeleteProject = (id: string) => {
+  const finalizeDeleteProjects = useCallback((projectIds: string[], folderPaths: string[]) => {
     pushUndo();
-    const next = removeProjectFromLibrary(projects, tasks, customPerspectives, id);
-    setProjects(next.projects);
-    setTasks(next.tasks);
-    setCustomPerspectives(next.customPerspectives);
-    setProjectFilter((current) => current === id ? null : current);
-    setInspectedProjectId((current) => current === id ? null : current);
-    setSelection((current) => selectionAfterProjectDelete(current, tasks, id));
+    if (folderPaths.length) {
+      setSettings((current) => ({
+        ...current,
+        extraFolders: current.extraFolders.filter((path) => !folderPaths.includes(path)),
+        folderSidebarOrders: Object.fromEntries(
+          Object.entries(current.folderSidebarOrders).filter(([path]) => !folderPaths.includes(path)),
+        ),
+      }));
+    }
+    if (projectIds.length) {
+      const next = removeProjectsFromLibrary(projects, tasks, customPerspectives, projectIds);
+      setProjects(next.projects);
+      setTasks(next.tasks);
+      setCustomPerspectives(next.customPerspectives);
+      setProjectFilter((current) => current && projectIds.includes(current) ? null : current);
+      setInspectedProjectId((current) => current && projectIds.includes(current) ? null : current);
+      setSelection((current) => selectionAfterProjectsDelete(current, tasks, projectIds));
+    }
+    if (folderPaths.includes(folderFilter ?? "") || projectIds.includes(projectFilter ?? "")) {
+      navigate({ perspective: "projects", projectFilter: null, folderFilter: null, tagFilter: null });
+    }
+    setSidebarSelection({ projectIds: [], folderPaths: [] });
     setPendingDelete(null);
-  };
+  }, [customPerspectives, folderFilter, navigate, projectFilter, projects, pushUndo, setCustomPerspectives, setProjectFilter, setProjects, setTasks, tasks]);
 
-  const deleteProject = (id: string) => {
+  const deleteProjects = useCallback((projectIds: string[], folderPaths: string[] = []) => {
+    const targets = sidebarDeleteTargets(projects, settings.extraFolders, projectIds, folderPaths);
+    if (!targets.projectIds.length && !targets.folderPaths.length) return;
     if (settings.confirmBeforeDelete) {
-      setPendingDelete({ kind: "project", id });
+      setPendingDelete({ kind: "projects", projectIds: targets.projectIds, folderPaths: targets.folderPaths });
       return;
     }
-    finalizeDeleteProject(id);
+    finalizeDeleteProjects(targets.projectIds, targets.folderPaths);
+  }, [finalizeDeleteProjects, projects, settings.confirmBeforeDelete, settings.extraFolders]);
+
+  const deleteSidebarSelection = useCallback(() => {
+    const projectIds = sidebarSelection.projectIds.length
+      ? sidebarSelection.projectIds
+      : projectFilter ? [projectFilter] : [];
+    const folderPaths = sidebarSelection.folderPaths.length
+      ? sidebarSelection.folderPaths
+      : folderFilter ? [folderFilter] : [];
+    deleteProjects(projectIds, folderPaths);
+  }, [deleteProjects, folderFilter, projectFilter, sidebarSelection.folderPaths, sidebarSelection.projectIds]);
+
+  const finalizeClearDatabase = useCallback(async () => {
+    pushUndo();
+    await clearDatabase();
+    setProjects([]);
+    setTasks([]);
+    setCustomPerspectives([]);
+    setTagRecords([]);
+    setSettings((current) => ({
+      ...current,
+      extraFolders: [],
+      folderSidebarOrders: {},
+    }));
+    setSelection(emptySelection);
+    setInspectedProjectId(null);
+    setSidebarSelection({ projectIds: [], folderPaths: [] });
+    navigate({ perspective: "inbox", projectFilter: null, tagFilter: null, folderFilter: null, ...emptyFocus() });
+    setPendingDelete(null);
+    setInspectorOpen(false);
+  }, [navigate, pushUndo, setCustomPerspectives, setProjects, setTagRecords, setTasks]);
+
+  const requestClearDatabase = useCallback(() => {
+    if (settings.confirmBeforeDelete) {
+      setPendingDelete({ kind: "database" });
+      return;
+    }
+    void finalizeClearDatabase();
+  }, [finalizeClearDatabase, settings.confirmBeforeDelete]);
+
+  const deleteProject = (id: string) => {
+    const projectIds = sidebarSelection.projectIds.length > 1 && sidebarSelection.projectIds.includes(id)
+      ? sidebarSelection.projectIds
+      : [id];
+    const folderPaths = sidebarSelection.folderPaths.length ? sidebarSelection.folderPaths : [];
+    deleteProjects(projectIds, folderPaths);
   };
 
   const closeQuickEntry = () => {
@@ -1041,14 +1107,21 @@ export default function App() {
     setImportSummary(`${mode === "replace" ? "Loaded" : "Added"} ${result.addedTasks} action${result.addedTasks === 1 ? "" : "s"} and ${result.addedProjects} project${result.addedProjects === 1 ? "" : "s"}.${duplicateNote}`);
   };
 
-  const pendingDeleteProject = pendingDelete?.kind === "project" ? projects.find((project) => project.id === pendingDelete.id) : undefined;
-  const pendingDeleteProjectActionCount = pendingDelete?.kind === "project" ? tasks.filter((task) => task.projectId === pendingDelete.id).length : 0;
+  const pendingDeleteProjects = pendingDelete?.kind === "projects"
+    ? projects.filter((project) => pendingDelete.projectIds.includes(project.id))
+    : [];
+  const pendingDeleteProjectActionCount = pendingDelete?.kind === "projects"
+    ? tasks.filter((task) => task.projectId && pendingDelete.projectIds.includes(task.projectId)).length
+    : 0;
   const pendingDeleteDialog = pendingDeleteCopy({
-    projectName: pendingDeleteProject?.name,
+    projectName: pendingDeleteProjects.length === 1 ? pendingDeleteProjects[0]?.name : undefined,
+    projectCount: pendingDelete?.kind === "projects" ? pendingDelete.projectIds.length : undefined,
+    folderCount: pendingDelete?.kind === "projects" ? pendingDelete.folderPaths.length : undefined,
     projectActionCount: pendingDeleteProjectActionCount,
     taskCount: pendingDelete?.kind === "tasks" ? pendingDelete.ids.length : 0,
     taskTitle: pendingDelete?.kind === "tasks" ? tasks.find((task) => task.id === pendingDelete.ids[0])?.title : undefined,
-    deletingProject: pendingDelete?.kind === "project",
+    deletingProject: pendingDelete?.kind === "projects",
+    clearingDatabase: pendingDelete?.kind === "database",
   });
   const sidebarPerspective = sidebarPerspectiveFor(perspective, activeCustomPerspective);
   const showSidebar = !isPhone && canShowSidebar && sidebarOpen && !perspectiveHidesSidebar(perspective, activeCustomPerspective);
@@ -1079,6 +1152,9 @@ export default function App() {
     deleteTasks,
     projectFilter,
     deleteProject,
+    sidebarProjectIds: sidebarSelection.projectIds,
+    sidebarFolderPaths: sidebarSelection.folderPaths,
+    deleteSidebarSelection,
     focusSelected,
     goBack,
     goForward,
@@ -1121,8 +1197,9 @@ export default function App() {
     print: printDocument,
     duplicateProject: () => duplicateProject(),
     confirmPendingDelete: () => {
-      if (pendingDelete?.kind === "project") finalizeDeleteProject(pendingDelete.id);
+      if (pendingDelete?.kind === "projects") finalizeDeleteProjects(pendingDelete.projectIds, pendingDelete.folderPaths);
       else if (pendingDelete?.kind === "tasks") finalizeDeleteTasks(pendingDelete.ids, pendingDelete.direction);
+      else if (pendingDelete?.kind === "database") void finalizeClearDatabase();
     },
     cancelTopOverlay: () => {
       if (pendingDelete) {
@@ -1452,6 +1529,10 @@ export default function App() {
                 onReviewProject={() => inspectedProject && updateProject(inspectedProject.id, { lastReviewedAt: new Date().toISOString() })}
                 onSkipProject={() => inspectedProject && skipReview(inspectedProject.id)}
                 onDeleteProject={() => inspectedProject && deleteProject(inspectedProject.id)}
+                selectedSidebarProjectIds={sidebarSelection.projectIds}
+                selectedSidebarFolderPaths={sidebarSelection.folderPaths}
+                onDeleteSidebarSelection={deleteSidebarSelection}
+                onFocusSidebarSelection={focusSelected}
                 onFocusProject={() => inspectedProject && focusProject(inspectedProject.id)}
                 onRenameTag={renameSelectedTag}
                 onChangeTag={changeSelectedTag}
@@ -1482,7 +1563,7 @@ export default function App() {
       {settingsOpen && <SettingsModal settings={settings} projectCount={projects.length} taskCount={tasks.length} compact={isPhone} onChange={(patch) => {
         setSettings((current) => ({ ...current, ...patch }));
         if (patch.cleanUpImmediately) setPendingCleanupIds([]);
-      }} onClose={() => setSettingsOpen(false)} onImport={() => { setSettingsOpen(false); void openOmniFocusImport(); }} onReset={() => setSettings(defaultSettings)} />}
+      }} onClose={() => setSettingsOpen(false)} onImport={() => { setSettingsOpen(false); void openOmniFocusImport(); }} onReset={() => setSettings(defaultSettings)} onClearDatabase={() => { setSettingsOpen(false); requestClearDatabase(); }} />}
 
       <PerspectivesListModal
         visible={perspectivesListOpen}
@@ -1523,8 +1604,9 @@ export default function App() {
         message={pendingDeleteDialog.message}
         onCancel={() => setPendingDelete(null)}
         onConfirm={() => {
-          if (pendingDelete?.kind === "project") finalizeDeleteProject(pendingDelete.id);
+          if (pendingDelete?.kind === "projects") finalizeDeleteProjects(pendingDelete.projectIds, pendingDelete.folderPaths);
           else if (pendingDelete?.kind === "tasks") finalizeDeleteTasks(pendingDelete.ids, pendingDelete.direction);
+          else if (pendingDelete?.kind === "database") void finalizeClearDatabase();
         }}
       />
 

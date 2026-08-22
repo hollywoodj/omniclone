@@ -49,6 +49,7 @@ export function SettingsModal({
   onClose,
   onImport,
   onReset,
+  onClearDatabase,
 }: {
   settings: AppSettings;
   projectCount: number;
@@ -58,6 +59,7 @@ export function SettingsModal({
   onClose: () => void;
   onImport: () => void;
   onReset: () => void;
+  onClearDatabase: () => void;
 }) {
   const [section, setSection] = useState<SettingsSection>("general");
   const sections: Array<{ id: SettingsSection; label: string; icon: IconName }> = [
@@ -241,6 +243,10 @@ export function SettingsModal({
                       <Pressable onPress={onImport} style={styles.settingsActionButton}><Icon name="database-import-outline" size={16} color={palette.purpleDark} /><Text style={styles.settingsActionText}>Import…</Text></Pressable>
                     </SettingsRow>
                   </View>
+                  <Pressable onPress={onClearDatabase} style={styles.resetSettingsButton}>
+                    <Icon name="trash-can-outline" size={16} color={palette.danger} />
+                    <Text style={styles.resetSettingsText}>Clear Database</Text>
+                  </Pressable>
                   <Pressable onPress={onReset} style={styles.resetSettingsButton}><Icon name="restore" size={16} color={palette.danger} /><Text style={styles.resetSettingsText}>Restore Default Settings</Text></Pressable>
                 </>
               )}

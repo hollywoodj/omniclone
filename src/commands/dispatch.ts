@@ -65,6 +65,9 @@ export type AppCommandHandlers = {
   deleteTasks: (ids: string[], direction?: "menu" | "previous" | "next") => void;
   projectFilter: string | null;
   deleteProject: (id: string) => void;
+  sidebarProjectIds: string[];
+  sidebarFolderPaths: string[];
+  deleteSidebarSelection: () => void;
   focusSelected: () => void;
   goBack: () => void;
   goForward: () => void;
@@ -169,6 +172,7 @@ export function dispatchAppCommand(action: AppCommand, handlers: AppCommandHandl
       break;
     case "delete":
       if (handlers.selectedTaskIds.length) handlers.deleteTasks(handlers.selectedTaskIds, action.direction);
+      else if (handlers.sidebarProjectIds.length || handlers.sidebarFolderPaths.length) handlers.deleteSidebarSelection();
       else if (handlers.projectFilter) handlers.deleteProject(handlers.projectFilter);
       break;
     case "focusProject":
