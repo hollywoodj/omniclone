@@ -1,12 +1,13 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { defaultToolbarButtons, outlineColumnLabels, outlineColumnOrder, palette, perspectives, toolbarButtonLabels, type AppSettings, type PerspectiveId } from "../../model";
 import { appStyles as styles } from "../../styles/appStyles";
 import { Icon, type IconName } from "../ui/Icon";
 import { TrafficLights } from "../ui/TrafficLights";
 import { shortcutLabel } from "../../shortcuts.ts";
+import { getAppVersion } from "../../version";
 
-type SettingsSection = "general" | "appearance" | "data";
+type SettingsSection = "general" | "appearance" | "data" | "about";
 
 function RuleChoices({ value, options, onChange }: {
   value: string;
@@ -62,10 +63,23 @@ export function SettingsModal({
   onClearDatabase: () => void;
 }) {
   const [section, setSection] = useState<SettingsSection>("general");
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void getAppVersion().then((version) => {
+      if (active) setAppVersion(version);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const sections: Array<{ id: SettingsSection; label: string; icon: IconName }> = [
     { id: "general", label: "General", icon: "tune" },
     { id: "appearance", label: "Appearance", icon: "format-paint" },
     { id: "data", label: "Data", icon: "database-outline" },
+    { id: "about", label: "About", icon: "information-outline" },
   ];
 
   return (
@@ -248,6 +262,22 @@ export function SettingsModal({
                     <Text style={styles.resetSettingsText}>Clear Database</Text>
                   </Pressable>
                   <Pressable onPress={onReset} style={styles.resetSettingsButton}><Icon name="restore" size={16} color={palette.danger} /><Text style={styles.resetSettingsText}>Restore Default Settings</Text></Pressable>
+                </>
+              )}
+
+              {section === "about" && (
+                <>
+                  <Text style={styles.settingsPageTitle}>About</Text>
+                  <Text style={styles.settingsPageIntro}>OmniFocus-style task management for desktop.</Text>
+                  <View style={styles.databaseCard}>
+                    <View style={styles.databaseIcon}><Icon name="checkbox-marked-circle-outline" size={28} color={palette.purpleDark} /></View>
+                    <View style={styles.databaseCopy}>
+                      <Text style={styles.databaseTitle}>OmniClone</Text>
+                      <Text style={styles.databaseDetail}>
+                        Version {appVersion ?? "…"}
+                      </Text>
+                    </View>
+                  </View>
                 </>
               )}
             </ScrollView>

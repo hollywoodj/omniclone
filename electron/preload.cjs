@@ -29,4 +29,5 @@ contextBridge.exposeInMainWorld("omniclone", {
     ipcRenderer.on("request-flush", listener);
     return () => ipcRenderer.removeListener("request-flush", listener);
   },
+  getVersion: () => ipcRenderer.invoke("get-app-version"),
 });
