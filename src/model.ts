@@ -286,36 +286,7 @@ export const defaultSettings: AppSettings = {
   },
 };
 
-export const perspectiveIconChoices = [
-  "star-four-points-outline",
-  "weather-sunny",
-  "white-balance-sunny",
-  "moon-waning-crescent",
-  "briefcase-outline",
-  "home-outline",
-  "lightning-bolt-outline",
-  "heart-outline",
-  "target",
-  "book-open-page-variant-outline",
-  "flag-outline",
-  "calendar-month-outline",
-  "clock-outline",
-  "phone-outline",
-  "laptop",
-  "cart-outline",
-  "airplane",
-  "leaf",
-  "flower-outline",
-  "dumbbell",
-  "music-note-outline",
-  "lightbulb-outline",
-  "hammer-screwdriver",
-  "account-outline",
-  "email-outline",
-  "map-marker-outline",
-  "coffee-outline",
-  "school-outline",
-] as const;
+export { perspectiveIconChoices } from "./perspectives/iconLibrary.ts";
 
 export const perspectiveColorChoices = [
   "#8b4fc2",
