@@ -1,12 +1,12 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import React, { useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
-import { PerspectiveIconPicker } from "./components/perspective/PerspectiveIconPicker";
 import {
   outlineColumnLabels,
   outlineColumnOrder,
   palette,
   perspectiveColorChoices,
+  perspectiveIconChoices,
   perspectives,
   type ActivePerspective,
   type CustomPerspective,
@@ -171,14 +171,16 @@ export function ViewOptionsPanel({
             <Pressable onPress={() => { setColorPicker((value) => !value); setIconPicker(false); }} style={[styles.colorSwatch, { backgroundColor: custom.color }]} />
           </View>
           {iconPicker && (
-            <PerspectiveIconPicker
-              value={custom.icon}
-              accent={custom.color}
-              onSelect={(icon) => {
-                onChangeCustom({ icon });
-                setIconPicker(false);
-              }}
-            />
+            <View style={styles.pickerCard}>
+              <Text style={styles.pickerLabel}>ICON</Text>
+              <View style={styles.iconGrid}>
+                {perspectiveIconChoices.map((icon) => (
+                  <Pressable key={icon} onPress={() => { onChangeCustom({ icon }); setIconPicker(false); }} style={[styles.iconCell, custom.icon === icon && { borderColor: custom.color, backgroundColor: `${custom.color}18` }]}>
+                    <Icon name={icon as IconName} size={20} color={custom.icon === icon ? custom.color : "#5c5960"} />
+                  </Pressable>
+                ))}
+              </View>
+            </View>
           )}
           {colorPicker && (
             <View style={styles.pickerCard}>
@@ -549,6 +551,21 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     fontWeight: "700",
     color: "#817d85",
+  },
+  iconGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  iconCell: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#d4d1d6",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#f7f6f8",
   },
   colorGrid: {
     flexDirection: "row",
