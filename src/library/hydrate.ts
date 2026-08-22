@@ -5,7 +5,13 @@ export function settingsWithCustomBarItems(settings: AppSettings, customPerspect
     .map((item) => `custom:${item.id}`)
     .filter((id) => !settings.perspectiveBarIds.includes(id));
   if (extraBarIds.length && settings.perspectiveBarIds.join() === defaultSettings.perspectiveBarIds.join()) {
-    return { ...settings, perspectiveBarIds: [...settings.perspectiveBarIds, ...extraBarIds] };
+    const order = settings.perspectiveOrderIds ?? settings.perspectiveBarIds;
+    const extraOrderIds = extraBarIds.filter((id) => !order.includes(id));
+    return {
+      ...settings,
+      perspectiveBarIds: [...settings.perspectiveBarIds, ...extraBarIds],
+      perspectiveOrderIds: [...order, ...extraOrderIds],
+    };
   }
   return settings;
 }

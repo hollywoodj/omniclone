@@ -45,3 +45,28 @@ export function allowTaskDrop(event: DragLike) {
   event.preventDefault?.();
   if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
 }
+
+export const PERSPECTIVE_DRAG_MIME = "application/x-omniclone-perspective";
+export const PERSPECTIVE_DRAG_PREFIX = "omniclone-perspective:";
+
+export function setPerspectiveDragData(event: DragLike, id: string) {
+  const payload = `${PERSPECTIVE_DRAG_PREFIX}${id}`;
+  event.dataTransfer?.setData?.(PERSPECTIVE_DRAG_MIME, payload);
+  event.dataTransfer?.setData?.("text/plain", payload);
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+}
+
+export function getPerspectiveDragData(event: DragLike): string | null {
+  const transfer = event.dataTransfer;
+  if (!transfer?.getData) return null;
+  const raw = transfer.getData(PERSPECTIVE_DRAG_MIME) || transfer.getData("text/plain");
+  if (!raw) return null;
+  if (raw.startsWith(PERSPECTIVE_DRAG_PREFIX)) return raw.slice(PERSPECTIVE_DRAG_PREFIX.length) || null;
+  if (raw.startsWith(TASK_DRAG_PREFIX)) return null;
+  return raw;
+}
+
+export function allowPerspectiveDrop(event: DragLike) {
+  event.preventDefault?.();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+}

@@ -43,6 +43,8 @@ export const appStyles = StyleSheet.create({
   perspectiveRailScroll: { gap: 2, paddingBottom: 4 },
   perspectiveItem: { height: 59, alignItems: "center", justifyContent: "center", gap: 2, borderRadius: 12 },
   perspectiveItemSelected: { backgroundColor: "#e9e0f0" },
+  perspectiveItemDrop: { backgroundColor: "#e4d5ef" },
+  perspectiveItemDragging: { opacity: 0.45 },
   perspectiveLabel: { maxWidth: 68, fontSize: 9.5, color: "#58555c" },
   perspectiveLabelSelected: { color: palette.purpleDark, fontWeight: "600" },
   perspectiveMore: { marginTop: "auto" },

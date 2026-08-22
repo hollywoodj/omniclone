@@ -49,6 +49,9 @@ export async function loadSettings(): Promise<AppSettings> {
       sidebarWidth: parsed.sidebarWidth ?? defaultSettings.sidebarWidth,
       inspectorWidth: parsed.inspectorWidth ?? defaultSettings.inspectorWidth,
       perspectiveBarIds: migratePerspectiveBarIds(parsed.perspectiveBarIds),
+      perspectiveOrderIds: parsed.perspectiveOrderIds?.length
+        ? parsed.perspectiveOrderIds
+        : migratePerspectiveBarIds(parsed.perspectiveBarIds),
       perspectiveShortcuts: { ...defaultSettings.perspectiveShortcuts, ...parsed.perspectiveShortcuts },
       standardAvailability: { ...defaultSettings.standardAvailability, ...parsed.standardAvailability },
       outlineColumns: migrateOutlineColumns(parsed.outlineColumns),

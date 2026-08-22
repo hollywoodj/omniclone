@@ -53,6 +53,7 @@ import { appStyles as styles } from "./src/styles/appStyles";
 import { PaneResizeHandle, clampPane } from "./src/components/ui/PaneResizeHandle";
 import { PerspectiveRail } from "./src/components/perspective/PerspectiveRail";
 import { ProjectSidebar } from "./src/components/sidebar/ProjectSidebar";
+import { AnimatedSidebarPane } from "./src/components/sidebar/AnimatedSidebarPane";
 import { Outline } from "./src/components/outline/Outline";
 import { InspectorPane } from "./src/components/inspector/InspectorPane";
 import { Inspector } from "./src/components/inspector/Inspector";
@@ -69,6 +70,7 @@ import { MobileNav } from "./src/components/chrome/MobileNav";
 import { ViewOptionsHost } from "./src/components/chrome/ViewOptionsHost";
 import { favoritePerspectives, projectColors } from "./src/perspectives/rail";
 import { defaultProjectIdFor, filterVisibleTasks, knownTagsFrom, perspectiveTitle, sidebarPerspectiveFor } from "./src/perspectives/query";
+import { applyPerspectiveMove, applyPerspectiveReorder, togglePerspectiveFavorite, withPerspectiveId, withoutPerspectiveId } from "./src/perspectives/order";
 import { forecastCountsFor, perspectiveBadgesFor, remainingCountForProject } from "./src/perspectives/counts";
 import {
   applyCompleteAndAwaitReply,
@@ -274,7 +276,8 @@ export default function App() {
     if (typeof window !== "undefined") window.omniclone?.setWindowTitle?.(next);
   }, [focusedName, title]);
 
-  const selectPerspective = (id: ActivePerspective) => {
+  const selectPerspective = (id: ActivePerspective, options?: { revealSidebar?: boolean }) => {
+    const custom = id.startsWith("custom:") ? customPerspectives.find((item) => item.id === id.slice(7)) ?? null : null;
     navigate({
       perspective: id,
       projectFilter: null,
@@ -282,6 +285,12 @@ export default function App() {
       folderFilter: null,
       forecastDay: id === "forecast" ? todayKey() : locationRef.current.forecastDay,
     });
+    if (perspectiveHidesSidebar(id, custom)) setSidebarOpen(false);
+    else if (options?.revealSidebar) setSidebarOpen(true);
+  };
+
+  const revealPerspective = (id: ActivePerspective) => {
+    selectPerspective(id, { revealSidebar: true });
   };
 
   const openViewOptions = (id?: ActivePerspective) => {
@@ -293,7 +302,7 @@ export default function App() {
   const addCustomPerspective = () => {
     const created = createCustomPerspective();
     setCustomPerspectives((current) => [...current, created]);
-    setSettings((current) => ({ ...current, perspectiveBarIds: [...current.perspectiveBarIds, `custom:${created.id}`] }));
+    setSettings((current) => ({ ...current, ...withPerspectiveId(current, `custom:${created.id}`) }));
     navigate({ perspective: `custom:${created.id}`, projectFilter: null, tagFilter: null, folderFilter: null });
     setPerspectivesListOpen(false);
     setViewMenuOpen(true);
@@ -304,22 +313,15 @@ export default function App() {
   };
 
   const toggleFavorite = (id: ActivePerspective) => {
-    setSettings((current) => {
-      const exists = current.perspectiveBarIds.includes(id);
-      return { ...current, perspectiveBarIds: exists ? current.perspectiveBarIds.filter((item) => item !== id) : [...current.perspectiveBarIds, id] };
-    });
+    setSettings((current) => ({ ...current, ...togglePerspectiveFavorite(current, customPerspectives, id) }));
   };
 
   const movePerspective = (id: ActivePerspective, direction: -1 | 1) => {
-    setSettings((current) => {
-      const ids = [...current.perspectiveBarIds];
-      const from = ids.indexOf(id);
-      if (from < 0) return { ...current, perspectiveBarIds: direction === 1 ? [...ids, id] : [id, ...ids] };
-      const to = Math.max(0, Math.min(ids.length - 1, from + direction));
-      ids.splice(from, 1);
-      ids.splice(to, 0, id);
-      return { ...current, perspectiveBarIds: ids };
-    });
+    setSettings((current) => ({ ...current, ...applyPerspectiveMove(current, customPerspectives, id, direction) }));
+  };
+
+  const reorderPerspectives = (fromId: ActivePerspective, toId: ActivePerspective) => {
+    setSettings((current) => ({ ...current, ...applyPerspectiveReorder(current, customPerspectives, fromId, toId) }));
   };
 
   const updateTask = (id: string, patch: Partial<Task>) => {
@@ -1030,7 +1032,7 @@ export default function App() {
       setCustomPerspectives((current) => current.filter((item) => item.id !== id));
       setSettings((current) => ({
         ...current,
-        perspectiveBarIds: current.perspectiveBarIds.filter((item) => item !== `custom:${id}`),
+        ...withoutPerspectiveId(current, `custom:${id}`),
         perspectiveShortcuts: Object.fromEntries(Object.entries(current.perspectiveShortcuts).filter(([key]) => key !== `custom:${id}`)),
       }));
       if (perspective === `custom:${id}`) navigate({ perspective: "projects" });
@@ -1046,7 +1048,7 @@ export default function App() {
   const duplicatePerspective = (perspectiveToCopy: CustomPerspective) => {
     const copy = duplicateCustomPerspective(perspectiveToCopy);
     setCustomPerspectives((current) => [...current, copy]);
-    setSettings((current) => ({ ...current, perspectiveBarIds: [...current.perspectiveBarIds, `custom:${copy.id}`] }));
+    setSettings((current) => ({ ...current, ...withPerspectiveId(current, `custom:${copy.id}`) }));
     navigate({ perspective: `custom:${copy.id}`, projectFilter: null, tagFilter: null });
     setViewMenuOpen(true);
   };
@@ -1397,18 +1399,20 @@ export default function App() {
               showTitles={settings.perspectiveBarShowsTitles}
               shortcuts={settings.perspectiveShortcuts}
               onSelect={selectPerspective}
+              onReveal={revealPerspective}
               onEdit={openViewOptions}
               onUnfavorite={toggleFavorite}
               onOpenList={() => setPerspectivesListOpen(true)}
               onOpenSettings={() => setSettingsOpen(true)}
               onDelete={deleteCustomPerspective}
+              onReorder={reorderPerspectives}
               onDropInbox={(ids) => dropOnSidebar(ids, { kind: "inbox" })}
             />
             </View>
           )}
-          {showSidebar && (
+          {!isPhone && canShowSidebar && (
             <>
-            <View style={[{ width: settings.sidebarWidth }, styles.desktopPane]}>
+            <AnimatedSidebarPane open={showSidebar} width={settings.sidebarWidth}>
             <ProjectSidebar
               perspective={sidebarPerspective}
               projects={sidebarProjects}
@@ -1436,13 +1440,15 @@ export default function App() {
               tagRecords={knownTagRecords}
               onDropOnSidebar={dropOnSidebar}
             />
-            </View>
+            </AnimatedSidebarPane>
+            {showSidebar && (
             <PaneResizeHandle
               onDrag={(delta) => setSettings((current) => ({
                 ...current,
                 sidebarWidth: clampPane(current.sidebarWidth + delta, 180, 420),
               }))}
             />
+            )}
             </>
           )}
           <View style={[styles.outlinePane, !isPhone && styles.desktopPane]}>
@@ -1587,6 +1593,7 @@ export default function App() {
         onDelete={deleteCustomPerspective}
         onToggleFavorite={toggleFavorite}
         onMove={movePerspective}
+        onReorder={reorderPerspectives}
         onShortcutChange={(id, shortcut) => setSettings((current) => ({ ...current, perspectiveShortcuts: { ...current.perspectiveShortcuts, [id]: shortcut } }))}
         onStartRecording={setShortcutRecordingId}
         onStopRecording={() => setShortcutRecordingId(null)}

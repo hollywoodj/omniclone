@@ -1,31 +1,24 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import React, { useEffect, useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import React, { useEffect, useRef, useState } from "react";
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import type { ContextMenuItem } from "./contextMenu";
 import { ContextMenuPressable, useContextMenuTrigger } from "./contextMenu";
 import {
-  palette,
-  perspectives,
   type ActivePerspective,
   type AppSettings,
   type CustomPerspective,
   type PerspectiveId,
 } from "./model";
-import { formatShortcut, serializeShortcut, shortcutFromEvent } from "./shortcuts";
+import { allowPerspectiveDrop, getPerspectiveDragData, setPerspectiveDragData } from "./lib/dnd";
+import { orderedListedPerspectives } from "./perspectives/rail";
+import { formatShortcut, isMacPlatform, serializeShortcut, shortcutFromEvent } from "./shortcuts";
+import { TrafficLights } from "./components/ui/TrafficLights";
 
 type IconName = React.ComponentProps<typeof MaterialCommunityIcons>["name"];
 
-function Icon({ name, size = 18, color = palette.text }: { name: IconName; size?: number; color?: string }) {
+function Icon({ name, size = 18, color = "#232126" }: { name: IconName; size?: number; color?: string }) {
   return <MaterialCommunityIcons name={name} size={size} color={color} />;
 }
-
-type ListedPerspective = {
-  id: ActivePerspective;
-  name: string;
-  icon: string;
-  color: string;
-  custom?: CustomPerspective;
-};
 
 export function PerspectivesListModal({
   visible,
@@ -42,6 +35,7 @@ export function PerspectivesListModal({
   onDelete,
   onToggleFavorite,
   onMove,
+  onReorder,
   onShortcutChange,
   onStartRecording,
   onStopRecording,
@@ -60,12 +54,16 @@ export function PerspectivesListModal({
   onDelete: (id: string) => void;
   onToggleFavorite: (id: ActivePerspective) => void;
   onMove: (id: ActivePerspective, direction: -1 | 1) => void;
+  onReorder: (fromId: ActivePerspective, toId: ActivePerspective) => void;
   onShortcutChange: (id: ActivePerspective, shortcut: string) => void;
   onStartRecording: (id: ActivePerspective) => void;
   onStopRecording: () => void;
 }) {
   const { openMenu } = useContextMenuTrigger();
-  const [query, setQuery] = useState("");
+  const [dragId, setDragId] = useState<ActivePerspective | null>(null);
+  const [dropId, setDropId] = useState<ActivePerspective | null>(null);
+  const draggingRef = useRef(false);
+  const rows = orderedListedPerspectives(settings, customPerspectives);
 
   useEffect(() => {
     if (!recordingId || typeof window === "undefined") return;
@@ -86,20 +84,12 @@ export function PerspectivesListModal({
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [onShortcutChange, onStopRecording, recordingId]);
 
-  const rows: ListedPerspective[] = [
-    ...perspectives.map((item) => ({ id: item.id as ActivePerspective, name: item.label, icon: item.icon, color: palette.purpleDark })),
-    ...customPerspectives.map((item) => ({ id: `custom:${item.id}` as ActivePerspective, name: item.name, icon: item.icon, color: item.color, custom: item })),
-  ].filter((item) => item.name.toLowerCase().includes(query.trim().toLowerCase()));
-
-  const ordered = [...rows].sort((a, b) => {
-    const aIndex = settings.perspectiveBarIds.indexOf(a.id);
-    const bIndex = settings.perspectiveBarIds.indexOf(b.id);
-    const aFav = aIndex >= 0;
-    const bFav = bIndex >= 0;
-    if (aFav && bFav) return aIndex - bIndex;
-    if (aFav !== bFav) return aFav ? -1 : 1;
-    return 0;
-  });
+  useEffect(() => {
+    if (visible) return;
+    setDragId(null);
+    setDropId(null);
+    draggingRef.current = false;
+  }, [visible]);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -107,24 +97,21 @@ export function PerspectivesListModal({
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={[styles.window, compact && styles.windowCompact]}>
           <View style={styles.titlebar}>
-            {!compact && (
-              <View style={styles.lights}>
-                <Pressable accessibilityLabel="Close perspectives list" onPress={onClose} style={[styles.light, { backgroundColor: "#ff5f57" }]}>
-                  <View style={styles.lightShine} />
+            <View style={styles.titlebarLeft}>
+              {!compact && <TrafficLights onClose={onClose} />}
+              {(compact || !isMacPlatform()) && (
+                <Pressable onPress={onClose} style={styles.doneButton} hitSlop={8}>
+                  <Text style={styles.done}>{compact ? "Done" : "Close"}</Text>
                 </Pressable>
-                <View style={[styles.light, { backgroundColor: "#febc2e" }]}><View style={styles.lightShine} /></View>
-                <View style={[styles.light, { backgroundColor: "#28c840" }]}><View style={styles.lightShine} /></View>
-              </View>
-            )}
+              )}
+            </View>
             <Text style={styles.title}>Perspectives</Text>
-            <Pressable onPress={onClose} style={styles.doneButton}><Text style={styles.done}>Done</Text></Pressable>
-          </View>
-          <View style={styles.searchRow}>
-            <Icon name="magnify" size={16} color="#8b888f" />
-            <TextInput value={query} onChangeText={setQuery} placeholder="Filter perspectives" style={styles.search} />
+            <Pressable accessibilityLabel="Add perspective" onPress={onAdd} style={styles.addButton} hitSlop={8}>
+              <Icon name="plus" size={16} color="#6e6b72" />
+            </Pressable>
           </View>
           <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
-            {ordered.map((item) => {
+            {rows.map((item) => {
               const favorite = settings.perspectiveBarIds.includes(item.id);
               const shortcut = settings.perspectiveShortcuts[item.id] ?? "";
               const selected = current === item.id;
@@ -141,48 +128,80 @@ export function PerspectivesListModal({
                   { id: "delete", label: "Delete", icon: "trash-can-outline" as IconName, destructive: true, onPress: () => onDelete(item.custom!.id) },
                 ] : []),
               ];
+              const dragHandlers = Platform.OS === "web" ? {
+                draggable: true,
+                onDragStart: (event: { dataTransfer?: { setData?: (type: string, value: string) => void; effectAllowed?: string } }) => {
+                  draggingRef.current = true;
+                  setDragId(item.id);
+                  setPerspectiveDragData(event, item.id);
+                },
+                onDragOver: (event: { preventDefault?: () => void; dataTransfer?: { dropEffect?: string } }) => {
+                  allowPerspectiveDrop(event);
+                  setDropId(item.id);
+                },
+                onDragLeave: () => {
+                  setDropId((currentId) => currentId === item.id ? null : currentId);
+                },
+                onDrop: (event: { preventDefault?: () => void; dataTransfer?: { getData: (type: string) => string } }) => {
+                  event.preventDefault?.();
+                  const fromId = getPerspectiveDragData(event) as ActivePerspective | null;
+                  setDragId(null);
+                  setDropId(null);
+                  if (fromId && fromId !== item.id) onReorder(fromId, item.id);
+                  requestAnimationFrame(() => { draggingRef.current = false; });
+                },
+                onDragEnd: () => {
+                  setDragId(null);
+                  setDropId(null);
+                  requestAnimationFrame(() => { draggingRef.current = false; });
+                },
+              } : {};
               return (
-                <ContextMenuPressable
+                <View
                   key={item.id}
-                  items={menuItems}
-                  onPress={() => onOpen(item.id)}
-                  style={[styles.row, selected && styles.rowSelected]}
+                  collapsable={false}
+                  style={[
+                    { width: "100%" },
+                    Platform.OS === "web" ? ({ cursor: "grab" } as object) : null,
+                    dragId === item.id && styles.rowDragging,
+                    dropId === item.id && dragId !== item.id && styles.rowDrop,
+                  ]}
+                  {...(dragHandlers as object)}
                 >
-                  <Pressable accessibilityLabel={favorite ? "Unfavorite" : "Favorite"} onPress={() => onToggleFavorite(item.id)} style={styles.starButton}>
-                    <Icon name={favorite ? "star" : "star-outline"} size={18} color={favorite ? "#e2a13b" : "#b0adb4"} />
-                  </Pressable>
-                  <View style={[styles.iconWell, { backgroundColor: `${item.color}22` }]}>
-                    <Icon name={item.icon as IconName} size={18} color={item.color} />
-                  </View>
-                  <View style={styles.rowCopy}>
-                    <Text numberOfLines={1} style={styles.rowTitle}>{item.name}</Text>
-                    <Text style={styles.rowMeta}>{item.custom ? "Custom" : "Standard"}{favorite ? " · Favorite" : ""}</Text>
-                  </View>
+                <ContextMenuPressable
+                  items={menuItems}
+                  onPress={() => {
+                    if (draggingRef.current) return;
+                    onOpen(item.id);
+                  }}
+                  style={[
+                    styles.row,
+                    selected && styles.rowSelected,
+                  ]}
+                >
+                  <Icon name={item.icon as IconName} size={20} color={item.color} />
+                  <Text numberOfLines={1} style={styles.rowTitle}>{item.name}</Text>
                   <Pressable
                     onPress={() => recordingId === item.id ? onStopRecording() : onStartRecording(item.id)}
-                    style={[styles.shortcutButton, recordingId === item.id && styles.shortcutRecording]}
+                    style={[styles.shortcutButton, recordingId === item.id && styles.shortcutRecording, !shortcut && recordingId !== item.id && styles.shortcutEmpty]}
                   >
-                    <Text style={[styles.shortcutText, recordingId === item.id && styles.shortcutRecordingText]}>
+                    <Text style={[styles.shortcutText, recordingId === item.id && styles.shortcutRecordingText, !shortcut && recordingId !== item.id && styles.shortcutPlaceholder]}>
                       {recordingId === item.id ? "Type shortcut" : formatShortcut(shortcut) || "Shortcut"}
                     </Text>
                   </Pressable>
-                  {!!shortcut && recordingId !== item.id && (
-                    <Pressable accessibilityLabel="Clear shortcut" onPress={() => onShortcutChange(item.id, "")} style={styles.clearButton}>
-                      <Icon name="close" size={14} color="#8b888f" />
-                    </Pressable>
-                  )}
+                  <Pressable accessibilityLabel={favorite ? "Unfavorite" : "Favorite"} onPress={() => onToggleFavorite(item.id)} style={styles.starButton}>
+                    <Icon name={favorite ? "star" : "star-outline"} size={18} color={favorite ? "#e2a13b" : "#c5c2c8"} />
+                  </Pressable>
                   <Pressable accessibilityLabel="Perspective actions" onPress={() => openMenu({ items: menuItems })} style={styles.moreButton}>
-                    <Icon name="dots-horizontal" size={18} color="#8b888f" />
+                    <Icon name="dots-horizontal" size={18} color="#b0adb4" />
                   </Pressable>
                 </ContextMenuPressable>
+                </View>
               );
             })}
           </ScrollView>
           <View style={styles.footer}>
-            <Pressable onPress={onAdd} style={styles.addButton}>
-              <Icon name="plus" size={16} color="#fff" />
-              <Text style={styles.addText}>Add Perspective</Text>
-            </Pressable>
+            <Text style={styles.footerText}>Drag and drop to rearrange perspectives.</Text>
           </View>
         </View>
       </View>
@@ -200,169 +219,129 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     padding: 16,
-    backgroundColor: "rgba(27,24,30,.34)",
+    backgroundColor: "rgba(27,24,30,.28)",
   },
   window: {
     width: "100%",
-    maxWidth: 640,
-    height: "78%",
-    maxHeight: 560,
+    maxWidth: 420,
+    height: 468,
     overflow: "hidden",
-    borderRadius: 18,
+    borderRadius: 10,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#aaa7ad",
-    backgroundColor: "#f7f6f8",
+    borderColor: "#bbb8be",
+    backgroundColor: "#fff",
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 24 },
-    shadowOpacity: 0.3,
-    shadowRadius: 48,
+    shadowOffset: { width: 0, height: 18 },
+    shadowOpacity: 0.28,
+    shadowRadius: 36,
     elevation: 20,
   },
   windowCompact: {
     height: "94%",
     maxHeight: "94%",
+    maxWidth: "100%",
   },
   titlebar: {
-    height: 46,
-    paddingHorizontal: 12,
+    height: 38,
+    paddingHorizontal: 10,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "#f4f3f5",
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#c9c6cc",
-    backgroundColor: "#eceaed",
+    borderBottomColor: "#e2e0e4",
   },
-  lights: {
+  titlebarLeft: {
     position: "absolute",
-    left: 14,
+    left: 10,
     flexDirection: "row",
-    gap: 8,
-  },
-  light: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(0,0,0,.22)",
-    overflow: "hidden",
-  },
-  lightShine: {
-    position: "absolute",
-    top: 1,
-    left: 2,
-    width: 6,
-    height: 3.5,
-    borderRadius: 2,
-    backgroundColor: "rgba(255,255,255,.5)",
+    alignItems: "center",
   },
   title: {
     fontSize: 13,
-    fontWeight: "700",
-    color: "#37343a",
+    fontWeight: "600",
+    color: "#2d2a31",
   },
   doneButton: {
-    position: "absolute",
-    right: 12,
-    minWidth: 48,
+    minWidth: 44,
     height: 28,
-    alignItems: "center",
     justifyContent: "center",
   },
   done: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: palette.purpleDark,
-  },
-  searchRow: {
-    height: 36,
-    margin: 12,
-    marginBottom: 4,
-    paddingHorizontal: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    borderRadius: 18,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#d0cdd3",
-    backgroundColor: "#fff",
-  },
-  search: {
-    flex: 1,
-    height: 36,
-    fontSize: 13,
-    color: palette.text,
-  },
-  list: {
-    flex: 1,
-  },
-  listContent: {
-    paddingHorizontal: 10,
-    paddingBottom: 8,
-  },
-  row: {
-    minHeight: 48,
-    paddingHorizontal: 8,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    borderRadius: 12,
-  },
-  rowSelected: {
-    backgroundColor: "#e4d8ef",
-  },
-  starButton: {
-    width: 28,
-    height: 28,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  iconWell: {
-    width: 30,
-    height: 30,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  rowCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  rowTitle: {
     fontSize: 13,
     fontWeight: "600",
-    color: palette.text,
+    color: "#6b46a1",
   },
-  rowMeta: {
-    marginTop: 1,
-    fontSize: 10,
-    color: palette.muted,
-  },
-  shortcutButton: {
-    minWidth: 84,
+  addButton: {
+    position: "absolute",
+    right: 10,
+    width: 26,
     height: 26,
-    paddingHorizontal: 8,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 8,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#d0cdd3",
+  },
+  list: {
+    flex: 1,
     backgroundColor: "#fff",
   },
+  listContent: {
+    paddingVertical: 4,
+  },
+  row: {
+    minHeight: 40,
+    paddingLeft: 14,
+    paddingRight: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  rowSelected: {
+    backgroundColor: "#f3f1f5",
+  },
+  rowDragging: {
+    opacity: 0.45,
+  },
+  rowDrop: {
+    backgroundColor: "#efe7f6",
+  },
+  rowTitle: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 13,
+    fontWeight: "500",
+    color: "#1f1d22",
+  },
+  shortcutButton: {
+    minWidth: 52,
+    height: 22,
+    paddingHorizontal: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 6,
+    backgroundColor: "#ecebed",
+  },
+  shortcutEmpty: {
+    backgroundColor: "#f0eef1",
+  },
   shortcutRecording: {
-    borderColor: palette.purple,
-    backgroundColor: palette.purpleSoft,
+    backgroundColor: "#eadcf4",
   },
   shortcutText: {
     fontSize: 11,
-    color: "#5c5960",
+    color: "#6f6c73",
+    fontVariant: ["tabular-nums"],
+  },
+  shortcutPlaceholder: {
+    color: "#8b888f",
   },
   shortcutRecordingText: {
-    color: palette.purpleDark,
+    color: "#6b46a1",
     fontWeight: "700",
   },
-  clearButton: {
-    width: 22,
-    height: 22,
+  starButton: {
+    width: 26,
+    height: 26,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -373,26 +352,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   footer: {
-    height: 52,
-    paddingHorizontal: 12,
-    flexDirection: "row",
+    height: 34,
     alignItems: "center",
+    justifyContent: "center",
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: palette.line,
-    backgroundColor: "#f0eff1",
+    borderTopColor: "#e2e0e4",
+    backgroundColor: "#ecebed",
   },
-  addButton: {
-    height: 30,
-    paddingHorizontal: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    borderRadius: 10,
-    backgroundColor: palette.purple,
-  },
-  addText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#fff",
+  footerText: {
+    fontSize: 11,
+    color: "#8a878e",
   },
 });
