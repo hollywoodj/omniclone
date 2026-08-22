@@ -254,6 +254,8 @@ ipcMain.on("open-external", (_event, url) => {
   if (typeof url === "string" && url.trim()) shell.openExternal(url);
 });
 
+ipcMain.handle("get-app-version", () => app.getVersion());
+
 async function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
