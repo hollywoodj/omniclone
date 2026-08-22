@@ -1,5 +1,5 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect } from "react";
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import type { ContextMenuItem } from "./contextMenu";
 import { ContextMenuPressable, useContextMenuTrigger } from "./contextMenu";
@@ -9,7 +9,7 @@ import {
   type CustomPerspective,
   type PerspectiveId,
 } from "./model";
-import { allowPerspectiveDrop, getPerspectiveDragData, setPerspectiveDragData } from "./lib/dnd";
+import { usePointerReorder } from "./lib/pointerReorder";
 import { orderedListedPerspectives } from "./perspectives/rail";
 import { formatShortcut, isMacPlatform, serializeShortcut, shortcutFromEvent } from "./shortcuts";
 import { TrafficLights } from "./components/ui/TrafficLights";
@@ -60,10 +60,12 @@ export function PerspectivesListModal({
   onStopRecording: () => void;
 }) {
   const { openMenu } = useContextMenuTrigger();
-  const [dragId, setDragId] = useState<ActivePerspective | null>(null);
-  const [dropId, setDropId] = useState<ActivePerspective | null>(null);
-  const draggingRef = useRef(false);
   const rows = orderedListedPerspectives(settings, customPerspectives);
+  const reorder = usePointerReorder({
+    enabled: visible,
+    onReorder: (fromId, toId) => onReorder(fromId as ActivePerspective, toId as ActivePerspective),
+    ignoreSelector: "[data-no-drag=\"true\"]",
+  });
 
   useEffect(() => {
     if (!recordingId || typeof window === "undefined") return;
@@ -84,13 +86,6 @@ export function PerspectivesListModal({
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [onShortcutChange, onStopRecording, recordingId]);
 
-  useEffect(() => {
-    if (visible) return;
-    setDragId(null);
-    setDropId(null);
-    draggingRef.current = false;
-  }, [visible]);
-
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.backdrop}>
@@ -110,6 +105,7 @@ export function PerspectivesListModal({
               <Icon name="plus" size={16} color="#6e6b72" />
             </Pressable>
           </View>
+          <View ref={reorder.ref} style={styles.list} collapsable={false}>
           <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
             {rows.map((item) => {
               const favorite = settings.perspectiveBarIds.includes(item.id);
@@ -128,34 +124,6 @@ export function PerspectivesListModal({
                   { id: "delete", label: "Delete", icon: "trash-can-outline" as IconName, destructive: true, onPress: () => onDelete(item.custom!.id) },
                 ] : []),
               ];
-              const dragHandlers = Platform.OS === "web" ? {
-                draggable: true,
-                onDragStart: (event: { dataTransfer?: { setData?: (type: string, value: string) => void; effectAllowed?: string } }) => {
-                  draggingRef.current = true;
-                  setDragId(item.id);
-                  setPerspectiveDragData(event, item.id);
-                },
-                onDragOver: (event: { preventDefault?: () => void; dataTransfer?: { dropEffect?: string } }) => {
-                  allowPerspectiveDrop(event);
-                  setDropId(item.id);
-                },
-                onDragLeave: () => {
-                  setDropId((currentId) => currentId === item.id ? null : currentId);
-                },
-                onDrop: (event: { preventDefault?: () => void; dataTransfer?: { getData: (type: string) => string } }) => {
-                  event.preventDefault?.();
-                  const fromId = getPerspectiveDragData(event) as ActivePerspective | null;
-                  setDragId(null);
-                  setDropId(null);
-                  if (fromId && fromId !== item.id) onReorder(fromId, item.id);
-                  requestAnimationFrame(() => { draggingRef.current = false; });
-                },
-                onDragEnd: () => {
-                  setDragId(null);
-                  setDropId(null);
-                  requestAnimationFrame(() => { draggingRef.current = false; });
-                },
-              } : {};
               return (
                 <View
                   key={item.id}
@@ -163,15 +131,15 @@ export function PerspectivesListModal({
                   style={[
                     { width: "100%" },
                     Platform.OS === "web" ? ({ cursor: "grab" } as object) : null,
-                    dragId === item.id && styles.rowDragging,
-                    dropId === item.id && dragId !== item.id && styles.rowDrop,
+                    reorder.dragId === item.id && styles.rowDragging,
+                    reorder.dropId === item.id && styles.rowDrop,
                   ]}
-                  {...(dragHandlers as object)}
+                  {...({ dataSet: { perspectiveId: item.id } } as object)}
                 >
                 <ContextMenuPressable
                   items={menuItems}
                   onPress={() => {
-                    if (draggingRef.current) return;
+                    if (reorder.shouldSkipPress()) return;
                     onOpen(item.id);
                   }}
                   style={[
@@ -184,15 +152,16 @@ export function PerspectivesListModal({
                   <Pressable
                     onPress={() => recordingId === item.id ? onStopRecording() : onStartRecording(item.id)}
                     style={[styles.shortcutButton, recordingId === item.id && styles.shortcutRecording, !shortcut && recordingId !== item.id && styles.shortcutEmpty]}
+                    {...({ dataSet: { noDrag: "true" } } as object)}
                   >
                     <Text style={[styles.shortcutText, recordingId === item.id && styles.shortcutRecordingText, !shortcut && recordingId !== item.id && styles.shortcutPlaceholder]}>
                       {recordingId === item.id ? "Type shortcut" : formatShortcut(shortcut) || "Shortcut"}
                     </Text>
                   </Pressable>
-                  <Pressable accessibilityLabel={favorite ? "Unfavorite" : "Favorite"} onPress={() => onToggleFavorite(item.id)} style={styles.starButton}>
+                  <Pressable accessibilityLabel={favorite ? "Unfavorite" : "Favorite"} onPress={() => onToggleFavorite(item.id)} style={styles.starButton} {...({ dataSet: { noDrag: "true" } } as object)}>
                     <Icon name={favorite ? "star" : "star-outline"} size={18} color={favorite ? "#e2a13b" : "#c5c2c8"} />
                   </Pressable>
-                  <Pressable accessibilityLabel="Perspective actions" onPress={() => openMenu({ items: menuItems })} style={styles.moreButton}>
+                  <Pressable accessibilityLabel="Perspective actions" onPress={() => openMenu({ items: menuItems })} style={styles.moreButton} {...({ dataSet: { noDrag: "true" } } as object)}>
                     <Icon name="dots-horizontal" size={18} color="#b0adb4" />
                   </Pressable>
                 </ContextMenuPressable>
@@ -200,6 +169,7 @@ export function PerspectivesListModal({
               );
             })}
           </ScrollView>
+          </View>
           <View style={styles.footer}>
             <Text style={styles.footerText}>Drag and drop to rearrange perspectives.</Text>
           </View>

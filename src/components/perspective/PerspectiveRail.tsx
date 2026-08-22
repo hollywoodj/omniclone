@@ -1,10 +1,11 @@
-import React, { useRef, useState } from "react";
+import React, { useRef } from "react";
 import { Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { ContextMenuPressable, type ContextMenuItem } from "../../contextMenu";
 import { palette, type ActivePerspective } from "../../model";
 import { formatShortcut } from "../../shortcuts";
 import { copyToClipboard } from "../../lib/clipboard";
-import { allowPerspectiveDrop, allowTaskDrop, getPerspectiveDragData, getTaskDragData, setPerspectiveDragData } from "../../lib/dnd";
+import { allowTaskDrop, getTaskDragData } from "../../lib/dnd";
+import { usePointerReorder } from "../../lib/pointerReorder";
 import { appStyles as styles } from "../../styles/appStyles";
 import { Icon, type IconName } from "../ui/Icon";
 import type { RailPerspective } from "../../perspectives/rail";
@@ -40,13 +41,29 @@ export function PerspectiveRail({
   onReorder: (fromId: ActivePerspective, toId: ActivePerspective) => void;
   onDropInbox?: (ids: string[]) => void;
 }) {
-  const [inboxHover, setInboxHover] = useState(false);
-  const [dragId, setDragId] = useState<ActivePerspective | null>(null);
-  const [dropId, setDropId] = useState<ActivePerspective | null>(null);
-  const draggingRef = useRef(false);
+  const [inboxHover, setInboxHover] = React.useState(false);
+  const lastPressRef = useRef<{ id: string; at: number } | null>(null);
+  const reorder = usePointerReorder({
+    onReorder: (fromId, toId) => onReorder(fromId as ActivePerspective, toId as ActivePerspective),
+    onDoubleClick: (id) => onReveal(id as ActivePerspective),
+    ignoreSelector: "[data-no-drag=\"true\"]",
+  });
+
+  const pressPerspective = (id: ActivePerspective) => {
+    if (reorder.shouldSkipPress()) return;
+    const now = Date.now();
+    const last = lastPressRef.current;
+    if (last && last.id === id && now - last.at < 450) {
+      lastPressRef.current = null;
+      onReveal(id);
+      return;
+    }
+    lastPressRef.current = { id, at: now };
+    onSelect(id);
+  };
 
   return (
-    <View style={styles.perspectiveRail}>
+    <View ref={reorder.ref} style={styles.perspectiveRail} collapsable={false}>
       <ScrollView style={styles.perspectiveRailList} showsVerticalScrollIndicator={false} contentContainerStyle={styles.perspectiveRailScroll}>
         {items.map((item) => {
           const selected = current === item.id;
@@ -63,84 +80,39 @@ export function PerspectiveRail({
             ] : []),
           ];
           const acceptsInboxDrop = item.id === "inbox" || !!item.custom?.rules.some((rule) => rule.enabled !== false && rule.kind === "inInbox");
-          const dragHandlers = Platform.OS === "web" ? {
-            draggable: true,
-            onDragStart: (event: { dataTransfer?: { setData?: (type: string, value: string) => void; effectAllowed?: string } }) => {
-              draggingRef.current = true;
-              setDragId(item.id);
-              setPerspectiveDragData(event, item.id);
-            },
-            onDragOver: (event: { preventDefault?: () => void; dataTransfer?: { dropEffect?: string } }) => {
-              if (acceptsInboxDrop) {
-                allowTaskDrop(event);
-                setInboxHover(true);
-              }
-              allowPerspectiveDrop(event);
-              setDropId(item.id);
-            },
-            onDragLeave: () => {
-              setInboxHover(false);
-              setDropId((currentId) => currentId === item.id ? null : currentId);
-            },
-            onDrop: (event: { preventDefault?: () => void; dataTransfer?: { getData: (type: string) => string } }) => {
-              event.preventDefault?.();
-              setInboxHover(false);
-              const taskIds = getTaskDragData(event);
-              if (taskIds?.length && acceptsInboxDrop) {
-                setDragId(null);
-                setDropId(null);
-                onDropInbox?.(taskIds);
-                return;
-              }
-              const fromId = getPerspectiveDragData(event) as ActivePerspective | null;
-              setDragId(null);
-              setDropId(null);
-              if (fromId && fromId !== item.id) onReorder(fromId, item.id);
-              requestAnimationFrame(() => { draggingRef.current = false; });
-            },
-            onDragEnd: () => {
-              setDragId(null);
-              setDropId(null);
-              setInboxHover(false);
-              requestAnimationFrame(() => { draggingRef.current = false; });
-            },
-          } : (acceptsInboxDrop ? {
-            onDragOver: (event: { preventDefault?: () => void; dataTransfer?: { dropEffect?: string } }) => {
-              allowTaskDrop(event);
-              setInboxHover(true);
-            },
-            onDragLeave: () => setInboxHover(false),
-            onDrop: (event: { preventDefault?: () => void; dataTransfer?: { getData: (type: string) => string } }) => {
-              event.preventDefault?.();
-              setInboxHover(false);
-              const ids = getTaskDragData(event);
-              if (ids?.length) onDropInbox?.(ids);
-            },
-          } : {});
           return (
             <View
               key={item.id}
               collapsable={false}
-              style={dragId === item.id ? { opacity: 0.45 } : undefined}
-              {...(dragHandlers as object)}
+              style={reorder.dragId === item.id ? styles.perspectiveItemDragging : undefined}
+              {...({ dataSet: { perspectiveId: item.id } } as object)}
             >
             <ContextMenuPressable
               items={menuItems}
               accessibilityRole="tab"
               accessibilityState={{ selected }}
               accessibilityHint={formatShortcut(shortcuts[item.id])}
-              onPress={() => {
-                if (draggingRef.current) return;
-                onSelect(item.id);
-              }}
+              onPress={() => pressPerspective(item.id)}
               style={({ pressed }) => [
                 styles.perspectiveItem,
                 selected && (item.custom ? { backgroundColor: `${accent}20` } : styles.perspectiveItemSelected),
                 acceptsInboxDrop && inboxHover && styles.sidebarRowDrop,
-                dropId === item.id && dragId !== item.id && styles.perspectiveItemDrop,
+                reorder.dropId === item.id && styles.perspectiveItemDrop,
                 pressed && styles.pressed,
               ]}
-              {...({ onDoubleClick: () => onReveal(item.id) } as object)}
+              {...(acceptsInboxDrop && Platform.OS === "web" ? {
+                onDragOver: (event: { preventDefault?: () => void; dataTransfer?: { dropEffect?: string } }) => {
+                  allowTaskDrop(event);
+                  setInboxHover(true);
+                },
+                onDragLeave: () => setInboxHover(false),
+                onDrop: (event: { preventDefault?: () => void; dataTransfer?: { getData: (type: string) => string } }) => {
+                  event.preventDefault?.();
+                  setInboxHover(false);
+                  const ids = getTaskDragData(event);
+                  if (ids?.length) onDropInbox?.(ids);
+                },
+              } : {})}
             >
               <View>
                 <Icon name={item.icon as IconName} size={24} color={accent} />
