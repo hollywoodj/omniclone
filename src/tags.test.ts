@@ -46,6 +46,14 @@ test("on-hold tags mark tagged actions unavailable", () => {
   assert.equal(taskHasOnHoldTag(task({ id: "b", title: "Open", tags: ["Errand"] }), records), false);
 });
 
+test("cyclical tag parents do not crash the sidebar tree", () => {
+  const tree = buildTagTree([
+    { name: "A", parent: "B", status: "active" },
+    { name: "B", parent: "A", status: "active" },
+  ]);
+  assert.equal(tree.length, 2);
+});
+
 test("renaming a parent tag keeps children nested", () => {
   const next = renameTagRecord([
     { name: "Work" },

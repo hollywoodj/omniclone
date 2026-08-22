@@ -21,7 +21,7 @@ import { ContextMenuProvider } from "./src/contextMenu";
 import { MenuBar } from "./src/menuBar";
 import { PerspectivesListModal } from "./src/perspectivesList";
 import { QuickOpenModal } from "./src/quickOpen";
-import { duplicateCustomPerspective, effectiveGroupBy } from "./src/perspectiveRules";
+import { duplicateCustomPerspective, effectiveGroupBy, perspectiveActsAsInbox, perspectiveHidesSidebar } from "./src/perspectiveRules";
 import {
   convertActionToProject,
   flattenTasks,
@@ -126,6 +126,7 @@ export default function App() {
     goForward,
   } = useLocationHistory(() => {
     retainInspectionIds.current = new Set();
+    setSidebarSelection({ projectIds: [], folderPaths: [] });
   });
   const {
     projects,
@@ -142,6 +143,7 @@ export default function App() {
   } = usePersistedLibrary(hydrateLocation);
   const { pushUndo, undo: takeUndo, redo: takeRedo } = useUndoStack({ projects, tasks });
   const [selection, setSelection] = useState<SelectionState>(emptySelection);
+  const [outlineCollapsedIds, setOutlineCollapsedIds] = useState<string[]>([]);
   const [inspectedProjectId, setInspectedProjectId] = useState<string | null>(null);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   // A row inserted by New Action that has never been given a title. Cancelling or
@@ -155,9 +157,11 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
-  const [pendingDeleteTaskIds, setPendingDeleteTaskIds] = useState<string[]>([]);
-  const [pendingDeleteDirection, setPendingDeleteDirection] = useState<"menu" | "previous" | "next">("menu");
-  const [pendingDeleteProjectId, setPendingDeleteProjectId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<
+    | { kind: "tasks"; ids: string[]; direction: "menu" | "previous" | "next" }
+    | { kind: "project"; id: string }
+    | null
+  >(null);
   const [quickKind, setQuickKind] = useState<"task" | "project" | "folder" | null>(null);
   const [quickDraft, setQuickDraft] = useState<QuickEntryPayload | null>(null);
   const pendingXSuccessRef = useRef<string | undefined>(undefined);
@@ -168,6 +172,7 @@ export default function App() {
   const [importError, setImportError] = useState<string | null>(null);
   const [importSummary, setImportSummary] = useState<string | null>(null);
   const [importGuideOpen, setImportGuideOpen] = useState(false);
+  const [calendarNow, setCalendarNow] = useState(() => new Date());
   const [sidebarSelection, setSidebarSelection] = useState<{ projectIds: string[]; folderPaths: string[] }>({ projectIds: [], folderPaths: [] });
   const typeSelectRef = useRef({ query: "", at: 0 });
   const nativeMenu = hasNativeMenu();
@@ -199,6 +204,15 @@ export default function App() {
   }, [colorScheme]);
 
   useEffect(() => {
+    const interval = window.setInterval(() => setCalendarNow(new Date()), 60_000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    setOutlineCollapsedIds([]);
+  }, [perspective, projectFilter, folderFilter, tagFilter, activeCustomPerspective?.id]);
+
+  useEffect(() => {
     if (!hydrated) return;
     setProjects((current) => applyCompleteWithLastAction(current, tasks));
   }, [hydrated, setProjects, tasks]);
@@ -226,7 +240,8 @@ export default function App() {
     perspective,
     groupBy: activeCustomPerspective ? effectiveGroupBy(activeCustomPerspective) : null,
     projectFilter,
-  }), [visibleTasks, projects, perspective, activeCustomPerspective, projectFilter]);
+    collapsedIds: outlineCollapsedIds,
+  }), [visibleTasks, projects, perspective, activeCustomPerspective, projectFilter, outlineCollapsedIds]);
 
   useEffect(() => {
     const existing = new Set(tasks.map((task) => task.id));
@@ -305,17 +320,20 @@ export default function App() {
   };
 
   const updateTask = (id: string, patch: Partial<Task>) => {
-    setTasks((current) => applyTaskPatch(current, id, patch));
-    const current = tasks.find((task) => task.id === id);
-    if (patch.projectId !== undefined && current && current.projectId !== patch.projectId) {
-      retainInspectionIds.current = new Set([...retainInspectionIds.current, id]);
-    }
-    if (patch.tags) {
-      setTagRecords((records) => patch.tags!.reduce((next, tag) => upsertTagRecord(next, { name: tag }), records));
-    }
-    if (!settings.cleanUpImmediately) {
-      setPendingCleanupIds((ids) => lingeringIdsAfterPatch(ids, id, patch, current));
-    }
+    pushUndo();
+    setTasks((current) => {
+      const previous = current.find((task) => task.id === id);
+      if (patch.projectId !== undefined && previous && previous.projectId !== patch.projectId) {
+        retainInspectionIds.current = new Set([...retainInspectionIds.current, id]);
+      }
+      if (patch.tags) {
+        setTagRecords((records) => patch.tags!.reduce((next, tag) => upsertTagRecord(next, { name: tag }), records));
+      }
+      if (!settings.cleanUpImmediately) {
+        setPendingCleanupIds((ids) => lingeringIdsAfterPatch(ids, id, patch, previous));
+      }
+      return applyTaskPatch(current, id, patch);
+    });
   };
 
   const toggleTask = (id: string) => {
@@ -367,26 +385,25 @@ export default function App() {
 
   const toggleTaskFlags = (ids: string[]) => {
     if (!ids.length) return;
+    pushUndo();
     setTasks((current) => applyFlagToggle(current, ids));
   };
 
   const finalizeDeleteTasks = useCallback((ids: string[], direction: "menu" | "previous" | "next") => {
+    pushUndo();
     const { remaining, removed } = deleteTaskIds(tasks, ids);
     const nextId = neighborAfterDelete(orderedTaskIds, removed, direction);
     setTasks(remaining);
-    setPendingDeleteTaskIds([]);
-    setPendingDeleteDirection("menu");
+    setPendingDelete(null);
     setSelection(singleSelection(nextId));
     if (!nextId) setInspectorOpen(false);
-  }, [orderedTaskIds, setInspectorOpen, tasks]);
+  }, [orderedTaskIds, pushUndo, setInspectorOpen, tasks]);
 
   const deleteTasks = (ids: string[], direction: "menu" | "previous" | "next" = "menu") => {
     const unique = [...new Set(ids.filter(Boolean))];
     if (!unique.length) return;
-    pushUndo();
     if (settings.confirmBeforeDelete) {
-      setPendingDeleteTaskIds(unique);
-      setPendingDeleteDirection(direction);
+      setPendingDelete({ kind: "tasks", ids: unique, direction });
       return;
     }
     finalizeDeleteTasks(unique, direction);
@@ -397,6 +414,7 @@ export default function App() {
   };
 
   const finalizeDeleteProject = (id: string) => {
+    pushUndo();
     const next = removeProjectFromLibrary(projects, tasks, customPerspectives, id);
     setProjects(next.projects);
     setTasks(next.tasks);
@@ -404,12 +422,12 @@ export default function App() {
     setProjectFilter((current) => current === id ? null : current);
     setInspectedProjectId((current) => current === id ? null : current);
     setSelection((current) => selectionAfterProjectDelete(current, tasks, id));
-    setPendingDeleteProjectId(null);
+    setPendingDelete(null);
   };
 
   const deleteProject = (id: string) => {
     if (settings.confirmBeforeDelete) {
-      setPendingDeleteProjectId(id);
+      setPendingDelete({ kind: "project", id });
       return;
     }
     finalizeDeleteProject(id);
@@ -632,10 +650,12 @@ export default function App() {
   ) => {
     pushUndo();
     const after = afterId ?? selectedTaskId;
+    const afterTask = after ? tasks.find((task) => task.id === after) : undefined;
+    const resolvedProjectId = projectId ?? afterTask?.projectId ?? defaultProjectId;
     const created: Task = {
       id: makeId("task"),
       title: "",
-      projectId: projectId ?? defaultProjectId,
+      projectId: resolvedProjectId,
       tags: [],
       flagged: false,
       completed: false,
@@ -643,14 +663,13 @@ export default function App() {
     };
     setTasks((current) => {
       const base = prePatch ? applyTaskPatch(current, prePatch.id, prePatch.patch) : current;
-      return insertTaskAfter(base, after, created, projectId ?? defaultProjectId).tasks;
+      return insertTaskAfter(base, after, created, resolvedProjectId).tasks;
     });
     setInspectedProjectId(null);
-    // insertTaskAfter keeps the id it was handed, so this matches the inserted row.
     setSelection(singleSelection(created.id));
     setEditingTaskId(created.id);
     setUnnamedTaskId(created.id);
-    if ((projectId ?? created.projectId) === null) selectPerspective("inbox");
+    if (resolvedProjectId === null) selectPerspective("inbox");
   };
 
   const newActionInProject = (projectId: string) => {
@@ -843,12 +862,15 @@ export default function App() {
 
   const moveTasks = (id: string, projectId: string | null) => {
     const ids = idsForRow(id);
-    const fromInbox = tasks.filter((task) => ids.includes(task.id) && task.projectId === null);
     pushUndo();
-    setTasks((current) => applyMoveToProject(current, ids, projectId));
-    if (!settings.cleanUpImmediately && projectId && fromInbox.length && perspective === "inbox") {
-      setPendingCleanupIds((current) => [...new Set([...current, ...fromInbox.map((task) => task.id)])]);
-    }
+    setTasks((current) => {
+      const fromInbox = current.filter((task) => ids.includes(task.id) && task.projectId === null);
+      const next = applyMoveToProject(current, ids, projectId);
+      if (!settings.cleanUpImmediately && projectId && fromInbox.length && perspectiveActsAsInbox(perspective, activeCustomPerspective)) {
+        setPendingCleanupIds((pending) => [...new Set([...pending, ...fromInbox.map((task) => task.id)])]);
+      }
+      return next;
+    });
   };
 
   /**
@@ -1003,6 +1025,7 @@ export default function App() {
 
   const applyImport = (mode: ImportMode) => {
     if (!importPreview) return;
+    pushUndo();
     const result = applyOmniFocusImport(projects, tasks, importPreview, mode);
     setProjects(result.projects);
     setTasks(result.tasks);
@@ -1018,17 +1041,17 @@ export default function App() {
     setImportSummary(`${mode === "replace" ? "Loaded" : "Added"} ${result.addedTasks} action${result.addedTasks === 1 ? "" : "s"} and ${result.addedProjects} project${result.addedProjects === 1 ? "" : "s"}.${duplicateNote}`);
   };
 
-  const pendingDeleteProject = pendingDeleteProjectId ? projects.find((project) => project.id === pendingDeleteProjectId) : undefined;
-  const pendingDeleteProjectActionCount = pendingDeleteProjectId ? tasks.filter((task) => task.projectId === pendingDeleteProjectId).length : 0;
-  const pendingDelete = pendingDeleteCopy({
+  const pendingDeleteProject = pendingDelete?.kind === "project" ? projects.find((project) => project.id === pendingDelete.id) : undefined;
+  const pendingDeleteProjectActionCount = pendingDelete?.kind === "project" ? tasks.filter((task) => task.projectId === pendingDelete.id).length : 0;
+  const pendingDeleteDialog = pendingDeleteCopy({
     projectName: pendingDeleteProject?.name,
     projectActionCount: pendingDeleteProjectActionCount,
-    taskCount: pendingDeleteTaskIds.length,
-    taskTitle: tasks.find((task) => task.id === pendingDeleteTaskIds[0])?.title,
-    deletingProject: !!pendingDeleteProjectId,
+    taskCount: pendingDelete?.kind === "tasks" ? pendingDelete.ids.length : 0,
+    taskTitle: pendingDelete?.kind === "tasks" ? tasks.find((task) => task.id === pendingDelete.ids[0])?.title : undefined,
+    deletingProject: pendingDelete?.kind === "project",
   });
   const sidebarPerspective = sidebarPerspectiveFor(perspective, activeCustomPerspective);
-  const showSidebar = !isPhone && canShowSidebar && sidebarOpen && perspective !== "inbox" && perspective !== "completed" && perspective !== "flagged" && !activeCustomPerspective?.keepSidebarHidden;
+  const showSidebar = !isPhone && canShowSidebar && sidebarOpen && !perspectiveHidesSidebar(perspective, activeCustomPerspective);
   const showInspector = !isPhone && canShowInspector && inspectorOpen;
   const modalOpen = quickKind !== null || settingsOpen || perspectivesListOpen || quickOpenOpen || importGuideOpen || !!importPreview || !!importError || !!importSummary;
 
@@ -1098,17 +1121,12 @@ export default function App() {
     print: printDocument,
     duplicateProject: () => duplicateProject(),
     confirmPendingDelete: () => {
-      if (pendingDeleteProjectId) finalizeDeleteProject(pendingDeleteProjectId);
-      else if (pendingDeleteTaskIds.length) finalizeDeleteTasks(pendingDeleteTaskIds, pendingDeleteDirection);
+      if (pendingDelete?.kind === "project") finalizeDeleteProject(pendingDelete.id);
+      else if (pendingDelete?.kind === "tasks") finalizeDeleteTasks(pendingDelete.ids, pendingDelete.direction);
     },
     cancelTopOverlay: () => {
-      if (pendingDeleteProjectId) {
-        setPendingDeleteProjectId(null);
-        return;
-      }
-      if (pendingDeleteTaskIds.length) {
-        setPendingDeleteTaskIds([]);
-        setPendingDeleteDirection("menu");
+      if (pendingDelete) {
+        setPendingDelete(null);
         return;
       }
       if (quickKind) closeQuickEntry();
@@ -1142,7 +1160,7 @@ export default function App() {
   useAppHotkeys({
     enabled: true,
     modalOpen,
-    pendingDeleteOpen: !!pendingDeleteTaskIds.length || !!pendingDeleteProjectId,
+    pendingDeleteOpen: !!pendingDelete,
     perspectiveShortcuts: settings.perspectiveShortcuts,
     shortcutRecordingId,
     customPerspectives,
@@ -1194,8 +1212,8 @@ export default function App() {
     if (!focusedIds) return tasks;
     return tasks.filter((task) => task.projectId && focusedIds.has(task.projectId));
   }, [focused, projects, tasks]);
-  const forecastCounts = useMemo(() => forecastCountsFor(tasks, focused, undefined, projects), [focused, projects, tasks]);
-  const perspectiveBadges = useMemo(() => perspectiveBadgesFor(tasks, projects, focused), [focused, projects, tasks]);
+  const forecastCounts = useMemo(() => forecastCountsFor(tasks, focused, calendarNow, projects), [calendarNow, focused, projects, tasks]);
+  const perspectiveBadges = useMemo(() => perspectiveBadgesFor(tasks, projects, focused, calendarNow), [calendarNow, focused, projects, tasks]);
 
   const changeAvailability = (availability: PerspectiveAvailability) => {
     if (perspective.startsWith("custom:")) return;
@@ -1353,6 +1371,8 @@ export default function App() {
             inspectedProjectId={inspectedProjectId}
             editingTaskId={editingTaskId}
             collapseNonce={collapseNonce}
+            collapsedIds={outlineCollapsedIds}
+            onCollapsedIdsChange={setOutlineCollapsedIds}
             projectFilter={projectFilter}
             folderFilter={folderFilter}
             tagFilter={tagFilter}
@@ -1497,21 +1517,13 @@ export default function App() {
       <OmniImportModal data={importPreview} error={importError} summary={importSummary} guide={importGuideOpen} onClose={closeImport} onApply={applyImport} onChooseFile={() => void chooseOmniFocusFile()} />
 
       <ConfirmDeleteModal
-        visible={pendingDeleteTaskIds.length > 0 || !!pendingDeleteProjectId}
-        title={pendingDelete.title}
-        message={pendingDelete.message}
-        onCancel={() => {
-          setPendingDeleteTaskIds([]);
-          setPendingDeleteDirection("menu");
-          setPendingDeleteProjectId(null);
-        }}
+        visible={!!pendingDelete}
+        title={pendingDeleteDialog.title}
+        message={pendingDeleteDialog.message}
+        onCancel={() => setPendingDelete(null)}
         onConfirm={() => {
-          if (pendingDeleteProjectId) {
-            finalizeDeleteProject(pendingDeleteProjectId);
-            return;
-          }
-          if (!pendingDeleteTaskIds.length) return;
-          finalizeDeleteTasks(pendingDeleteTaskIds, pendingDeleteDirection);
+          if (pendingDelete?.kind === "project") finalizeDeleteProject(pendingDelete.id);
+          else if (pendingDelete?.kind === "tasks") finalizeDeleteTasks(pendingDelete.ids, pendingDelete.direction);
         }}
       />
 

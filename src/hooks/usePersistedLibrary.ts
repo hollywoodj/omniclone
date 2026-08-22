@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { todayKey, type LocationState } from "../dates";
 import { settingsWithCustomBarItems } from "../library/hydrate";
 import { loadDatabase, saveDatabase } from "../storage";
@@ -22,37 +22,54 @@ export function usePersistedLibrary(onHydrated?: (initial: LocationState, settin
   const [hydrated, setHydrated] = useState(false);
   const onHydratedRef = useRef(onHydrated);
   onHydratedRef.current = onHydrated;
+  const libraryRef = useRef({ projects, tasks, customPerspectives, tagRecords });
+  const settingsRef = useRef(settings);
+  libraryRef.current = { projects, tasks, customPerspectives, tagRecords };
+  settingsRef.current = settings;
+
+  const flushPersisted = useCallback(async () => {
+    const library = libraryRef.current;
+    const currentSettings = settingsRef.current;
+    await Promise.all([
+      saveDatabase({ version: 2, ...library }),
+      saveSettings(currentSettings),
+    ]);
+  }, []);
 
   useEffect(() => {
-    Promise.all([loadDatabase(), loadSettings()]).then(([saved, savedSettings]) => {
-      let nextSettings = savedSettings;
-      if (saved) {
-        setProjects(saved.projects);
-        setTasks(saved.tasks);
-        setTagRecords(saved.tagRecords ?? []);
-        const customs = saved.customPerspectives.map((item) => normalizeCustomPerspective(item));
-        setCustomPerspectives(customs);
-        nextSettings = settingsWithCustomBarItems(savedSettings, customs);
-      }
-      setSettings(nextSettings);
-      const initial: LocationState = {
-        perspective: nextSettings.defaultPerspective,
-        projectFilter: null,
-        tagFilter: null,
-        folderFilter: null,
-        forecastDay: todayKey(),
-        focusedProjectIds: [],
-    focusedFolderPaths: [],
-      };
-      onHydratedRef.current?.(initial, nextSettings);
-      setHydrated(true);
-    });
+    Promise.all([loadDatabase(), loadSettings()])
+      .then(([saved, savedSettings]) => {
+        let nextSettings = savedSettings;
+        if (saved) {
+          setProjects(saved.projects);
+          setTasks(saved.tasks);
+          setTagRecords(saved.tagRecords ?? []);
+          const customs = saved.customPerspectives.map((item) => normalizeCustomPerspective(item));
+          setCustomPerspectives(customs);
+          nextSettings = settingsWithCustomBarItems(savedSettings, customs);
+        }
+        setSettings(nextSettings);
+        const initial: LocationState = {
+          perspective: nextSettings.defaultPerspective,
+          projectFilter: null,
+          tagFilter: null,
+          folderFilter: null,
+          forecastDay: todayKey(),
+          focusedProjectIds: [],
+          focusedFolderPaths: [],
+        };
+        onHydratedRef.current?.(initial, nextSettings);
+        setHydrated(true);
+      })
+      .catch(() => {
+        setHydrated(true);
+      });
   }, []);
 
   useEffect(() => {
     if (!hydrated) return;
     const timer = setTimeout(() => {
-      void saveDatabase({ version: 2, projects, tasks, customPerspectives, tagRecords });
+      void saveDatabase({ version: 2, ...libraryRef.current });
     }, 180);
     return () => clearTimeout(timer);
   }, [hydrated, projects, tasks, customPerspectives, tagRecords]);
@@ -60,10 +77,23 @@ export function usePersistedLibrary(onHydrated?: (initial: LocationState, settin
   useEffect(() => {
     if (!hydrated) return;
     const timer = setTimeout(() => {
-      void saveSettings(settings);
+      void saveSettings(settingsRef.current);
     }, 120);
     return () => clearTimeout(timer);
   }, [hydrated, settings]);
+
+  useEffect(() => {
+    if (!hydrated || typeof window === "undefined") return;
+    const flush = () => {
+      void flushPersisted();
+    };
+    window.addEventListener("beforeunload", flush);
+    const unsub = window.omniclone?.onFlushRequest?.(flush);
+    return () => {
+      window.removeEventListener("beforeunload", flush);
+      unsub?.();
+    };
+  }, [flushPersisted, hydrated]);
 
   return {
     projects,
@@ -77,5 +107,6 @@ export function usePersistedLibrary(onHydrated?: (initial: LocationState, settin
     settings,
     setSettings,
     hydrated,
+    flushPersisted,
   };
 }

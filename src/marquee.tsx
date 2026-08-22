@@ -36,15 +36,15 @@ function clientRect(node: View | HTMLElement | null): Rect | null {
   return { x: box.left, y: box.top, width: box.width, height: box.height };
 }
 
-export function useModifierKeys() {
+export function useModifierKeys(enabled = true) {
   const modifiersRef = useRef({ shift: false, toggle: false });
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (!enabled || typeof window === "undefined") return;
     const sync = (event: KeyboardEvent | MouseEvent) => {
       modifiersRef.current = {
         shift: event.shiftKey,
-        toggle: event.metaKey || event.ctrlKey,
+        toggle: event.metaKey || (!/Mac|iPhone|iPad/.test(navigator.platform) && event.ctrlKey),
       };
     };
     const reset = () => {
@@ -60,7 +60,7 @@ export function useModifierKeys() {
       window.removeEventListener("mousemove", sync);
       window.removeEventListener("blur", reset);
     };
-  }, []);
+  }, [enabled]);
 
   return modifiersRef;
 }
@@ -74,6 +74,7 @@ export function useMarqueeSelection(options: {
 }): MarqueeSelectionApi {
   const { enabled = Platform.OS === "web", containerRef, onStart, onSelect, onClear } = options;
   const rowsRef = useRef(new Map<string, View>());
+  const rowRectsRef = useRef<Map<string, Rect> | null>(null);
   const suppressClickRef = useRef(false);
   const dragRef = useRef<{
     origin: MarqueePoint;
@@ -100,11 +101,15 @@ export function useMarqueeSelection(options: {
     if (!host) return;
 
     const hitIds = (marquee: Rect) => {
-      const rows: Array<{ id: string; rect: Rect }> = [];
-      for (const [id, node] of rowsRef.current) {
-        const rect = clientRect(node);
-        if (rect) rows.push({ id, rect });
+      if (!rowRectsRef.current) {
+        rowRectsRef.current = new Map();
+        for (const [id, node] of rowsRef.current) {
+          const rect = clientRect(node);
+          if (rect) rowRectsRef.current.set(id, rect);
+        }
       }
+      const rows: Array<{ id: string; rect: Rect }> = [];
+      for (const [id, rect] of rowRectsRef.current) rows.push({ id, rect });
       return idsIntersectingRect(rows, marquee);
     };
 
@@ -124,6 +129,7 @@ export function useMarqueeSelection(options: {
 
     const finish = () => {
       dragRef.current = null;
+      rowRectsRef.current = null;
       setOverlayRect(null);
     };
 
@@ -131,9 +137,10 @@ export function useMarqueeSelection(options: {
       if (event.button !== 0) return;
       if (event.pointerType === "touch") return;
       if (isMarqueeExempt(event.target)) return;
+      rowRectsRef.current = null;
       dragRef.current = {
         origin: { x: event.clientX, y: event.clientY },
-        additive: event.shiftKey || event.metaKey || event.ctrlKey,
+        additive: event.shiftKey || event.metaKey || (!/Mac|iPhone|iPad/.test(navigator.platform) && event.ctrlKey),
         active: false,
         pointerId: event.pointerId,
       };

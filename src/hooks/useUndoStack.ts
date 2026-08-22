@@ -31,5 +31,9 @@ export function useUndoStack(snapshot: LibrarySnapshot) {
     return next;
   }, []);
 
-  return { pushUndo, undo, redo };
+  const discardUndo = useCallback(() => {
+    undoStack.current.pop();
+  }, []);
+
+  return { pushUndo, undo, redo, discardUndo };
 }

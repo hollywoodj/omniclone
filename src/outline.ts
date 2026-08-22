@@ -349,7 +349,7 @@ export function taskMatchesView(
 }
 
 export function formatEstimate(minutes?: number) {
-  if (!minutes) return undefined;
+  if (minutes == null || minutes === 0) return undefined;
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
@@ -360,8 +360,22 @@ export function addRepeatInterval(date: Date, every: number, unit: RepeatUnit) {
   const next = new Date(date.getTime());
   if (unit === "day") next.setDate(next.getDate() + every);
   else if (unit === "week") next.setDate(next.getDate() + every * 7);
-  else if (unit === "month") next.setMonth(next.getMonth() + every);
-  else next.setFullYear(next.getFullYear() + every);
+  else if (unit === "month") {
+    const day = next.getDate();
+    const targetMonth = next.getMonth() + every;
+    const year = next.getFullYear() + Math.floor(targetMonth / 12);
+    const month = ((targetMonth % 12) + 12) % 12;
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    next.setFullYear(year, month, Math.min(day, lastDay));
+  } else {
+    const month = next.getMonth();
+    const day = next.getDate();
+    next.setFullYear(next.getFullYear() + every);
+    if (month === 1 && day === 29) {
+      const lastDay = new Date(next.getFullYear(), 2, 0).getDate();
+      if (day > lastDay) next.setDate(lastDay);
+    }
+  }
   return next;
 }
 

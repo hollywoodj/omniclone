@@ -31,6 +31,11 @@ function task(partial: Partial<Task> & { id: string; title: string }): Task {
   };
 }
 
+test("parses x-callback-url task and perspective links", () => {
+  assert.deepEqual(parseOmniCloneUrl("omniclone://x-callback-url/task/abc"), { kind: "task", id: "abc" });
+  assert.deepEqual(parseOmniCloneUrl("omniclone://x-callback-url/perspective/inbox"), { kind: "perspective", id: "inbox" });
+});
+
 test("parses omniclone task and perspective URLs", () => {
   assert.deepEqual(parseOmniCloneUrl("omniclone://task/abc"), { kind: "task", id: "abc" });
   assert.deepEqual(parseOmniCloneUrl("omniclone:///task/abc"), { kind: "task", id: "abc" });

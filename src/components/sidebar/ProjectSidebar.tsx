@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { ContextMenuPressable, useContextMenuTrigger, type ContextMenuItem } from "../../contextMenu";
 import { forecastWeek, todayKey, type ForecastDayKey } from "../../dates";
@@ -84,7 +84,12 @@ export function ProjectSidebar({
   );
   const droppedProjects = useMemo(() => projects.filter((project) => project.status === "dropped"), [projects]);
   const doneProjects = useMemo(() => projects.filter((project) => project.status === "done"), [projects]);
-  const week = useMemo(() => forecastWeek(), []);
+  const [calendarNow, setCalendarNow] = useState(() => new Date());
+  useEffect(() => {
+    const interval = window.setInterval(() => setCalendarNow(new Date()), 60_000);
+    return () => window.clearInterval(interval);
+  }, []);
+  const week = useMemo(() => forecastWeek(calendarNow), [calendarNow]);
   const tree = useMemo(() => buildFolderTree(remainingProjects, extraFolders), [extraFolders, remainingProjects]);
   const [collapsedFolders, setCollapsedFolders] = useState<string[]>([]);
   const [collapsedTags, setCollapsedTags] = useState<string[]>([]);
@@ -234,7 +239,7 @@ export function ProjectSidebar({
             <View style={styles.forecastDays}>
               {week.map((day) => {
                 const selected = forecastDay === day.key;
-                const isToday = day.key === todayKey();
+                const isToday = day.key === todayKey(calendarNow);
                 return (
                   <Pressable key={day.key} onPress={() => onSelectForecastDay(day.key)} style={[styles.forecastDay, selected && styles.forecastDaySelected]}>
                     <Text style={[styles.forecastDayWeek, selected && styles.forecastDayTextSelected]}>{day.weekday}</Text>

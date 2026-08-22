@@ -187,7 +187,11 @@ export function matchOmniFocusHotkey(event: KeyboardEvent, options: {
     }
     if (key === "ArrowUp") return { type: "selectRow", direction: "up" };
     if (key === "ArrowDown") return { type: "selectRow", direction: "down" };
-    if (key === "Delete" || key === "Backspace") return { type: "delete", direction: "previous" };
+    if (key === "Backspace") return { type: "delete", direction: "previous" };
+  }
+
+  if (!meta && !ctrl && !alt && !shift && event.code === "Delete") {
+    return { type: "delete", direction: "next" };
   }
 
   if (!meta && !ctrl && !alt && shift) {
@@ -197,10 +201,6 @@ export function matchOmniFocusHotkey(event: KeyboardEvent, options: {
     }
     if (key === "ArrowUp") return { type: "extendRow", direction: "up" };
     if (key === "ArrowDown") return { type: "extendRow", direction: "down" };
-  }
-
-  if (event.code === "Delete" && !meta && !ctrl && !alt && !shift) {
-    return { type: "delete", direction: "next" };
   }
 
   if (key === "Escape") return { type: "cancel" };

@@ -20,13 +20,26 @@ const mimeTypes = {
   ".ttf": "font/ttf",
 };
 
+function resolveStaticFile(requestedPath) {
+  const relative = requestedPath === "/" ? "index.html" : requestedPath.replace(/^[/\\]+/, "");
+  const base = path.resolve(distDir);
+  const resolved = path.resolve(base, relative);
+  if (resolved !== base && !resolved.startsWith(`${base}${path.sep}`)) return null;
+  if (!fs.existsSync(resolved) || fs.statSync(resolved).isDirectory()) {
+    const indexPath = path.join(base, "index.html");
+    return fs.existsSync(indexPath) ? indexPath : null;
+  }
+  return resolved;
+}
+
 function startStaticServer(port) {
   const server = http.createServer((req, res) => {
     const requestedPath = decodeURIComponent((req.url ?? "/").split("?")[0]);
-    let filePath = path.join(distDir, requestedPath);
-    if (!filePath.startsWith(distDir)) filePath = distDir;
-    if (requestedPath === "/" || !fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
-      filePath = path.join(distDir, "index.html");
+    const filePath = resolveStaticFile(requestedPath);
+    if (!filePath) {
+      res.writeHead(403);
+      res.end("Forbidden");
+      return;
     }
     fs.readFile(filePath, (err, data) => {
       if (err) {
@@ -181,6 +194,25 @@ function buildMenu(win, customPerspectives = []) {
 
 let mainWindow = null;
 let pendingOpenUrl = process.argv.find((item) => String(item).startsWith("omniclone:")) ?? null;
+let quitting = false;
+
+async function flushRendererData(win) {
+  if (!win || win.isDestroyed()) return;
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      ipcMain.removeListener("flush-complete", onComplete);
+      clearTimeout(timer);
+      resolve();
+    };
+    const onComplete = () => finish();
+    const timer = setTimeout(finish, 1500);
+    ipcMain.once("flush-complete", onComplete);
+    win.webContents.send("request-flush");
+  });
+}
 
 function sendOpenUrl(url) {
   if (mainWindow) mainWindow.webContents.send("open-url", url);
@@ -260,6 +292,15 @@ async function createWindow() {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+app.on("before-quit", (event) => {
+  if (quitting || !mainWindow || mainWindow.isDestroyed()) return;
+  event.preventDefault();
+  quitting = true;
+  void flushRendererData(mainWindow).finally(() => {
+    app.quit();
+  });
 });
 
 app.on("activate", () => {

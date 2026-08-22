@@ -1,6 +1,6 @@
 import { formatDateLabel, lastIntervalDays, startOfLocalDay, addDays } from "../dates.ts";
 import { makeId, type CustomPerspective, type Project, type Task } from "../model.ts";
-import { applyRepeat, descendantsOf, idsWithDescendants, insertTaskAfter, projectInFolder } from "../outline.ts";
+import { applyRepeat, descendantsOf, idsWithDescendants, insertTaskAfter, projectInFolder, reindexSiblings } from "../outline.ts";
 
 export function applyTaskPatch(tasks: Task[], id: string, patch: Partial<Task>, now = new Date()): Task[] {
   return tasks.map((task) => {
@@ -94,7 +94,22 @@ export function applyCompleteAndAwaitReply(
 
 export function applyMoveToProject(tasks: Task[], ids: string[], projectId: string | null): Task[] {
   const unique = new Set(idsWithDescendants(tasks, ids));
-  return tasks.map((task) => unique.has(task.id) ? { ...task, projectId } : task);
+  const movingRoots = [...new Set(ids)].filter((id) => {
+    const task = tasks.find((item) => item.id === id);
+    if (!task) return false;
+    return !task.parentId || !unique.has(task.parentId);
+  });
+  const patched = tasks.map((task) => unique.has(task.id) ? { ...task, projectId } : task);
+  const movingBlock = patched.filter((task) => unique.has(task.id));
+  const stationary = patched.filter((task) => !unique.has(task.id));
+  let insertAt = stationary.length;
+  for (let index = stationary.length - 1; index >= 0; index -= 1) {
+    if (stationary[index]?.projectId === projectId) {
+      insertAt = index + 1;
+      break;
+    }
+  }
+  return reindexSiblings([...stationary.slice(0, insertAt), ...movingBlock, ...stationary.slice(insertAt)]);
 }
 
 export function applyAddTag(tasks: Task[], ids: string[], tag: string): Task[] {
@@ -129,23 +144,40 @@ export function duplicateTasksByIds(
   now = new Date(),
 ): { tasks: Task[]; copies: Task[] } {
   const copies: Task[] = [];
-  const next = [...tasks];
-  for (const taskId of ids) {
-    const task = tasks.find((item) => item.id === taskId);
-    if (!task) continue;
-    const copy: Task = {
-      ...task,
-      id: idFactory("task"),
-      importKey: undefined,
-      createdAt: now.toISOString(),
-      completed: false,
-      completedAt: undefined,
-    };
-    copies.push(copy);
-    const index = next.findIndex((item) => item.id === taskId);
-    next.splice(index >= 0 ? index + 1 : next.length, 0, copy);
+  const roots = [...new Set(ids)];
+  const subtreeIds = new Set<string>();
+  for (const taskId of roots) {
+    subtreeIds.add(taskId);
+    for (const child of descendantsOf(taskId, tasks)) subtreeIds.add(child.id);
   }
-  return { tasks: next, copies };
+  const idMap = new Map([...subtreeIds].map((id) => [id, idFactory("task")]));
+  let next = [...tasks];
+
+  for (const taskId of roots) {
+    const original = tasks.find((item) => item.id === taskId);
+    if (!original) continue;
+    const subtreeCopies: Task[] = [];
+    const collect = (id: string, parentId: string | null) => {
+      const task = tasks.find((item) => item.id === id);
+      if (!task) return;
+      const copy: Task = {
+        ...task,
+        id: idMap.get(task.id) ?? idFactory("task"),
+        importKey: undefined,
+        parentId: parentId,
+        createdAt: now.toISOString(),
+        completed: false,
+        completedAt: undefined,
+      };
+      subtreeCopies.push(copy);
+      copies.push(copy);
+      for (const child of tasks.filter((item) => item.parentId === id)) collect(child.id, copy.id);
+    };
+    collect(taskId, original.parentId ?? null);
+    const index = next.findIndex((item) => item.id === taskId);
+    next.splice(index >= 0 ? index + 1 : next.length, 0, ...subtreeCopies);
+  }
+  return { tasks: reindexSiblings(next), copies };
 }
 
 export function duplicateProjectById(
