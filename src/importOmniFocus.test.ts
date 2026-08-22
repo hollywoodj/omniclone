@@ -102,6 +102,37 @@ test("apply import merges sidebar folders in merge mode", () => {
   assert.deepEqual(result.extraFolders, ["Work"]);
 });
 
+test("imports OmniFocus project types from CSV Type column", () => {
+  const csv = [
+    "Task ID,Type,Name,Status,Project",
+    "p1,Parallel Project,Alpha,active,",
+    "p2,Sequential Project,Beta,active,",
+    "p3,Single Action List,Gamma,active,",
+    "t1,Action,Task in Beta,active,Beta",
+  ].join("\n");
+  const imported = parseOmniFocusFile("OmniFocus.csv", bytes(csv), now);
+  const byName = new Map(imported.projects.map((project) => [project.name, project]));
+  assert.equal(byName.get("Alpha")?.type, "parallel");
+  assert.equal(byName.get("Beta")?.type, "sequential");
+  assert.equal(byName.get("Gamma")?.type, "singleActions");
+});
+
+test("imports project types from TaskPaper parallel tags", () => {
+  const taskpaper = [
+    "Parallel:",
+    "\t- One",
+    "Sequential @parallel(false):",
+    "\t- Two",
+    "Single @singleton(true):",
+    "\t- Three",
+  ].join("\n");
+  const imported = parseOmniFocusFile("library.taskpaper", bytes(taskpaper), now);
+  const byName = new Map(imported.projects.map((project) => [project.name, project]));
+  assert.equal(byName.get("Parallel")?.type, "parallel");
+  assert.equal(byName.get("Sequential")?.type, "sequential");
+  assert.equal(byName.get("Single")?.type, "singleActions");
+});
+
 test("creates folder-prefixed projects even when actions appear before project rows", () => {
   const csv = [
     "Task ID,Type,Name,Status,Project",

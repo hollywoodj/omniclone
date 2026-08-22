@@ -119,6 +119,26 @@ function projectFullName(project: Project) {
   return project.folder ? `${project.folder} : ${project.name}` : project.name;
 }
 
+export function parseImportedProjectType(
+  typeValue: string,
+  extraValues: string[] = [],
+): Project["type"] {
+  const combined = [typeValue, ...extraValues].join(" ").toLowerCase();
+  if (combined.includes("single action")) return "singleActions";
+  if (combined.includes("sequential")) return "sequential";
+  if (combined.includes("parallel")) return "parallel";
+  return "parallel";
+}
+
+export function projectTypeFromTaskPaperParameters(parameters: Record<string, string | true>): Project["type"] {
+  const singleton = parameters.singleton;
+  if (singleton === true || singleton === "true") return "singleActions";
+  const parallel = parameters.parallel;
+  if (parallel === "false") return "sequential";
+  if (parallel === true || parallel === "true") return "parallel";
+  return "parallel";
+}
+
 function folderAncestors(path: string) {
   const parts = path.split(" : ").filter(Boolean);
   const paths: string[] = [];
@@ -198,15 +218,17 @@ function parseOmniCsv(sourceName: string, text: string, now: Date): OmniImportDa
   let droppedCount = 0;
   let onHoldCount = 0;
 
-  const ensureProject = (name: string, note = "") => {
+  const ensureProject = (name: string, note = "", type?: Project["type"]) => {
     const normalized = name.toLowerCase();
     const existingId = projectAliases.get(normalized);
     const existing = existingId ? projects.find((project) => project.id === existingId) : undefined;
     if (existing) {
       if (note && !existing.note) existing.note = note;
+      if (type) existing.type = type;
       return existing;
     }
     const project = projectRecord(name, projects.length, note);
+    if (type) project.type = type;
     projects.push(project);
     addProjectAlias(projectAliases, name, project.id);
     addProjectAlias(projectAliases, leafName(name), project.id);
@@ -226,14 +248,17 @@ function parseOmniCsv(sourceName: string, text: string, now: Date): OmniImportDa
       folderCount += 1;
       continue;
     }
-    if (type.includes("project")) {
+    if (type.includes("project") || type.includes("single action")) {
       const container = value(row, "Project", "Project Name", "Container", "Folder");
       const fullName = container && leafName(container).toLowerCase() !== name.toLowerCase()
         ? `${container} : ${name}`
         : name;
       const note = value(row, "Notes", "Note");
       const review = Number(value(row, "Review Interval", "Review", "Repeat Interval"));
-      const project = ensureProject(fullName, note);
+      const projectType = parseImportedProjectType(type, [
+        value(row, "Project Type", "Group Type", "ProjectType"),
+      ]);
+      const project = ensureProject(fullName, note, projectType);
       if (Number.isFinite(review) && review > 0) project.reviewIntervalDays = review;
       addProjectAlias(projectAliases, name, project.id);
     }
@@ -246,7 +271,7 @@ function parseOmniCsv(sourceName: string, text: string, now: Date): OmniImportDa
       skipped += 1;
       continue;
     }
-    if (type === "tag" || type === "context" || type === "perspective" || type.includes("folder") || type.includes("project")) {
+    if (type === "tag" || type === "context" || type === "perspective" || type.includes("folder") || type.includes("project") || type.includes("single action")) {
       if (type === "tag" || type === "context" || type === "perspective") skipped += 1;
       continue;
     }
@@ -359,9 +384,13 @@ function parseTaskPaper(sourceName: string, text: string, now: Date): OmniImport
       const pathKey = name.toLowerCase();
       const existing = projectByPath.get(pathKey);
       const selected = existing ?? projectRecord(name, projects.length);
+      const projectType = projectTypeFromTaskPaperParameters(parsed.parameters);
       if (!existing) {
+        selected.type = projectType;
         projects.push(selected);
         projectByPath.set(pathKey, selected);
+      } else if (projectType !== "parallel" || selected.type === undefined) {
+        selected.type = projectType;
       }
       [...projectAtIndent.keys()].filter((level) => level > indent).forEach((level) => projectAtIndent.delete(level));
       projectAtIndent.set(indent, selected);
