@@ -117,9 +117,50 @@ test("imports OmniFocus project types from CSV Type column", () => {
   assert.equal(byName.get("Gamma")?.type, "singleActions");
 });
 
+test("imports project types from CSV Notes TaskPaper tags", () => {
+  const csv = [
+    "Task ID,Type,Name,Status,Project,Notes",
+    "p1,Project,Sequential One,active,,@parallel(false)",
+    "p2,Project,Single List,active,,@singleton(true)",
+    "t1,Action,Task,active,Sequential One,",
+  ].join("\n");
+  const imported = parseOmniFocusFile("OmniFocus.csv", bytes(csv), now);
+  const byName = new Map(imported.projects.map((project) => [project.name, project]));
+  assert.equal(byName.get("Sequential One")?.type, "sequential");
+  assert.equal(byName.get("Single List")?.type, "singleActions");
+});
+
+test("plain CSV Project rows without type hints stay untyped", () => {
+  const csv = [
+    "Task ID,Type,Name,Status,Project",
+    "p1,Project,Website,active,",
+    "t1,Action,Write copy,active,Website",
+  ].join("\n");
+  const imported = parseOmniFocusFile("OmniFocus.csv", bytes(csv), now);
+  assert.equal(imported.projects[0]?.type, undefined);
+  assert.ok(imported.warnings.some((warning) => warning.includes("Plain Text")));
+});
+
+test("merge import updates project types on existing projects", () => {
+  const csv = [
+    "Task ID,Type,Name,Status,Project",
+    "p1,Sequential Project,Website,active,",
+  ].join("\n");
+  const imported = parseOmniFocusFile("OmniFocus.csv", bytes(csv), now);
+  const first = applyOmniFocusImport([], [], imported, "replace");
+  assert.equal(first.projects[0]?.type, "sequential");
+  const parallelCsv = [
+    "Task ID,Type,Name,Status,Project",
+    "p1,Parallel Project,Website,active,",
+  ].join("\n");
+  const reimported = parseOmniFocusFile("OmniFocus.csv", bytes(parallelCsv), now);
+  const merged = applyOmniFocusImport(first.projects, first.tasks, reimported, "merge");
+  assert.equal(merged.projects[0]?.type, "parallel");
+});
+
 test("imports project types from TaskPaper parallel tags", () => {
   const taskpaper = [
-    "Parallel:",
+    "Parallel @parallel(true):",
     "\t- One",
     "Sequential @parallel(false):",
     "\t- Two",
@@ -131,6 +172,19 @@ test("imports project types from TaskPaper parallel tags", () => {
   assert.equal(byName.get("Parallel")?.type, "parallel");
   assert.equal(byName.get("Sequential")?.type, "sequential");
   assert.equal(byName.get("Single")?.type, "singleActions");
+});
+
+test("imports project headers from hyphen TaskPaper lines", () => {
+  const taskpaper = [
+    "- Sequential @parallel(false):",
+    "\t- One",
+    "- Parallel:",
+    "\t- Two",
+  ].join("\n");
+  const imported = parseOmniFocusFile("library.taskpaper", bytes(taskpaper), now);
+  const byName = new Map(imported.projects.map((project) => [project.name, project]));
+  assert.equal(byName.get("Sequential")?.type, "sequential");
+  assert.equal(byName.get("Parallel")?.type, undefined);
 });
 
 test("creates folder-prefixed projects even when actions appear before project rows", () => {
