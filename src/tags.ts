@@ -106,13 +106,29 @@ export function buildTagTree(records: TagRecord[]): TagNode[] {
   };
   for (const record of records) ensure(record);
   const roots: TagNode[] = [];
+  const rootKeys = new Set<string>();
   for (const record of records) {
     const node = ensure(record);
     const parentName = record.parent?.trim();
     const parent = parentName ? byKey.get(tagKey(parentName)) : undefined;
     if (parent && tagKey(parent.name) !== tagKey(record.name)) {
-      ensure(parent).children.push(node);
-    } else {
+      let cursor: TagRecord | undefined = parent;
+      let cyclic = false;
+      while (cursor) {
+        if (tagKey(cursor.name) === tagKey(record.name)) {
+          cyclic = true;
+          break;
+        }
+        cursor = cursor.parent ? byKey.get(tagKey(cursor.parent)) : undefined;
+      }
+      if (!cyclic) {
+        ensure(parent).children.push(node);
+        continue;
+      }
+    }
+    const key = tagKey(record.name);
+    if (!rootKeys.has(key)) {
+      rootKeys.add(key);
       roots.push(node);
     }
   }

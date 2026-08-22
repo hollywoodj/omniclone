@@ -242,7 +242,7 @@ function parseOmniCsv(sourceName: string, text: string, now: Date): OmniImportDa
       defer,
       note: joinNotes(note, duration),
       flagged: /^(1|true|yes|y|flagged|★)$/i.test(value(row, "Flagged", "Flag")),
-      completed: !!completion || status.includes("completed") || status.includes("done"),
+      completed: !!completedAt || status === "completed" || status === "done" || /\bcompleted?\b/.test(status),
       completedAt: completedAt?.toISOString(),
       createdAt: addedAt?.toISOString() ?? new Date(importedAt + index).toISOString(),
       status: dropped ? "dropped" : onHold ? "onHold" : "active",
@@ -269,6 +269,7 @@ function parseTaskPaper(sourceName: string, text: string, now: Date): OmniImport
   const projects: Project[] = [];
   const tasks: Task[] = [];
   const projectAtIndent = new Map<number, Project>();
+  const projectByPath = new Map<string, Project>();
   let lastTask: Task | null = null;
   let skipped = 0;
   const importedAt = now.getTime();
@@ -318,11 +319,14 @@ function parseTaskPaper(sourceName: string, text: string, now: Date): OmniImport
       const name = parent && !rawName.toLowerCase().startsWith(`${parent.name.toLowerCase()} :`)
         ? `${parent.name} : ${rawName}`
         : rawName;
-      const project = projectRecord(name, projects.length);
-      const duplicate = projects.find((item) => item.name.toLowerCase() === name.toLowerCase());
-      const selected = duplicate ?? project;
-      if (!duplicate) projects.push(project);
-      [...projectAtIndent.keys()].filter((level) => level >= indent).forEach((level) => projectAtIndent.delete(level));
+      const pathKey = name.toLowerCase();
+      const existing = projectByPath.get(pathKey);
+      const selected = existing ?? projectRecord(name, projects.length);
+      if (!existing) {
+        projects.push(selected);
+        projectByPath.set(pathKey, selected);
+      }
+      [...projectAtIndent.keys()].filter((level) => level > indent).forEach((level) => projectAtIndent.delete(level));
       projectAtIndent.set(indent, selected);
       lastTask = null;
       continue;
@@ -363,6 +367,7 @@ export function applyOmniFocusImport(currentProjects: Project[], currentTasks: T
   if (mode === "replace") return { projects: imported.projects, tasks: imported.tasks, addedProjects: imported.projects.length, addedTasks: imported.tasks.length, duplicateTasks: 0 };
   const projects = [...currentProjects];
   const projectIdMap = new Map<string, string>();
+  const projectIds = new Set(projects.map((project) => project.id));
   let addedProjects = 0;
   for (const incoming of imported.projects) {
     const existing = projects.find((project) => project.importKey === incoming.importKey || project.name.toLowerCase() === incoming.name.toLowerCase() || leafName(project.name).toLowerCase() === leafName(incoming.name).toLowerCase());
@@ -371,7 +376,8 @@ export function applyOmniFocusImport(currentProjects: Project[], currentTasks: T
       if (incoming.note && !existing.note) existing.note = incoming.note;
     } else {
       let id = incoming.id;
-      while (projects.some((project) => project.id === id)) id = `${incoming.id}-${addedProjects + 1}`;
+      while (projectIds.has(id)) id = `${incoming.id}-${addedProjects + 1}`;
+      projectIds.add(id);
       projects.push({ ...incoming, id });
       projectIdMap.set(incoming.id, id);
       addedProjects += 1;
@@ -381,6 +387,7 @@ export function applyOmniFocusImport(currentProjects: Project[], currentTasks: T
   const existingKeys = new Set(currentTasks.map((task) => task.importKey).filter(Boolean));
   const existingSignatures = new Set(currentTasks.map((task) => taskSignature(task, task.projectId ? projectNameById.get(task.projectId) ?? "" : "")));
   const tasks = [...currentTasks];
+  const taskIds = new Set(tasks.map((task) => task.id));
   let addedTasks = 0;
   let duplicateTasks = 0;
   for (const incoming of imported.tasks) {
@@ -391,7 +398,8 @@ export function applyOmniFocusImport(currentProjects: Project[], currentTasks: T
       continue;
     }
     let id = incoming.id;
-    while (tasks.some((task) => task.id === id)) id = `${incoming.id}-${addedTasks + 1}`;
+    while (taskIds.has(id)) id = `${incoming.id}-${addedTasks + 1}`;
+    taskIds.add(id);
     tasks.push({ ...incoming, id, projectId });
     if (incoming.importKey) existingKeys.add(incoming.importKey);
     existingSignatures.add(signature);

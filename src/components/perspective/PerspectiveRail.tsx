@@ -41,6 +41,7 @@ export function PerspectiveRail({ current, badges, items, showTitles, shortcuts,
               { id: "delete", label: "Delete", icon: "trash-can-outline" as IconName, destructive: true, onPress: () => onDelete(item.custom!.id) },
             ] : []),
           ];
+          const acceptsInboxDrop = item.id === "inbox" || !!item.custom?.rules.some((rule) => rule.enabled !== false && rule.kind === "inInbox");
           return (
             <ContextMenuPressable
               key={item.id}
@@ -52,10 +53,10 @@ export function PerspectiveRail({ current, badges, items, showTitles, shortcuts,
               style={({ pressed }) => [
                 styles.perspectiveItem,
                 selected && (item.custom ? { backgroundColor: `${accent}20` } : styles.perspectiveItemSelected),
-                item.id === "inbox" && inboxHover && styles.sidebarRowDrop,
+                acceptsInboxDrop && inboxHover && styles.sidebarRowDrop,
                 pressed && styles.pressed,
               ]}
-              {...(item.id === "inbox" && Platform.OS === "web" ? {
+              {...(acceptsInboxDrop && Platform.OS === "web" ? {
                 onDragOver: (event: { preventDefault?: () => void; dataTransfer?: { dropEffect?: string } }) => {
                   allowTaskDrop(event);
                   setInboxHover(true);

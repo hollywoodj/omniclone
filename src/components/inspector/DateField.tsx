@@ -3,6 +3,7 @@ import { Pressable, Text, TextInput, View } from "react-native";
 import {
   applyDueTimePreset,
   calendarMonth,
+  dayKey,
   duePresetLabel,
   dueTimePreset,
   parseDueLabel,
@@ -27,7 +28,7 @@ export function DateField({ value, onChange, compact = false }: {
   const initial = selected ?? new Date();
   const [cursor, setCursor] = useState(() => ({ year: initial.getFullYear(), month: initial.getMonth() }));
   const cells = useMemo(() => calendarMonth(cursor.year, cursor.month), [cursor.month, cursor.year]);
-  const selectedKey = selected ? `${selected.getFullYear()}-${String(selected.getMonth() + 1).padStart(2, "0")}-${String(selected.getDate()).padStart(2, "0")}` : null;
+  const selectedKey = selected ? dayKey(selected) : null;
   const today = todayKey();
   const timeKind = dueTimePreset(value);
   const timePresets: Array<{ id: DueTimePreset; label: string }> = [

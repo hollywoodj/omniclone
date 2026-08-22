@@ -359,7 +359,7 @@ export function completionGroupLabel(iso: string | undefined, now = new Date()):
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "Unknown";
   const delta = dayDelta(date, now);
-  if (delta >= 0) return "Today";
+  if (delta === 0) return "Today";
   if (delta === -1) return "Yesterday";
   if (delta > -7) return "This Week";
   if (delta > -14) return "Last Week";

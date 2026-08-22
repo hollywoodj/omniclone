@@ -20,4 +20,13 @@ contextBridge.exposeInMainWorld("omniclone", {
   openExternal: (url) => {
     ipcRenderer.send("open-external", url);
   },
+  onFlushRequest: (callback) => {
+    const listener = () => {
+      Promise.resolve(callback()).finally(() => {
+        ipcRenderer.send("flush-complete");
+      });
+    };
+    ipcRenderer.on("request-flush", listener);
+    return () => ipcRenderer.removeListener("request-flush", listener);
+  },
 });

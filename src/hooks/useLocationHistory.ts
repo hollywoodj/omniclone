@@ -1,6 +1,5 @@
 import { useCallback, useRef, useState } from "react";
 import { type LocationState, sameLocation, todayKey } from "../dates";
-import { type ActivePerspective } from "../model";
 import {
   canGoBack as historyCanGoBack,
   canGoForward as historyCanGoForward,
@@ -12,93 +11,81 @@ import {
   type LocationHistory,
 } from "../navigation/history";
 
+const defaultLocation = (): LocationState => ({
+  perspective: "projects",
+  projectFilter: null,
+  tagFilter: null,
+  folderFilter: null,
+  forecastDay: todayKey(),
+  focusedProjectIds: [],
+  focusedFolderPaths: [],
+});
+
 export function useLocationHistory(onNavigate?: () => void) {
-  const [perspective, setPerspective] = useState<ActivePerspective>("projects");
-  const [projectFilter, setProjectFilter] = useState<string | null>(null);
-  const [tagFilter, setTagFilter] = useState<string | null>(null);
-  const [folderFilter, setFolderFilter] = useState<string | null>(null);
-  const [forecastDay, setForecastDay] = useState(todayKey());
-  const [focusedProjectIds, setFocusedProjectIds] = useState<string[]>([]);
-  const [focusedFolderPaths, setFocusedFolderPaths] = useState<string[]>([]);
-  const [canGoBack, setCanGoBack] = useState(false);
-  const [canGoForward, setCanGoForward] = useState(false);
-  const locationRef = useRef<LocationState>({
-    perspective: "projects",
-    projectFilter: null,
-    tagFilter: null,
-    folderFilter: null,
-    forecastDay: todayKey(),
-    focusedProjectIds: [],
-    focusedFolderPaths: [],
-  });
-  const historyRef = useRef<LocationHistory>(emptyHistory());
+  const [location, setLocation] = useState<LocationState>(defaultLocation);
+  const [history, setHistory] = useState<LocationHistory>(emptyHistory());
+  const locationRef = useRef(location);
+  const historyRef = useRef(history);
   const onNavigateRef = useRef(onNavigate);
   onNavigateRef.current = onNavigate;
-
-  locationRef.current = { perspective, projectFilter, tagFilter, folderFilter, forecastDay, focusedProjectIds, focusedFolderPaths };
+  locationRef.current = location;
+  historyRef.current = history;
 
   const applyLocation = useCallback((next: LocationState) => {
     locationRef.current = next;
-    setPerspective(next.perspective);
-    setProjectFilter(next.projectFilter);
-    setTagFilter(next.tagFilter);
-    setFolderFilter(next.folderFilter);
-    setForecastDay(next.forecastDay);
-    setFocusedProjectIds(next.focusedProjectIds);
-    setFocusedFolderPaths(next.focusedFolderPaths);
-  }, []);
-
-  const syncHistoryButtons = useCallback(() => {
-    const history = historyRef.current;
-    setCanGoBack(historyCanGoBack(history));
-    setCanGoForward(historyCanGoForward(history));
+    setLocation(next);
   }, []);
 
   const hydrateLocation = useCallback((initial: LocationState) => {
     locationRef.current = initial;
-    historyRef.current = historyFrom(initial);
-    applyLocation(initial);
-    syncHistoryButtons();
-  }, [applyLocation, syncHistoryButtons]);
+    const nextHistory = historyFrom(initial);
+    historyRef.current = nextHistory;
+    setLocation(initial);
+    setHistory(nextHistory);
+  }, []);
 
   const navigate = useCallback((patch: Partial<LocationState>) => {
     const next = { ...locationRef.current, ...patch };
     if (sameLocation(locationRef.current, next)) return;
     onNavigateRef.current?.();
     applyLocation(next);
-    historyRef.current = pushLocation(historyRef.current, next);
-    syncHistoryButtons();
+    const nextHistory = pushLocation(historyRef.current, next);
+    historyRef.current = nextHistory;
+    setHistory(nextHistory);
     return next;
-  }, [applyLocation, syncHistoryButtons]);
+  }, [applyLocation]);
 
   const goBack = useCallback(() => {
     const stepped = stepBack(historyRef.current);
     if (!stepped.location) return;
     historyRef.current = stepped.history;
+    setHistory(stepped.history);
     applyLocation(stepped.location);
-    syncHistoryButtons();
-  }, [applyLocation, syncHistoryButtons]);
+  }, [applyLocation]);
 
   const goForward = useCallback(() => {
     const stepped = stepForward(historyRef.current);
     if (!stepped.location) return;
     historyRef.current = stepped.history;
+    setHistory(stepped.history);
     applyLocation(stepped.location);
-    syncHistoryButtons();
-  }, [applyLocation, syncHistoryButtons]);
+  }, [applyLocation]);
 
   return {
-    perspective,
-    projectFilter,
-    tagFilter,
-    folderFilter,
-    forecastDay,
-    focusedProjectIds,
-    focusedFolderPaths,
-    canGoBack,
-    canGoForward,
+    perspective: location.perspective,
+    projectFilter: location.projectFilter,
+    tagFilter: location.tagFilter,
+    folderFilter: location.folderFilter,
+    forecastDay: location.forecastDay,
+    focusedProjectIds: location.focusedProjectIds,
+    focusedFolderPaths: location.focusedFolderPaths,
+    canGoBack: historyCanGoBack(history),
+    canGoForward: historyCanGoForward(history),
     locationRef,
-    setProjectFilter,
+    setProjectFilter: (value: string | null | ((current: string | null) => string | null)) => {
+      const next = typeof value === "function" ? value(locationRef.current.projectFilter) : value;
+      applyLocation({ ...locationRef.current, projectFilter: next });
+    },
     hydrateLocation,
     navigate,
     goBack,

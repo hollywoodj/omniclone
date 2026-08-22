@@ -130,8 +130,10 @@ export function parseOmniCloneUrl(raw: string): OmniCloneUrl | null {
   if (!parsed) return null;
   const parts = parsed.parts.map((part) => part.trim()).filter(Boolean);
   if (!parts.length) return null;
+  if ((parts[0] ?? "").toLowerCase() === "x-callback-url") parts.shift();
+  if (!parts.length) return null;
   const head = (parts[0] ?? "").toLowerCase();
-  const action = (head === "x-callback-url" ? parts[1] : head)?.toLowerCase();
+  const action = head;
   if (action === "add") {
     const name = queryValue(parsed.params, "name") ?? "";
     const note = queryValue(parsed.params, "note") ?? undefined;

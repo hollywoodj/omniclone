@@ -6,6 +6,7 @@ export type DesktopBridge = {
   setWindowTitle?: (title: string) => void;
   onOpenUrl?: (cb: (url: string) => void) => () => void;
   openExternal?: (url: string) => void;
+  onFlushRequest?: (cb: () => void | Promise<void>) => () => void;
 };
 
 declare global {

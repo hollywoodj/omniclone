@@ -64,6 +64,16 @@ type CustomPerspectiveRow = {
   rules?: string;
 };
 
+function safeJsonStringArray(raw: string | undefined | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 async function migrateLegacyAsyncStorage(): Promise<PersistedState | null> {
   try {
     const raw = await AsyncStorage.getItem(LEGACY_STORAGE_KEY);
@@ -154,7 +164,9 @@ export async function loadDatabase(): Promise<PersistedState | null> {
     status: row.status === "onHold" || row.status === "dropped" ? row.status : "active",
   }));
 
-  const customPerspectives: CustomPerspective[] = perspectiveRows.map((row) => normalizeCustomPerspective({
+  const customPerspectives: CustomPerspective[] = perspectiveRows.flatMap((row) => {
+    try {
+      return [normalizeCustomPerspective({
     id: row.id,
     name: row.name,
     icon: row.icon,
@@ -162,8 +174,8 @@ export async function loadDatabase(): Promise<PersistedState | null> {
     status: row.status as CustomPerspective["status"],
     flagged: row.flagged as CustomPerspective["flagged"],
     due: row.due as CustomPerspective["due"],
-    projectIds: JSON.parse(row.project_ids) as string[],
-    tags: JSON.parse(row.tags) as string[],
+    projectIds: safeJsonStringArray(row.project_ids),
+    tags: safeJsonStringArray(row.tags),
     tagMatch: row.tag_match as CustomPerspective["tagMatch"],
     search: row.search,
     groupBy: row.group_by as CustomPerspective["groupBy"],
@@ -173,7 +185,11 @@ export async function loadDatabase(): Promise<PersistedState | null> {
     organizeBy: (row.organize_by as CustomPerspective["organizeBy"] | undefined) ?? "actions",
     keepSidebarHidden: !!row.keep_sidebar_hidden,
     rules: parseRules(row.rules),
-  }));
+  })];
+    } catch {
+      return [];
+    }
+  });
 
   const tagRecords: TagRecord[] = tagMetaRows.map((row) => ({
     name: row.name,

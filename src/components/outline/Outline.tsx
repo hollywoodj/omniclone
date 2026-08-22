@@ -10,7 +10,7 @@ import {
 } from "../../dates";
 import { useMarqueeSelection, useModifierKeys } from "../../marquee";
 import { palette, visibleOutlineColumns, type ActivePerspective, type AppSettings, type CustomPerspective, type Project, type Task } from "../../model";
-import { effectiveGroupBy } from "../../perspectiveRules";
+import { effectiveGroupBy, perspectiveActsAsFlagged, perspectiveActsAsInbox, perspectiveGroupsByProject } from "../../perspectiveRules";
 import { projectContextItems } from "../../perspectives/projectContextItems";
 import {
   blockedSequentialIds,
@@ -42,6 +42,8 @@ export function Outline({
   inspectedProjectId,
   editingTaskId,
   collapseNonce,
+  collapsedIds: collapsedIdsProp,
+  onCollapsedIdsChange,
   projectFilter,
   folderFilter,
   tagFilter,
@@ -98,6 +100,8 @@ export function Outline({
   inspectedProjectId: string | null;
   editingTaskId: string | null;
   collapseNonce: { action: "expand" | "collapse"; n: number } | null;
+  collapsedIds?: string[];
+  onCollapsedIdsChange?: (ids: string[]) => void;
   projectFilter: string | null;
   folderFilter: string | null;
   tagFilter: string | null;
@@ -148,8 +152,10 @@ export function Outline({
   const { openMenu } = useContextMenuTrigger();
   const containerRef = useRef<View>(null);
   const [marqueeReady, setMarqueeReady] = useState(false);
-  const [collapsedIds, setCollapsedIds] = useState<string[]>([]);
-  const modifiersRef = useModifierKeys();
+  const [localCollapsedIds, setLocalCollapsedIds] = useState<string[]>([]);
+  const collapsedIds = collapsedIdsProp ?? localCollapsedIds;
+  const setCollapsedIds = onCollapsedIdsChange ?? setLocalCollapsedIds;
+  const modifiersRef = useModifierKeys(marqueeReady);
   const { registerRow, suppressClickRef, overlay } = useMarqueeSelection({
     enabled: marqueeReady,
     containerRef,
@@ -189,7 +195,8 @@ export function Outline({
   const columns = visibleOutlineColumns(settings.outlineColumns, hideProjectColumn);
   const collapsed = useMemo(() => new Set(collapsedIds), [collapsedIds]);
   const toggleCollapsed = (id: string) => {
-    setCollapsedIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+    const next = collapsedIds.includes(id) ? collapsedIds.filter((item) => item !== id) : [...collapsedIds, id];
+    setCollapsedIds(next);
   };
   const groupIds = useMemo(() => {
     const ids: string[] = [];
@@ -294,6 +301,9 @@ export function Outline({
     : perspective === "review"
       ? (reviewProjects.length ? `${reviewProjects.length} project${reviewProjects.length === 1 ? "" : "s"} to review` : "All caught up")
       : `${remainingCount} action${remainingCount === 1 ? "" : "s"}${selectedTaskIds.length > 1 ? ` • ${selectedTaskIds.length} selected` : ""}${perspective === "projects" && !projectFilter ? ` • ${projects.length} projects` : ""}${tagFilter ? ` • ${tagFilter}` : ""}`;
+  const showProjectGroups = perspectiveGroupsByProject(perspective, customPerspective ?? null);
+  const actsAsInbox = perspectiveActsAsInbox(perspective, customPerspective ?? null);
+  const actsAsFlagged = perspectiveActsAsFlagged(perspective, customPerspective ?? null);
   const renderGroupTasks = (id: string, groupTasks: Task[]) => collapsed.has(id) ? null : flattenTasks(groupTasks, collapsed).map(taskRow);
 
   return (
@@ -400,6 +410,22 @@ export function Outline({
           );
         })}
         {groupBy === "none" && flattenTasks(tasks, collapsed).map(taskRow)}
+        {showProjectGroups && customPerspective && projects.map((project) => {
+          const projectTasks = groupedByProject.get(project.id) ?? [];
+          if (!projectTasks.length) return null;
+          return (
+            <View key={project.id} style={styles.projectGroup}>
+              {projectHeading(project, projectTasks.filter((task) => !task.completed).length)}
+              {renderGroupTasks(project.id, projectTasks)}
+              {!collapsed.has(project.id) && (
+                <Pressable onPress={() => onNewActionInProject(project.id)} style={styles.inlineNewAction} {...({ dataSet: { noMarquee: "true" } } as object)}>
+                  <Icon name="plus" size={16} color={palette.purpleDark} />
+                  <Text style={styles.inlineNewActionText}>New Action</Text>
+                </Pressable>
+              )}
+            </View>
+          );
+        })}
         {!customPerspective && perspective === "projects" && visibleProjects.map((project) => {
           const projectTasks = groupedByProject.get(project.id) ?? [];
           return (
@@ -486,18 +512,18 @@ export function Outline({
           <View style={styles.emptyState}>
             <View style={styles.emptyCheck}>
               <Icon
-                name={!customPerspective && perspective === "inbox" ? "inbox-arrow-down-outline" : !customPerspective && perspective === "flagged" ? "flag-outline" : "check"}
+                name={actsAsInbox ? "inbox-arrow-down-outline" : actsAsFlagged ? "flag-outline" : "check"}
                 size={26}
                 color="#aaa7ad"
               />
             </View>
             <Text style={styles.emptyTitle}>
-              {!customPerspective && perspective === "inbox" ? "Inbox Zero" : !customPerspective && perspective === "flagged" ? "Nothing flagged" : "All clear"}
+              {actsAsInbox ? "Inbox Zero" : actsAsFlagged ? "Nothing flagged" : "All clear"}
             </Text>
             <Text style={styles.emptyText}>
-              {!customPerspective && perspective === "inbox"
+              {actsAsInbox
                 ? "New actions land here until you assign a project."
-                : !customPerspective && perspective === "flagged"
+                : actsAsFlagged
                   ? "Flag actions to keep them in this list."
                   : "There are no remaining actions in this view."}
             </Text>

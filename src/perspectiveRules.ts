@@ -3,6 +3,7 @@ import { taskMatchesView, projectIsStalled, type TaskViewContext } from "./outli
 import {
   createCustomPerspective,
   makeId,
+  type ActivePerspective,
   type CustomPerspective,
   type PerspectiveAvailability,
   type PerspectiveGroupBy,
@@ -104,9 +105,9 @@ function matchRule(task: Task, rule: PerspectiveRule, context?: TaskViewContext)
     case "hasDeferDate":
       return !!task.defer;
     case "hasDuration":
-      return !!task.estimatedMinutes;
+      return task.estimatedMinutes != null && task.estimatedMinutes > 0;
     case "noDuration":
-      return !task.estimatedMinutes;
+      return task.estimatedMinutes == null || task.estimatedMinutes === 0;
     case "untagged":
       return task.tags.length === 0;
     case "taggedAny":
@@ -139,9 +140,7 @@ function matchRule(task: Task, rule: PerspectiveRule, context?: TaskViewContext)
       return (task.status ?? "active") === "dropped" || (project?.status ?? "active") === "dropped";
     }
     case "matchesSearch": {
-      const needle = rule.search?.trim().toLowerCase() ?? "";
-      if (!needle) return true;
-      return `${task.title} ${task.note ?? ""} ${task.tags.join(" ")}`.toLowerCase().includes(needle);
+      return taskMatchesSearch(task, rule.search ?? "");
     }
     default:
       return true;
@@ -221,4 +220,42 @@ export function duplicateCustomPerspective(perspective: CustomPerspective): Cust
     name: `${perspective.name} Copy`,
     rules: perspective.rules.map((rule) => ({ ...rule, id: makeId("rule"), tags: rule.tags ? [...rule.tags] : undefined, projectIds: rule.projectIds ? [...rule.projectIds] : undefined })),
   };
+}
+
+export function taskMatchesSearch(task: Pick<Task, "title" | "note" | "tags">, query: string): boolean {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  return `${task.title} ${task.note ?? ""} ${task.tags.join(" ")}`.toLowerCase().includes(needle);
+}
+
+function enabledRules(perspective: CustomPerspective | null | undefined) {
+  return (perspective?.rules ?? []).filter((rule) => rule.enabled !== false);
+}
+
+export function perspectiveActsAsInbox(perspective: ActivePerspective, custom: CustomPerspective | null): boolean {
+  if (perspective === "inbox") return true;
+  return enabledRules(custom).some((rule) => rule.kind === "inInbox");
+}
+
+export function perspectiveActsAsFlagged(perspective: ActivePerspective, custom: CustomPerspective | null): boolean {
+  if (perspective === "flagged") return true;
+  const rules = enabledRules(custom);
+  return rules.some((rule) => rule.kind === "flagged") && !rules.some((rule) => rule.kind === "unflagged");
+}
+
+export function perspectiveActsAsCompleted(perspective: ActivePerspective, custom: CustomPerspective | null): boolean {
+  if (perspective === "completed") return true;
+  return enabledRules(custom).some((rule) => rule.kind === "availability" && rule.availability === "completed");
+}
+
+export function perspectiveHidesSidebar(perspective: ActivePerspective, custom: CustomPerspective | null): boolean {
+  if (custom?.keepSidebarHidden) return true;
+  return perspectiveActsAsInbox(perspective, custom)
+    || perspectiveActsAsCompleted(perspective, custom)
+    || perspectiveActsAsFlagged(perspective, custom);
+}
+
+export function perspectiveGroupsByProject(perspective: ActivePerspective, custom: CustomPerspective | null): boolean {
+  if (!custom) return perspective === "projects";
+  return effectiveGroupBy(custom) === "project" || custom.organizeBy === "projects";
 }
