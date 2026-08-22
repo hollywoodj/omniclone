@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { dueUrgency, inspectorTimestamp } from "../../dates";
 import { makeId, palette, type NotificationWhen, type Project, type RepeatFrom, type RepeatUnit, type Task } from "../../model";
@@ -23,6 +23,55 @@ const notificationOptions: Array<{ id: NotificationWhen; label: string }> = [
 function toggleNotification(current: NotificationWhen[] | undefined, id: NotificationWhen): NotificationWhen[] {
   const list = current ?? [];
   return list.includes(id) ? list.filter((item) => item !== id) : [...list, id];
+}
+
+function useDebouncedTaskField(taskId: string, value: string, commit: (value: string) => void, delay: number) {
+  const [draft, setDraft] = useState(value);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const trackRef = useRef({ taskId, commit, value });
+  if (trackRef.current.taskId === taskId) trackRef.current.commit = commit;
+
+  useEffect(() => {
+    if (trackRef.current.taskId !== taskId) {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+        trackRef.current.commit(trackRef.current.value);
+      }
+      trackRef.current = { taskId, commit, value };
+      setDraft(value);
+    } else if (!timerRef.current && value !== trackRef.current.value) {
+      trackRef.current.value = value;
+      setDraft(value);
+    }
+  }, [taskId, value, commit]);
+
+  useEffect(() => () => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      trackRef.current.commit(trackRef.current.value);
+    }
+  }, []);
+
+  const onChangeText = (next: string) => {
+    setDraft(next);
+    trackRef.current.value = next;
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null;
+      trackRef.current.commit(next);
+    }, delay);
+  };
+
+  const flush = () => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+      trackRef.current.commit(trackRef.current.value);
+    }
+  };
+
+  return { draft, onChangeText, onBlur: flush };
 }
 
 function RepeatToggle({ value, onChange, label }: { value: boolean; onChange: (value: boolean) => void; label: string }) {
@@ -50,6 +99,8 @@ export function Inspector({ task, projects, onChange, onToggle, onDelete, onClos
   const [tab, setTab] = useState<"action" | "notes" | "notify" | "attachments">("action");
   const rule = resolvedRepeatRule(task);
   const simple = simpleFromRepeatRule(rule);
+  const titleField = useDebouncedTaskField(task.id, task.title, (title) => onChange({ title }), 250);
+  const noteField = useDebouncedTaskField(task.id, task.note ?? "", (note) => onChange({ note }), 250);
 
   useEffect(() => setTagDraft(""), [task.id]);
   useEffect(() => setAttachmentDraft(""), [task.id]);
@@ -98,8 +149,9 @@ export function Inspector({ task, projects, onChange, onToggle, onDelete, onClos
       {tab === "notes" && (
         <View style={styles.inspectorNotePane}>
           <TextInput
-            value={task.note ?? ""}
-            onChangeText={(note) => onChange({ note })}
+            value={noteField.draft}
+            onChangeText={noteField.onChangeText}
+            onBlur={noteField.onBlur}
             placeholder="Write a note…"
             multiline
             textAlignVertical="top"
@@ -213,7 +265,7 @@ export function Inspector({ task, projects, onChange, onToggle, onDelete, onClos
             dropped={(task.status ?? "active") === "dropped"}
             onPress={onToggle}
           />
-          <TextInput value={task.title} onChangeText={(title) => onChange({ title })} multiline style={styles.inspectorTitleInput} accessibilityLabel="Action title" />
+          <TextInput value={titleField.draft} onChangeText={titleField.onChangeText} onBlur={titleField.onBlur} multiline style={styles.inspectorTitleInput} accessibilityLabel="Action title" />
           <Pressable onPress={() => onChange({ flagged: !task.flagged })} hitSlop={8}><Icon name={task.flagged ? "flag" : "flag-outline"} size={20} color={task.flagged ? palette.flag : "#aaa7ad"} /></Pressable>
         </View>
 

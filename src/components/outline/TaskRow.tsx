@@ -80,6 +80,19 @@ export const TaskRow = React.memo(function TaskRow({ task, project, projects, se
     defer: styles.outlineColumnDefer,
     due: styles.outlineColumnDue,
   };
+  const dueCell = (variant: "column" | "tail") => (
+    <Pressable
+      key={variant === "column" ? "due" : undefined}
+      onPress={() => setEditingDate(editingDate === "due" ? null : "due")}
+      style={variant === "column" ? columnStyle.due : undefined}
+      hitSlop={6}
+      {...({ dataSet: { noMarquee: "true" } } as object)}
+    >
+      {task.due
+        ? <Text numberOfLines={variant === "column" ? 1 : undefined} style={[styles.dueText, settings.colorDueItems && urgency === "overdue" && styles.dueOverdue, settings.colorDueItems && urgency === "dueSoon" && styles.dueSoon]}>{outlineDueLabel(task.due, compactDue) ?? task.due}</Text>
+        : (hovered || selected) ? <Text style={styles.deferText}>Due</Text> : variant === "column" ? <Text style={styles.outlineColumnCell}> </Text> : null}
+    </Pressable>
+  );
   const showMetaProject = !!project && !hideProject && !columns.includes("project");
   const showMetaTags = !!task.tags.length && !columns.includes("tags");
   const showTailDue = !columns.includes("due");
@@ -251,27 +264,11 @@ export const TaskRow = React.memo(function TaskRow({ task, project, projects, se
               </Pressable>
             );
           }
-          return (
-            <Pressable key={column} onPress={() => setEditingDate(editingDate === "due" ? null : "due")} style={columnStyle[column]} hitSlop={6} {...({ dataSet: { noMarquee: "true" } } as object)}>
-              {task.due
-                ? <Text numberOfLines={1} style={[styles.dueText, settings.colorDueItems && urgency === "overdue" && styles.dueOverdue, settings.colorDueItems && urgency === "dueSoon" && styles.dueSoon]}>{outlineDueLabel(task.due, compactDue) ?? task.due}</Text>
-                : (hovered || selected) ? <Text style={styles.deferText}>Due</Text> : <Text style={styles.outlineColumnCell}> </Text>}
-            </Pressable>
-          );
+          return dueCell("column");
         })}
         <View style={styles.taskTail}>
           {showTailEstimate && <Text style={styles.estimateText}>{formatEstimate(task.estimatedMinutes)}</Text>}
-          {showTailDue && (
-            <Pressable
-              onPress={() => setEditingDate(editingDate === "due" ? null : "due")}
-              hitSlop={6}
-              {...({ dataSet: { noMarquee: "true" } } as object)}
-            >
-              {task.due
-                ? <Text style={[styles.dueText, settings.colorDueItems && urgency === "overdue" && styles.dueOverdue, settings.colorDueItems && urgency === "dueSoon" && styles.dueSoon]}>{outlineDueLabel(task.due, compactDue) ?? task.due}</Text>
-                : (hovered || selected) ? <Text style={styles.deferText}>Due</Text> : null}
-            </Pressable>
-          )}
+          {showTailDue && dueCell("tail")}
           {showTailDefer && (
             <Pressable onPress={() => setEditingDate("defer")} hitSlop={6} {...({ dataSet: { noMarquee: "true" } } as object)}>
               <Text style={styles.deferText}>{availableLabel}</Text>

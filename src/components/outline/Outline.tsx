@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, ScrollView, Text, View } from "react-native";
+import { FlatList, Platform, Pressable, Text, View, type ListRenderItemInfo } from "react-native";
 import { ContextMenuPressable, useContextMenuTrigger, type ContextMenuItem } from "../../contextMenu";
 import {
   completionGroupOrder,
@@ -28,9 +28,44 @@ import {
 } from "../../outline";
 import type { SelectionModifiers } from "../../selection";
 import { appStyles as styles } from "../../styles/appStyles";
-import { Icon } from "../ui/Icon";
+import { Icon, type IconName } from "../ui/Icon";
 import { TaskRow } from "./TaskRow";
 import { shortcutLabel } from "../../shortcuts.ts";
+
+type OutlineRowItem = (
+  | { kind: "columns-header" }
+  | { kind: "inbox-header"; count: number }
+  | { kind: "project-header"; project: Project; count: number }
+  | { kind: "tag-header"; tag: string; count: number }
+  | { kind: "flag-header"; flagged: boolean; count: number }
+  | { kind: "due-header"; due: string; count: number }
+  | { kind: "review-header"; project: Project }
+  | { kind: "completed-header"; label: string; count: number }
+  | { kind: "task"; task: Task }
+  | { kind: "inline-new-action"; projectId: string }
+  | { kind: "migrate-state" }
+  | { kind: "review-empty" }
+  | { kind: "empty-state" }
+) & { groupEnd?: boolean };
+
+function outlineRowKey(item: OutlineRowItem): string {
+  switch (item.kind) {
+    case "columns-header": return "columns-header";
+    case "inbox-header": return "header:inbox";
+    case "project-header": return `header:project:${item.project.id}`;
+    case "tag-header": return `header:tag:${item.tag}`;
+    case "flag-header": return `header:flag:${item.flagged ? "flagged" : "unflagged"}`;
+    case "due-header": return `header:due:${item.due}`;
+    case "review-header": return `header:review:${item.project.id}`;
+    case "completed-header": return `header:done:${item.label}`;
+    case "task": return `task:${item.task.id}`;
+    case "inline-new-action": return `inline:${item.projectId}`;
+    case "migrate-state": return "migrate-state";
+    case "review-empty": return "review-empty";
+    case "empty-state": return "empty-state";
+    default: return "row";
+  }
+}
 
 export function Outline({
   title,
@@ -233,6 +268,13 @@ export function Outline({
       </ContextMenuPressable>
     </View>
   );
+  const groupHeading = (groupId: string, icon: IconName, iconSize: number, iconColor: string, headingTitle: string, subtitle: string) => (
+    <Pressable onPress={() => toggleCollapsed(groupId)} style={styles.tagHeading}>
+      <Icon name={collapsed.has(groupId) ? "chevron-right" : "chevron-down"} size={18} color="#6e6c72" />
+      <Icon name={icon} size={iconSize} color={iconColor} />
+      <View><Text style={styles.projectHeadingTitle}>{headingTitle}</Text><Text style={styles.projectHeadingNote}>{subtitle}</Text></View>
+    </Pressable>
+  );
   const taskRow = (task: Task) => {
     const selected = selectedSet.has(task.id);
     const bulkCount = selected && selectedTaskIds.length > 1 ? selectedTaskIds.length : 1;
@@ -304,7 +346,240 @@ export function Outline({
   const showProjectGroups = perspectiveGroupsByProject(perspective, customPerspective ?? null);
   const actsAsInbox = perspectiveActsAsInbox(perspective, customPerspective ?? null);
   const actsAsFlagged = perspectiveActsAsFlagged(perspective, customPerspective ?? null);
-  const renderGroupTasks = (id: string, groupTasks: Task[]) => collapsed.has(id) ? null : flattenTasks(groupTasks, collapsed).map(taskRow);
+
+  const rows = useMemo(() => {
+    const items: OutlineRowItem[] = [];
+    const pushGroupTasks = (groupId: string, groupTasks: Task[]) => {
+      if (collapsed.has(groupId)) return;
+      for (const task of flattenTasks(groupTasks, collapsed)) items.push({ kind: "task", task });
+    };
+    const markGroupEnd = () => {
+      const last = items[items.length - 1];
+      if (last) last.groupEnd = true;
+    };
+
+    if (columns.length) items.push({ kind: "columns-header" });
+
+    if (groupBy === "project") {
+      const groups = [{ project: null as Project | null, groupTasks: groupedByProject.get(null) ?? [] }, ...projects.map((project) => ({ project, groupTasks: groupedByProject.get(project.id) ?? [] }))];
+      for (const { project, groupTasks } of groups) {
+        if (!groupTasks.length && !project) continue;
+        items.push(project ? { kind: "project-header", project, count: groupTasks.length } : { kind: "inbox-header", count: groupTasks.length });
+        pushGroupTasks(project?.id ?? "inbox", groupTasks);
+        markGroupEnd();
+      }
+    }
+    if (groupBy === "tag") {
+      for (const tag of groupedByTag.tags) {
+        const tagged = groupedByTag.groups.get(tag) ?? [];
+        items.push({ kind: "tag-header", tag, count: tagged.length });
+        pushGroupTasks(`tag:${tag}`, tagged);
+        markGroupEnd();
+      }
+    }
+    if (groupBy === "flagged") {
+      for (const flagged of [true, false]) {
+        const groupTasks = flagged ? groupedByFlag.flagged : groupedByFlag.unflagged;
+        if (!groupTasks.length) continue;
+        items.push({ kind: "flag-header", flagged, count: groupTasks.length });
+        pushGroupTasks(flagged ? "flagged" : "unflagged", groupTasks);
+        markGroupEnd();
+      }
+    }
+    if (groupBy === "due") {
+      for (const due of groupedByDue.labels) {
+        const groupTasks = groupedByDue.groups.get(due) ?? [];
+        items.push({ kind: "due-header", due, count: groupTasks.length });
+        pushGroupTasks(`due:${due}`, groupTasks);
+        markGroupEnd();
+      }
+    }
+    if (groupBy === "none") {
+      for (const task of flattenTasks(tasks, collapsed)) items.push({ kind: "task", task });
+    }
+    if (showProjectGroups && customPerspective) {
+      for (const project of projects) {
+        const projectTasks = groupedByProject.get(project.id) ?? [];
+        if (!projectTasks.length) continue;
+        items.push({ kind: "project-header", project, count: projectTasks.filter((task) => !task.completed).length });
+        pushGroupTasks(project.id, projectTasks);
+        if (!collapsed.has(project.id)) items.push({ kind: "inline-new-action", projectId: project.id });
+        markGroupEnd();
+      }
+    }
+    if (!customPerspective && perspective === "projects") {
+      for (const project of visibleProjects) {
+        const projectTasks = groupedByProject.get(project.id) ?? [];
+        items.push({ kind: "project-header", project, count: projectTasks.filter((task) => !task.completed).length });
+        pushGroupTasks(project.id, projectTasks);
+        if (!collapsed.has(project.id)) items.push({ kind: "inline-new-action", projectId: project.id });
+        markGroupEnd();
+      }
+    }
+    if (!customPerspective && perspective === "tags" && !tagFilter) {
+      for (const tag of groupedByTag.tags) {
+        const tagged = groupedByTag.groups.get(tag) ?? [];
+        items.push({ kind: "tag-header", tag, count: tagged.length });
+        pushGroupTasks(`tag:${tag}`, tagged);
+        markGroupEnd();
+      }
+    }
+    if (!customPerspective && perspective === "tags" && !!tagFilter) {
+      for (const task of flattenTasks(tasks, collapsed)) items.push({ kind: "task", task });
+    }
+    if (!customPerspective && perspective === "review") {
+      for (const project of reviewProjects) {
+        const remaining = groupedByProject.get(project.id) ?? [];
+        items.push({ kind: "review-header", project });
+        pushGroupTasks(`review:${project.id}`, remaining);
+        markGroupEnd();
+      }
+    }
+    if (!customPerspective && perspective === "completed") {
+      for (const label of completionGroupOrder) {
+        const groupTasks = groupedByCompletion.get(label) ?? [];
+        if (!groupTasks.length) continue;
+        items.push({ kind: "completed-header", label, count: groupTasks.length });
+        pushGroupTasks(`done:${label}`, groupTasks);
+        markGroupEnd();
+      }
+    }
+    if (!customPerspective && perspective !== "projects" && perspective !== "tags" && perspective !== "review" && perspective !== "completed") {
+      for (const task of flattenTasks(tasks, collapsed)) items.push({ kind: "task", task });
+    }
+
+    if (databaseEmpty) items.push({ kind: "migrate-state" });
+    else if (!customPerspective && perspective === "review" && !reviewProjects.length) items.push({ kind: "review-empty" });
+    else if (!tasks.length && (perspective !== "projects" || !visibleProjects.length) && perspective !== "review") items.push({ kind: "empty-state" });
+
+    return items;
+  }, [
+    collapsed, columns.length, customPerspective, databaseEmpty, groupBy, groupedByCompletion, groupedByDue,
+    groupedByFlag, groupedByProject, groupedByTag, perspective, projects, reviewProjects, showProjectGroups,
+    tagFilter, tasks, visibleProjects,
+  ]);
+
+  const renderOutlineRowContent = (item: OutlineRowItem) => {
+    switch (item.kind) {
+      case "columns-header":
+        return (
+          <View style={styles.outlineColumnsHeader}>
+            {columns.map((column) => (
+              <Text
+                key={column}
+                style={[
+                  styles.outlineColumnHeader,
+                  column === "project" && styles.outlineColumnProject,
+                  column === "tags" && styles.outlineColumnTags,
+                  column === "duration" && styles.outlineColumnDuration,
+                  column === "defer" && styles.outlineColumnDefer,
+                  column === "due" && styles.outlineColumnDue,
+                ]}
+              >
+                {column === "project" ? "Project" : column === "tags" ? "Tags" : column === "duration" ? "Duration" : column === "defer" ? "Defer" : "Due"}
+              </Text>
+            ))}
+          </View>
+        );
+      case "inbox-header":
+        return (
+          <Pressable onPress={() => toggleCollapsed("inbox")} style={styles.projectHeading}>
+            <Icon name={collapsed.has("inbox") ? "chevron-right" : "chevron-down"} size={18} color="#6e6c72" />
+            <Icon name="inbox-arrow-down-outline" size={20} color={customPerspective?.color ?? palette.purple} />
+            <View style={styles.projectHeadingCopy}><Text style={styles.projectHeadingTitle}>Inbox</Text><Text numberOfLines={1} style={styles.projectHeadingNote}>Actions without a project</Text></View>
+            <Text style={styles.projectHeadingCount}>{item.count}</Text>
+          </Pressable>
+        );
+      case "project-header":
+        return projectHeading(item.project, item.count);
+      case "tag-header":
+        return groupHeading(`tag:${item.tag}`, "pound", 22, customPerspective?.color ?? palette.purple, item.tag, `${item.count} actions`);
+      case "flag-header":
+        return groupHeading(item.flagged ? "flagged" : "unflagged", item.flagged ? "flag" : "flag-outline", 20, item.flagged ? palette.flag : "#8b888f", item.flagged ? "Flagged" : "Unflagged", `${item.count} actions`);
+      case "due-header":
+        return groupHeading(`due:${item.due}`, "calendar-month-outline", 20, customPerspective?.color ?? palette.purple, item.due, `${item.count} actions`);
+      case "completed-header": {
+        const dropped = item.label === "Dropped";
+        return groupHeading(`done:${item.label}`, dropped ? "close-circle-outline" : "check-circle-outline", 20, dropped ? palette.muted : palette.purple, item.label, `${item.count} ${dropped ? "dropped" : "completed"}`);
+      }
+      case "review-header": {
+        const project = item.project;
+        const remaining = groupedByProject.get(project.id) ?? [];
+        const reviewId = `review:${project.id}`;
+        const stalled = stalledIds.has(project.id);
+        return (
+          <ContextMenuPressable items={projectContextItems(project, projectHandlers)} onPress={() => onInspectProject(project.id)} style={[styles.reviewRow, inspectedProjectId === project.id && styles.projectHeadingSelected]}>
+            <Pressable accessibilityLabel={collapsed.has(reviewId) ? "Expand project" : "Collapse project"} onPress={() => toggleCollapsed(reviewId)} hitSlop={8} style={styles.collapseButton} {...({ dataSet: { noMarquee: "true" } } as object)}>
+              <Icon name={collapsed.has(reviewId) ? "chevron-right" : "chevron-down"} size={18} color="#6e6c72" />
+            </Pressable>
+            <View style={[styles.projectHeadingRing, { borderColor: project.color }]} />
+            <View style={styles.reviewCopy}><Text style={styles.projectHeadingTitle}>{projectDisplayName(project)}</Text><Text style={styles.projectHeadingNote}>{stalled ? "Stalled · no remaining actions" : reviewStatusText(project)}{remaining.length ? ` · ${remaining.length} remaining` : ""}</Text></View>
+            <Pressable onPress={() => onSkipReview(project.id)} style={styles.skipButton} {...({ dataSet: { noMarquee: "true" } } as object)}><Text style={styles.skipButtonText}>Skip</Text></Pressable>
+            <Pressable onPress={() => onReviewProject(project.id)} style={styles.reviewButton} {...({ dataSet: { noMarquee: "true" } } as object)}><Icon name="check" size={15} color="#fff" /><Text style={styles.reviewButtonText}>Reviewed</Text></Pressable>
+          </ContextMenuPressable>
+        );
+      }
+      case "task":
+        return taskRow(item.task);
+      case "inline-new-action":
+        return (
+          <Pressable onPress={() => onNewActionInProject(item.projectId)} style={styles.inlineNewAction} {...({ dataSet: { noMarquee: "true" } } as object)}>
+            <Icon name="plus" size={16} color={palette.purpleDark} />
+            <Text style={styles.inlineNewActionText}>New Action</Text>
+          </Pressable>
+        );
+      case "migrate-state":
+        return (
+          <View style={styles.migrateState}>
+            <View style={styles.migrateIcon}><Icon name="database-import-outline" size={28} color={palette.purpleDark} /></View>
+            <Text style={styles.migrateTitle}>Bring in your OmniFocus database</Text>
+            <Text style={styles.migrateText}>CSV is the portable OmniFocus 4 export. It keeps projects, inbox items, dates, flags, tags, and notes. Native .ofocus backups cannot be read here.</Text>
+            <Pressable accessibilityLabel="Import from OmniFocus" onPress={onImport} style={styles.migrateButton}>
+              <Icon name="database-import-outline" size={16} color="#fff" />
+              <Text style={styles.migrateButtonText}>Import from OmniFocus</Text>
+            </Pressable>
+            <Text style={styles.migrateHint}>{`Or create a project with ${shortcutLabel("⇧⌘N")} and start empty.`}</Text>
+          </View>
+        );
+      case "review-empty":
+        return (
+          <View style={styles.emptyState}>
+            <View style={styles.emptyCheck}><Icon name="check-decagram-outline" size={26} color="#aaa7ad" /></View>
+            <Text style={styles.emptyTitle}>You're all caught up</Text>
+            <Text style={styles.emptyText}>No projects are waiting for review.</Text>
+          </View>
+        );
+      case "empty-state":
+        return (
+          <View style={styles.emptyState}>
+            <View style={styles.emptyCheck}>
+              <Icon
+                name={actsAsInbox ? "inbox-arrow-down-outline" : actsAsFlagged ? "flag-outline" : "check"}
+                size={26}
+                color="#aaa7ad"
+              />
+            </View>
+            <Text style={styles.emptyTitle}>
+              {actsAsInbox ? "Inbox Zero" : actsAsFlagged ? "Nothing flagged" : "All clear"}
+            </Text>
+            <Text style={styles.emptyText}>
+              {actsAsInbox
+                ? "New actions land here until you assign a project."
+                : actsAsFlagged
+                  ? "Flag actions to keep them in this list."
+                  : "There are no remaining actions in this view."}
+            </Text>
+          </View>
+        );
+      default:
+        return null;
+    }
+  };
+
+  const renderOutlineRow = ({ item }: ListRenderItemInfo<OutlineRowItem>) => {
+    const content = renderOutlineRowContent(item);
+    return item.groupEnd ? <View style={styles.projectGroup}>{content}</View> : content;
+  };
 
   return (
     <View style={styles.outline}>
@@ -331,205 +606,16 @@ export function Outline({
         collapsable={false}
         style={[styles.outlineBody, Platform.OS === "web" ? { userSelect: "none" } as object : null]}
       >
-      <ScrollView style={styles.outlineScroll} contentContainerStyle={styles.outlineContent} keyboardShouldPersistTaps="handled">
-        {!!columns.length && (
-          <View style={styles.outlineColumnsHeader}>
-            {columns.map((column) => (
-              <Text
-                key={column}
-                style={[
-                  styles.outlineColumnHeader,
-                  column === "project" && styles.outlineColumnProject,
-                  column === "tags" && styles.outlineColumnTags,
-                  column === "duration" && styles.outlineColumnDuration,
-                  column === "defer" && styles.outlineColumnDefer,
-                  column === "due" && styles.outlineColumnDue,
-                ]}
-              >
-                {column === "project" ? "Project" : column === "tags" ? "Tags" : column === "duration" ? "Duration" : column === "defer" ? "Defer" : "Due"}
-              </Text>
-            ))}
-          </View>
-        )}
-        {groupBy === "project" && [{ project: null as Project | null, groupTasks: groupedByProject.get(null) ?? [] }, ...projects.map((project) => ({ project, groupTasks: groupedByProject.get(project.id) ?? [] }))].map(({ project, groupTasks }) => {
-          if (!groupTasks.length && !project) return null;
-          return (
-            <View key={project?.id ?? "inbox"} style={styles.projectGroup}>
-              {project ? projectHeading(project, groupTasks.length) : (
-                <Pressable onPress={() => toggleCollapsed("inbox")} style={styles.projectHeading}>
-                  <Icon name={collapsed.has("inbox") ? "chevron-right" : "chevron-down"} size={18} color="#6e6c72" />
-                  <Icon name="inbox-arrow-down-outline" size={20} color={customPerspective?.color ?? palette.purple} />
-                  <View style={styles.projectHeadingCopy}><Text style={styles.projectHeadingTitle}>Inbox</Text><Text numberOfLines={1} style={styles.projectHeadingNote}>Actions without a project</Text></View>
-                  <Text style={styles.projectHeadingCount}>{groupTasks.length}</Text>
-                </Pressable>
-              )}
-              {renderGroupTasks(project?.id ?? "inbox", groupTasks)}
-            </View>
-          );
-        })}
-        {groupBy === "tag" && groupedByTag.tags.map((tag) => {
-          const tagged = groupedByTag.groups.get(tag) ?? [];
-          return (
-            <View key={tag} style={styles.projectGroup}>
-              <Pressable onPress={() => toggleCollapsed(`tag:${tag}`)} style={styles.tagHeading}>
-                <Icon name={collapsed.has(`tag:${tag}`) ? "chevron-right" : "chevron-down"} size={18} color="#6e6c72" />
-                <Icon name="pound" size={22} color={customPerspective?.color ?? palette.purple} />
-                <View><Text style={styles.projectHeadingTitle}>{tag}</Text><Text style={styles.projectHeadingNote}>{tagged.length} actions</Text></View>
-              </Pressable>
-              {renderGroupTasks(`tag:${tag}`, tagged)}
-            </View>
-          );
-        })}
-        {groupBy === "flagged" && [true, false].map((flagged) => {
-          const groupTasks = flagged ? groupedByFlag.flagged : groupedByFlag.unflagged;
-          if (!groupTasks.length) return null;
-          const groupId = flagged ? "flagged" : "unflagged";
-          return (
-            <View key={groupId} style={styles.projectGroup}>
-              <Pressable onPress={() => toggleCollapsed(groupId)} style={styles.tagHeading}>
-                <Icon name={collapsed.has(groupId) ? "chevron-right" : "chevron-down"} size={18} color="#6e6c72" />
-                <Icon name={flagged ? "flag" : "flag-outline"} size={20} color={flagged ? palette.flag : "#8b888f"} />
-                <View><Text style={styles.projectHeadingTitle}>{flagged ? "Flagged" : "Unflagged"}</Text><Text style={styles.projectHeadingNote}>{groupTasks.length} actions</Text></View>
-              </Pressable>
-              {renderGroupTasks(groupId, groupTasks)}
-            </View>
-          );
-        })}
-        {groupBy === "due" && groupedByDue.labels.map((due) => {
-          const groupTasks = groupedByDue.groups.get(due) ?? [];
-          const groupId = `due:${due}`;
-          return (
-            <View key={due} style={styles.projectGroup}>
-              <Pressable onPress={() => toggleCollapsed(groupId)} style={styles.tagHeading}>
-                <Icon name={collapsed.has(groupId) ? "chevron-right" : "chevron-down"} size={18} color="#6e6c72" />
-                <Icon name="calendar-month-outline" size={20} color={customPerspective?.color ?? palette.purple} />
-                <View><Text style={styles.projectHeadingTitle}>{due}</Text><Text style={styles.projectHeadingNote}>{groupTasks.length} actions</Text></View>
-              </Pressable>
-              {renderGroupTasks(groupId, groupTasks)}
-            </View>
-          );
-        })}
-        {groupBy === "none" && flattenTasks(tasks, collapsed).map(taskRow)}
-        {showProjectGroups && customPerspective && projects.map((project) => {
-          const projectTasks = groupedByProject.get(project.id) ?? [];
-          if (!projectTasks.length) return null;
-          return (
-            <View key={project.id} style={styles.projectGroup}>
-              {projectHeading(project, projectTasks.filter((task) => !task.completed).length)}
-              {renderGroupTasks(project.id, projectTasks)}
-              {!collapsed.has(project.id) && (
-                <Pressable onPress={() => onNewActionInProject(project.id)} style={styles.inlineNewAction} {...({ dataSet: { noMarquee: "true" } } as object)}>
-                  <Icon name="plus" size={16} color={palette.purpleDark} />
-                  <Text style={styles.inlineNewActionText}>New Action</Text>
-                </Pressable>
-              )}
-            </View>
-          );
-        })}
-        {!customPerspective && perspective === "projects" && visibleProjects.map((project) => {
-          const projectTasks = groupedByProject.get(project.id) ?? [];
-          return (
-            <View key={project.id} style={styles.projectGroup}>
-              {projectHeading(project, projectTasks.filter((task) => !task.completed).length)}
-              {renderGroupTasks(project.id, projectTasks)}
-              {!collapsed.has(project.id) && (
-                <Pressable onPress={() => onNewActionInProject(project.id)} style={styles.inlineNewAction} {...({ dataSet: { noMarquee: "true" } } as object)}>
-                  <Icon name="plus" size={16} color={palette.purpleDark} />
-                  <Text style={styles.inlineNewActionText}>New Action</Text>
-                </Pressable>
-              )}
-            </View>
-          );
-        })}
-        {!customPerspective && perspective === "tags" && !tagFilter && groupedByTag.tags.map((tag) => {
-          const tagged = groupedByTag.groups.get(tag) ?? [];
-          return (
-            <View key={tag} style={styles.projectGroup}>
-              <Pressable onPress={() => toggleCollapsed(`tag:${tag}`)} style={styles.tagHeading}>
-                <Icon name={collapsed.has(`tag:${tag}`) ? "chevron-right" : "chevron-down"} size={18} color="#6e6c72" />
-                <Icon name="pound" size={22} color={palette.purple} />
-                <View><Text style={styles.projectHeadingTitle}>{tag}</Text><Text style={styles.projectHeadingNote}>{tagged.length} actions</Text></View>
-              </Pressable>
-              {renderGroupTasks(`tag:${tag}`, tagged)}
-            </View>
-          );
-        })}
-        {!customPerspective && perspective === "tags" && !!tagFilter && flattenTasks(tasks, collapsed).map(taskRow)}
-        {!customPerspective && perspective === "review" && reviewProjects.map((project) => {
-          const remaining = groupedByProject.get(project.id) ?? [];
-          const reviewId = `review:${project.id}`;
-          const stalled = stalledIds.has(project.id);
-          return (
-            <View key={project.id} style={styles.projectGroup}>
-              <ContextMenuPressable items={projectContextItems(project, projectHandlers)} onPress={() => onInspectProject(project.id)} style={[styles.reviewRow, inspectedProjectId === project.id && styles.projectHeadingSelected]}>
-                <Pressable accessibilityLabel={collapsed.has(reviewId) ? "Expand project" : "Collapse project"} onPress={() => toggleCollapsed(reviewId)} hitSlop={8} style={styles.collapseButton} {...({ dataSet: { noMarquee: "true" } } as object)}>
-                  <Icon name={collapsed.has(reviewId) ? "chevron-right" : "chevron-down"} size={18} color="#6e6c72" />
-                </Pressable>
-                <View style={[styles.projectHeadingRing, { borderColor: project.color }]} />
-                <View style={styles.reviewCopy}><Text style={styles.projectHeadingTitle}>{projectDisplayName(project)}</Text><Text style={styles.projectHeadingNote}>{stalled ? "Stalled · no remaining actions" : reviewStatusText(project)}{remaining.length ? ` · ${remaining.length} remaining` : ""}</Text></View>
-                <Pressable onPress={() => onSkipReview(project.id)} style={styles.skipButton} {...({ dataSet: { noMarquee: "true" } } as object)}><Text style={styles.skipButtonText}>Skip</Text></Pressable>
-                <Pressable onPress={() => onReviewProject(project.id)} style={styles.reviewButton} {...({ dataSet: { noMarquee: "true" } } as object)}><Icon name="check" size={15} color="#fff" /><Text style={styles.reviewButtonText}>Reviewed</Text></Pressable>
-              </ContextMenuPressable>
-              {renderGroupTasks(reviewId, remaining)}
-            </View>
-          );
-        })}
-        {!customPerspective && perspective === "completed" && completionGroupOrder.map((label) => {
-          const groupTasks = groupedByCompletion.get(label) ?? [];
-          if (!groupTasks.length) return null;
-          const groupId = `done:${label}`;
-          const dropped = label === "Dropped";
-          return (
-            <View key={label} style={styles.projectGroup}>
-              <Pressable onPress={() => toggleCollapsed(groupId)} style={styles.tagHeading}>
-                <Icon name={collapsed.has(groupId) ? "chevron-right" : "chevron-down"} size={18} color="#6e6c72" />
-                <Icon name={dropped ? "close-circle-outline" : "check-circle-outline"} size={20} color={dropped ? palette.muted : palette.purple} />
-                <View><Text style={styles.projectHeadingTitle}>{label}</Text><Text style={styles.projectHeadingNote}>{groupTasks.length} {dropped ? "dropped" : "completed"}</Text></View>
-              </Pressable>
-              {renderGroupTasks(groupId, groupTasks)}
-            </View>
-          );
-        })}
-        {!customPerspective && perspective !== "projects" && perspective !== "tags" && perspective !== "review" && perspective !== "completed" && flattenTasks(tasks, collapsed).map(taskRow)}
-        {databaseEmpty ? (
-          <View style={styles.migrateState}>
-            <View style={styles.migrateIcon}><Icon name="database-import-outline" size={28} color={palette.purpleDark} /></View>
-            <Text style={styles.migrateTitle}>Bring in your OmniFocus database</Text>
-            <Text style={styles.migrateText}>CSV is the portable OmniFocus 4 export. It keeps projects, inbox items, dates, flags, tags, and notes. Native .ofocus backups cannot be read here.</Text>
-            <Pressable accessibilityLabel="Import from OmniFocus" onPress={onImport} style={styles.migrateButton}>
-              <Icon name="database-import-outline" size={16} color="#fff" />
-              <Text style={styles.migrateButtonText}>Import from OmniFocus</Text>
-            </Pressable>
-            <Text style={styles.migrateHint}>{`Or create a project with ${shortcutLabel("⇧⌘N")} and start empty.`}</Text>
-          </View>
-        ) : !customPerspective && perspective === "review" && !reviewProjects.length ? (
-          <View style={styles.emptyState}>
-            <View style={styles.emptyCheck}><Icon name="check-decagram-outline" size={26} color="#aaa7ad" /></View>
-            <Text style={styles.emptyTitle}>You're all caught up</Text>
-            <Text style={styles.emptyText}>No projects are waiting for review.</Text>
-          </View>
-        ) : !tasks.length && (perspective !== "projects" || !visibleProjects.length) && perspective !== "review" ? (
-          <View style={styles.emptyState}>
-            <View style={styles.emptyCheck}>
-              <Icon
-                name={actsAsInbox ? "inbox-arrow-down-outline" : actsAsFlagged ? "flag-outline" : "check"}
-                size={26}
-                color="#aaa7ad"
-              />
-            </View>
-            <Text style={styles.emptyTitle}>
-              {actsAsInbox ? "Inbox Zero" : actsAsFlagged ? "Nothing flagged" : "All clear"}
-            </Text>
-            <Text style={styles.emptyText}>
-              {actsAsInbox
-                ? "New actions land here until you assign a project."
-                : actsAsFlagged
-                  ? "Flag actions to keep them in this list."
-                  : "There are no remaining actions in this view."}
-            </Text>
-          </View>
-        ) : null}
-      </ScrollView>
+      <FlatList
+        style={styles.outlineScroll}
+        contentContainerStyle={styles.outlineContent}
+        keyboardShouldPersistTaps="handled"
+        data={rows}
+        keyExtractor={outlineRowKey}
+        renderItem={renderOutlineRow}
+        initialNumToRender={40}
+        windowSize={15}
+      />
       {overlay}
       </View>
       <Pressable onPress={onNewTask} style={styles.newActionBar}><Icon name="plus" size={20} color={palette.purpleDark} /><Text style={styles.newActionText}>New Action</Text></Pressable>

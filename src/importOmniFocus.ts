@@ -1,6 +1,6 @@
 import type { Project, Task } from "./model";
-import { formatOmniFocusDate, parseOmniTimestamp } from "./dates.ts";
-import { hydrateProjectFolder, splitProjectPath } from "./outline.ts";
+import { clean, formatOmniFocusDate, parseOmniTimestamp } from "./dates.ts";
+import { extractTaskPaperTags, hydrateProjectFolder, splitProjectPath, splitTagList, taskPaperIndentWidth } from "./outline.ts";
 
 export { formatOmniFocusDate, parseOmniTimestamp } from "./dates.ts";
 
@@ -26,10 +26,6 @@ function hashText(value: string) {
     hash = Math.imul(hash, 16777619);
   }
   return (hash >>> 0).toString(36);
-}
-
-function clean(value: unknown) {
-  return String(value ?? "").replace(/^\uFEFF/, "").trim();
 }
 
 function normalizeHeader(value: string) {
@@ -86,12 +82,6 @@ function parseCsv(text: string) {
   row.push(field.replace(/\r$/, ""));
   if (row.some((value) => value.length)) rows.push(row);
   return rows;
-}
-
-function splitTags(value: string) {
-  const source = clean(value).replace(/^\(|\)$/g, "");
-  if (!source) return [];
-  return [...new Set(source.split(/[,;]+/).map((tag) => tag.trim()).filter(Boolean))];
 }
 
 function formatDuration(raw: string) {
@@ -224,7 +214,7 @@ function parseOmniCsv(sourceName: string, text: string, now: Date): OmniImportDa
     const addedAt = parseOmniTimestamp(value(row, "Added", "Added Date", "Creation Date", "Created"));
     const note = value(row, "Notes", "Note");
     const duration = formatDuration(value(row, "Duration", "Estimated Duration", "Estimated Time"));
-    const tagValues = [...splitTags(value(row, "Tags")), ...splitTags(value(row, "Context", "Contexts"))];
+    const tagValues = [...splitTagList(value(row, "Tags")), ...splitTagList(value(row, "Context", "Contexts"))];
     const tags = [...new Set(tagValues)];
     const dropped = status.includes("dropped");
     const onHold = status.includes("hold") || status.includes("on-hold");
@@ -254,17 +244,6 @@ function parseOmniCsv(sourceName: string, text: string, now: Date): OmniImportDa
   return { sourceName, format: "OmniFocus CSV", projects, tasks, skipped, warnings };
 }
 
-type TaskPaperParameters = Record<string, string | true>;
-
-function extractTaskPaperParameters(value: string) {
-  const parameters: TaskPaperParameters = {};
-  const title = value.replace(/\s+@([\w-]+)(?:\(([^)]*)\))?/g, (_match, rawName: string, rawValue: string | undefined) => {
-    parameters[rawName.toLowerCase()] = rawValue === undefined ? true : rawValue.trim();
-    return "";
-  }).trim();
-  return { title, parameters };
-}
-
 function parseTaskPaper(sourceName: string, text: string, now: Date): OmniImportData {
   const projects: Project[] = [];
   const tasks: Task[] = [];
@@ -277,10 +256,10 @@ function parseTaskPaper(sourceName: string, text: string, now: Date): OmniImport
   for (const rawLine of text.replace(/\r\n?/g, "\n").split("\n")) {
     if (!rawLine.trim()) continue;
     const whitespace = rawLine.match(/^[\t ]*/)?.[0] ?? "";
-    const indent = [...whitespace].reduce((total, character) => total + (character === "\t" ? 4 : 1), 0);
+    const indent = taskPaperIndentWidth(whitespace);
     const line = rawLine.trim();
     if (line.startsWith("- ")) {
-      const parsed = extractTaskPaperParameters(line.slice(2));
+      const parsed = extractTaskPaperTags(line.slice(2));
       if (!parsed.title) {
         skipped += 1;
         continue;
@@ -288,7 +267,7 @@ function parseTaskPaper(sourceName: string, text: string, now: Date): OmniImport
       const project = [...projectAtIndent.entries()].filter(([level]) => level < indent).sort((a, b) => b[0] - a[0])[0]?.[1] ?? null;
       const tagsParameter = typeof parsed.parameters.tags === "string" ? parsed.parameters.tags : "";
       const contextParameter = typeof parsed.parameters.context === "string" ? parsed.parameters.context : "";
-      const tags = [...new Set([...splitTags(tagsParameter), ...splitTags(contextParameter)])];
+      const tags = splitTagList(`${tagsParameter},${contextParameter}`);
       const due = typeof parsed.parameters.due === "string" ? formatOmniFocusDate(parsed.parameters.due, now) : undefined;
       const defer = typeof parsed.parameters.defer === "string" ? formatOmniFocusDate(parsed.parameters.defer, now) : undefined;
       const duration = typeof parsed.parameters.duration === "string" ? formatDuration(parsed.parameters.duration) : "";
@@ -311,13 +290,14 @@ function parseTaskPaper(sourceName: string, text: string, now: Date): OmniImport
       lastTask = task;
       continue;
     }
-    const parsed = extractTaskPaperParameters(line);
+    const parsed = extractTaskPaperTags(line);
     if (parsed.title.endsWith(":")) {
       const rawName = parsed.title.slice(0, -1).trim();
       if (!rawName) continue;
       const parent = [...projectAtIndent.entries()].filter(([level]) => level < indent).sort((a, b) => b[0] - a[0])[0]?.[1];
-      const name = parent && !rawName.toLowerCase().startsWith(`${parent.name.toLowerCase()} :`)
-        ? `${parent.name} : ${rawName}`
+      const parentFullName = parent ? projectFullName(parent) : undefined;
+      const name = parentFullName && !rawName.toLowerCase().startsWith(`${parentFullName.toLowerCase()} :`)
+        ? `${parentFullName} : ${rawName}`
         : rawName;
       const pathKey = name.toLowerCase();
       const existing = projectByPath.get(pathKey);

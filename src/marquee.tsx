@@ -41,7 +41,7 @@ export function useModifierKeys(enabled = true) {
 
   useEffect(() => {
     if (!enabled || typeof window === "undefined") return;
-    const sync = (event: KeyboardEvent | MouseEvent) => {
+    const sync = (event: KeyboardEvent | MouseEvent | PointerEvent) => {
       modifiersRef.current = {
         shift: event.shiftKey,
         toggle: event.metaKey || (!/Mac|iPhone|iPad/.test(navigator.platform) && event.ctrlKey),
@@ -50,14 +50,17 @@ export function useModifierKeys(enabled = true) {
     const reset = () => {
       modifiersRef.current = { shift: false, toggle: false };
     };
+    // Modifier state at click-time matters most, and a click is always preceded by a
+    // pointerdown, so syncing there (capture phase, before Pressable's onPress fires)
+    // catches keys already held down without polling every mousemove.
     window.addEventListener("keydown", sync);
     window.addEventListener("keyup", sync);
-    window.addEventListener("mousemove", sync);
+    window.addEventListener("pointerdown", sync, true);
     window.addEventListener("blur", reset);
     return () => {
       window.removeEventListener("keydown", sync);
       window.removeEventListener("keyup", sync);
-      window.removeEventListener("mousemove", sync);
+      window.removeEventListener("pointerdown", sync, true);
       window.removeEventListener("blur", reset);
     };
   }, [enabled]);

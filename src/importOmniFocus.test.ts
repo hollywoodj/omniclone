@@ -104,6 +104,23 @@ test("imports nested TaskPaper projects and due tags", () => {
   assert.equal(imported.tasks.find((task) => task.title === "Inbox call")?.projectId, null);
 });
 
+test("imports three-level nested TaskPaper folders without dropping ancestors", () => {
+  const taskpaper = [
+    "Work:",
+    "\tClients:",
+    "\t\tAcme Corp:",
+    "\t\t\t- Kickoff call",
+    "\tClients:",
+    "\t\tOther Co:",
+    "\t\t\t- Send proposal",
+  ].join("\n");
+
+  const imported = parseOmniFocusFile("library.taskpaper", bytes(taskpaper), now);
+  const paths = imported.projects.map((project) => `${project.folder ? `${project.folder} : ` : ""}${project.name}`);
+  assert.deepEqual(paths, ["Work : Clients", "Work : Clients : Acme Corp", "Work : Clients : Other Co"]);
+  assert.equal(new Set(imported.projects.map((project) => project.id)).size, imported.projects.length);
+});
+
 test("merge ignores duplicate OmniFocus task IDs", () => {
   const csv = "Task ID,Type,Name,Status,Project\np1,Project,Website,active,\nt1,Action,Write copy,active,Website\n";
   const imported = parseOmniFocusFile("OmniFocus.csv", bytes(csv), now);

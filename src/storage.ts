@@ -205,15 +205,35 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
   const db = await getDb();
 
   await db.withTransactionAsync(async () => {
-    await db.runAsync("DELETE FROM task_tags");
-    await db.runAsync("DELETE FROM tasks");
-    await db.runAsync("DELETE FROM projects");
-    await db.runAsync("DELETE FROM custom_perspectives");
-    await db.runAsync("DELETE FROM tags");
+    const [existingProjectRows, existingTaskRows, existingPerspectiveRows, existingTagRows] = await Promise.all([
+      db.getAllAsync<{ id: string }>("SELECT id FROM projects"),
+      db.getAllAsync<{ id: string }>("SELECT id FROM tasks"),
+      db.getAllAsync<{ id: string }>("SELECT id FROM custom_perspectives"),
+      db.getAllAsync<{ id: number; name: string }>("SELECT id, name FROM tags"),
+    ]);
+
+    const incomingProjectIds = new Set(state.projects.map((project) => project.id));
+    const incomingTaskIds = new Set(state.tasks.map((task) => task.id));
+    const incomingPerspectiveIds = new Set(state.customPerspectives.map((perspective) => perspective.id));
+
+    for (const row of existingProjectRows) {
+      if (!incomingProjectIds.has(row.id)) await db.runAsync("DELETE FROM projects WHERE id = ?", row.id);
+    }
+    for (const row of existingTaskRows) {
+      if (!incomingTaskIds.has(row.id)) await db.runAsync("DELETE FROM tasks WHERE id = ?", row.id);
+    }
+    for (const row of existingPerspectiveRows) {
+      if (!incomingPerspectiveIds.has(row.id)) await db.runAsync("DELETE FROM custom_perspectives WHERE id = ?", row.id);
+    }
 
     for (const project of state.projects) {
       await db.runAsync(
-        "INSERT INTO projects (id, import_key, name, color, note, review_interval_days, last_reviewed_at, status, type, folder, complete_with_last_action) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        `INSERT INTO projects (id, import_key, name, color, note, review_interval_days, last_reviewed_at, status, type, folder, complete_with_last_action)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET import_key = excluded.import_key, name = excluded.name, color = excluded.color,
+           note = excluded.note, review_interval_days = excluded.review_interval_days, last_reviewed_at = excluded.last_reviewed_at,
+           status = excluded.status, type = excluded.type, folder = excluded.folder,
+           complete_with_last_action = excluded.complete_with_last_action`,
         project.id,
         project.importKey ?? null,
         project.name,
@@ -228,10 +248,21 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
       );
     }
 
-    const tagIds = new Map<string, number>();
+    const tagIds = new Map<string, number>(existingTagRows.map((row) => [row.name, row.id]));
     const getTagId = async (name: string, record?: TagRecord) => {
       const existing = tagIds.get(name);
-      if (existing !== undefined) return existing;
+      if (existing !== undefined) {
+        if (record) {
+          await db.runAsync(
+            "UPDATE tags SET parent = ?, color = ?, status = ? WHERE id = ?",
+            record.parent ?? null,
+            record.color ?? null,
+            record.status ?? "active",
+            existing
+          );
+        }
+        return existing;
+      }
       const result = await db.runAsync(
         "INSERT INTO tags (name, parent, color, status) VALUES (?, ?, ?, ?)",
         name,
@@ -244,13 +275,24 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
     };
 
     const records = mergeTagRecords(state.tagRecords, state.tasks);
+    const recordNames = new Set(records.map((record) => record.name));
     for (const record of records) {
       await getTagId(record.name, record);
+    }
+    for (const row of existingTagRows) {
+      if (!recordNames.has(row.name)) await db.runAsync("DELETE FROM tags WHERE id = ?", row.id);
     }
 
     for (const task of state.tasks) {
       await db.runAsync(
-        "INSERT INTO tasks (id, import_key, title, project_id, parent_id, sort_order, due, defer, note, flagged, completed, completed_at, created_at, estimated_minutes, repeat, repeat_rule, notifications, attachments, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        `INSERT INTO tasks (id, import_key, title, project_id, parent_id, sort_order, due, defer, note, flagged, completed, completed_at, created_at, estimated_minutes, repeat, repeat_rule, notifications, attachments, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET import_key = excluded.import_key, title = excluded.title, project_id = excluded.project_id,
+           parent_id = excluded.parent_id, sort_order = excluded.sort_order, due = excluded.due, defer = excluded.defer,
+           note = excluded.note, flagged = excluded.flagged, completed = excluded.completed, completed_at = excluded.completed_at,
+           created_at = excluded.created_at, estimated_minutes = excluded.estimated_minutes, repeat = excluded.repeat,
+           repeat_rule = excluded.repeat_rule, notifications = excluded.notifications, attachments = excluded.attachments,
+           status = excluded.status`,
         task.id,
         task.importKey ?? null,
         task.title,
@@ -271,6 +313,7 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
         task.attachments?.length ? JSON.stringify(task.attachments) : null,
         task.status ?? "active"
       );
+      await db.runAsync("DELETE FROM task_tags WHERE task_id = ?", task.id);
       for (const tagName of task.tags) {
         const tagId = await getTagId(tagName);
         await db.runAsync("INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES (?, ?)", task.id, tagId);
@@ -280,7 +323,14 @@ export async function saveDatabase(state: PersistedState): Promise<void> {
     for (const perspective of state.customPerspectives) {
       const normalized = normalizeCustomPerspective(perspective);
       await db.runAsync(
-        "INSERT INTO custom_perspectives (id, name, icon, color, status, flagged, due, tag_match, search, group_by, sort_by, project_ids, tags, combinator, structure, organize_by, keep_sidebar_hidden, rules) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        `INSERT INTO custom_perspectives (id, name, icon, color, status, flagged, due, tag_match, search, group_by, sort_by, project_ids, tags, combinator, structure, organize_by, keep_sidebar_hidden, rules)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET name = excluded.name, icon = excluded.icon, color = excluded.color,
+           status = excluded.status, flagged = excluded.flagged, due = excluded.due, tag_match = excluded.tag_match,
+           search = excluded.search, group_by = excluded.group_by, sort_by = excluded.sort_by,
+           project_ids = excluded.project_ids, tags = excluded.tags, combinator = excluded.combinator,
+           structure = excluded.structure, organize_by = excluded.organize_by,
+           keep_sidebar_hidden = excluded.keep_sidebar_hidden, rules = excluded.rules`,
         normalized.id,
         normalized.name,
         normalized.icon,

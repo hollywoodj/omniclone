@@ -84,9 +84,7 @@ export function usePersistedLibrary(onHydrated?: (initial: LocationState, settin
 
   useEffect(() => {
     if (!hydrated || typeof window === "undefined") return;
-    const flush = () => {
-      void flushPersisted();
-    };
+    const flush = () => flushPersisted();
     window.addEventListener("beforeunload", flush);
     const unsub = window.omniclone?.onFlushRequest?.(flush);
     return () => {

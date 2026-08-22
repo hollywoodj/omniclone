@@ -489,8 +489,12 @@ export type TaskPaperPasteItem = {
   repeat?: RepeatSimple;
 };
 
-function splitTagList(value: string) {
+export function splitTagList(value: string) {
   return [...new Set(value.replace(/^\(|\)$/g, "").split(/[,;]+/).map((tag) => tag.trim()).filter(Boolean))];
+}
+
+export function taskPaperIndentWidth(whitespace: string) {
+  return [...whitespace].reduce((total, character) => total + (character === "\t" ? 4 : 1), 0);
 }
 
 export function parseEstimateTag(raw: string) {
@@ -513,7 +517,7 @@ function parseRepeatTag(raw: string): RepeatSimple | undefined {
   return undefined;
 }
 
-function extractTaskPaperTags(value: string) {
+export function extractTaskPaperTags(value: string) {
   const parameters: Record<string, string | true> = {};
   const title = value.replace(/\s+@([\w-]+)(?:\(([^)]*)\))?/g, (_match, rawName: string, rawValue: string | undefined) => {
     parameters[rawName.toLowerCase()] = rawValue === undefined ? true : rawValue.trim();
@@ -535,7 +539,7 @@ export function parseTaskPaperActions(text: string, now = new Date()): TaskPaper
   for (const rawLine of text.replace(/\r\n?/g, "\n").split("\n")) {
     if (!rawLine.trim()) continue;
     const whitespace = rawLine.match(/^[\t ]*/)?.[0] ?? "";
-    const indent = [...whitespace].reduce((total, character) => total + (character === "\t" ? 4 : 1), 0);
+    const indent = taskPaperIndentWidth(whitespace);
     const line = rawLine.trim();
     if (line.startsWith("- ")) {
       const parsed = extractTaskPaperTags(line.slice(2));

@@ -15,7 +15,7 @@ export type ForecastDay = {
   title: string;
 };
 
-function clean(value: unknown) {
+export function clean(value: unknown) {
   return String(value ?? "").replace(/^\uFEFF/, "").trim();
 }
 

@@ -257,5 +257,10 @@ export function perspectiveHidesSidebar(perspective: ActivePerspective, custom: 
 
 export function perspectiveGroupsByProject(perspective: ActivePerspective, custom: CustomPerspective | null): boolean {
   if (!custom) return perspective === "projects";
+  // TODO: when effectiveGroupBy(custom) === "project", this is also exactly the
+  // condition Outline.tsx uses for its own `groupBy === "project"` branch, so a
+  // custom perspective grouped by project may satisfy both of Outline's render
+  // branches at once and double-render its project groups. Not confirmed reachable
+  // through the perspective editor's UI constraints; needs a look. See PROJECTS.md/issue.
   return effectiveGroupBy(custom) === "project" || custom.organizeBy === "projects";
 }

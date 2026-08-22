@@ -649,7 +649,7 @@ export default function App() {
     prePatch?: { id: string; patch: Partial<Task> }
   ) => {
     pushUndo();
-    const after = afterId ?? selectedTaskId;
+    const after = afterId !== undefined ? afterId : selectedTaskId;
     const afterTask = after ? tasks.find((task) => task.id === after) : undefined;
     const resolvedProjectId = projectId ?? afterTask?.projectId ?? defaultProjectId;
     const created: Task = {
