@@ -119,6 +119,7 @@ async function migrateProjects(db: SQLite.SQLiteDatabase) {
   if (!names.has("type")) await db.execAsync("ALTER TABLE projects ADD COLUMN type TEXT NOT NULL DEFAULT 'parallel'");
   if (!names.has("folder")) await db.execAsync("ALTER TABLE projects ADD COLUMN folder TEXT");
   if (!names.has("complete_with_last_action")) await db.execAsync("ALTER TABLE projects ADD COLUMN complete_with_last_action INTEGER NOT NULL DEFAULT 0");
+  if (!names.has("sidebar_order")) await db.execAsync("ALTER TABLE projects ADD COLUMN sidebar_order INTEGER");
 }
 
 async function migrateTags(db: SQLite.SQLiteDatabase) {

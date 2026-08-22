@@ -66,6 +66,7 @@ export type AppSettings = {
   strikeResolvedItems: boolean;
   showNotesInOutline: boolean;
   extraFolders: string[];
+  folderSidebarOrders: Record<string, number>;
   perspectiveBarShowsTitles: boolean;
   perspectiveBarVisible: boolean;
   showSidebarCounts: boolean;
@@ -157,6 +158,7 @@ export type Project = {
   status?: "active" | "onHold" | "dropped" | "done";
   type?: "parallel" | "sequential" | "singleActions";
   completeWithLastAction?: boolean;
+  sidebarOrder?: number;
 };
 
 export type ActionStatus = "active" | "onHold" | "dropped";
@@ -259,6 +261,7 @@ export const defaultSettings: AppSettings = {
   strikeResolvedItems: true,
   showNotesInOutline: false,
   extraFolders: [],
+  folderSidebarOrders: {},
   perspectiveBarShowsTitles: true,
   perspectiveBarVisible: true,
   showSidebarCounts: true,

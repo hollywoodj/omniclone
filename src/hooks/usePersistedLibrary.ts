@@ -3,6 +3,7 @@ import { todayKey, type LocationState } from "../dates";
 import { settingsWithCustomBarItems } from "../library/hydrate";
 import { loadDatabase, saveDatabase } from "../storage";
 import { loadSettings, saveSettings } from "../settings";
+import { demoSettingsPatch, isDemoLibrary } from "../demoLibrary";
 import { normalizeCustomPerspective } from "../perspectiveRules";
 import {
   defaultSettings,
@@ -47,6 +48,10 @@ export function usePersistedLibrary(onHydrated?: (initial: LocationState, settin
           const customs = saved.customPerspectives.map((item) => normalizeCustomPerspective(item));
           setCustomPerspectives(customs);
           nextSettings = settingsWithCustomBarItems(savedSettings, customs);
+          if (isDemoLibrary(saved) && !savedSettings.extraFolders.length) {
+            nextSettings = { ...nextSettings, ...demoSettingsPatch };
+            void saveSettings(nextSettings);
+          }
         }
         setSettings(nextSettings);
         const initial: LocationState = {

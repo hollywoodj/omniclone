@@ -751,7 +751,49 @@ export type FolderNode = {
   children: FolderNode[];
 };
 
-export function buildFolderTree(projects: Project[], extraFolders: string[] = []): { ungrouped: Project[]; roots: FolderNode[] } {
+export type SidebarSibling =
+  | { kind: "folder"; node: FolderNode }
+  | { kind: "project"; project: Project };
+
+export function orderedSidebarSiblings(
+  node: FolderNode,
+  folderSidebarOrders: Record<string, number> = {},
+): SidebarSibling[] {
+  const hasCustomOrder = Object.keys(folderSidebarOrders).length > 0
+    || node.projects.some((project) => project.sidebarOrder !== undefined)
+    || node.children.some((child) => folderSidebarOrders[child.path] !== undefined);
+
+  if (!hasCustomOrder) {
+    return [
+      ...node.projects.map((project) => ({ kind: "project" as const, project })),
+      ...node.children.map((child) => ({ kind: "folder" as const, node: child })),
+    ];
+  }
+
+  const items: Array<SidebarSibling & { order: number }> = [
+    ...node.projects.map((project) => ({
+      kind: "project" as const,
+      project,
+      order: project.sidebarOrder ?? 0,
+    })),
+    ...node.children.map((child) => ({
+      kind: "folder" as const,
+      node: child,
+      order: folderSidebarOrders[child.path] ?? 0,
+    })),
+  ];
+  return items
+    .sort((a, b) => a.order - b.order || (a.kind === b.kind ? 0 : a.kind === "folder" ? -1 : 1))
+    .map((item): SidebarSibling => item.kind === "folder"
+      ? { kind: "folder", node: item.node }
+      : { kind: "project", project: item.project });
+}
+
+export function buildFolderTree(
+  projects: Project[],
+  extraFolders: string[] = [],
+  folderSidebarOrders: Record<string, number> = {},
+): { ungrouped: Project[]; roots: FolderNode[] } {
   const ungrouped: Project[] = [];
   const byPath = new Map<string, FolderNode>();
   const ensure = (path: string): FolderNode => {
@@ -775,11 +817,24 @@ export function buildFolderTree(projects: Project[], extraFolders: string[] = []
     ensure(hydrated.folder).projects.push(hydrated);
   }
   const roots = [...byPath.values()].filter((node) => !node.path.includes(" : ") || !byPath.has(node.path.slice(0, node.path.lastIndexOf(" : "))));
+  const hasCustomOrder = Object.keys(folderSidebarOrders).length > 0 || projects.some((project) => project.sidebarOrder !== undefined);
   const sortNodes = (nodes: FolderNode[]) => {
-    nodes.sort((a, b) => a.name.localeCompare(b.name));
-    for (const node of nodes) sortNodes(node.children);
+    if (hasCustomOrder) {
+      nodes.sort((a, b) => (folderSidebarOrders[a.path] ?? 0) - (folderSidebarOrders[b.path] ?? 0) || a.name.localeCompare(b.name));
+    } else {
+      nodes.sort((a, b) => a.name.localeCompare(b.name));
+    }
+    for (const node of nodes) {
+      sortNodes(node.children);
+      if (node.projects.some((project) => project.sidebarOrder !== undefined)) {
+        node.projects.sort((a, b) => (a.sidebarOrder ?? 0) - (b.sidebarOrder ?? 0));
+      }
+    }
   };
   sortNodes(roots);
+  if (ungrouped.some((project) => project.sidebarOrder !== undefined)) {
+    ungrouped.sort((a, b) => (a.sidebarOrder ?? 0) - (b.sidebarOrder ?? 0));
+  }
   return { ungrouped, roots };
 }
 

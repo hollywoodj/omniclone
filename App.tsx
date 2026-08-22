@@ -1330,6 +1330,7 @@ export default function App() {
               projects={sidebarProjects}
               tasks={sidebarTasks}
               extraFolders={settings.extraFolders}
+              folderSidebarOrders={settings.folderSidebarOrders}
               selectedProjectId={projectFilter}
               selectedProjectIds={sidebarSelection.projectIds}
               selectedTag={tagFilter}

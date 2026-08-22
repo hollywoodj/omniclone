@@ -45,6 +45,7 @@ export async function loadSettings(): Promise<AppSettings> {
       cleanUpImmediately: parsed.cleanUpImmediately ?? defaultSettings.cleanUpImmediately,
       showNotesInOutline: parsed.showNotesInOutline ?? defaultSettings.showNotesInOutline,
       extraFolders: parsed.extraFolders ?? defaultSettings.extraFolders,
+      folderSidebarOrders: parsed.folderSidebarOrders ?? defaultSettings.folderSidebarOrders,
       sidebarWidth: parsed.sidebarWidth ?? defaultSettings.sidebarWidth,
       inspectorWidth: parsed.inspectorWidth ?? defaultSettings.inspectorWidth,
       perspectiveBarIds: migratePerspectiveBarIds(parsed.perspectiveBarIds),
